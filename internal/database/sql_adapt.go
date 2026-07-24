@@ -27,10 +27,13 @@ var (
 	reDatetimeType    = regexp.MustCompile(`(?i)\bDATETIME\b`)
 	reRowID           = regexp.MustCompile(`(?i)\browid\b`)
 	reStrftimeEpoch   = regexp.MustCompile(`(?i)strftime\s*\(\s*'%s'\s*,\s*([^)]+?)\s*\)`)
+	reJulianday        = regexp.MustCompile(`(?i)julianday\s*\(\s*([^)]+?)\s*\)`)
 	reDatetimeFn      = regexp.MustCompile(`(?i)datetime\s*\(\s*([^)]+?)\s*\)`)
 	reDatetimeNowArg  = regexp.MustCompile(`(?i)datetime\s*\(\s*'now'\s*,\s*\?\s*\)`)
 	reDatetimeNowLit  = regexp.MustCompile(`(?i)datetime\s*\(\s*'now'\s*,\s*'(-?\d+)\s+days?'\s*\)`)
 	reIfNull          = regexp.MustCompile(`(?i)\bIFNULL\s*\(`)
+	// SQLite MAX(0, x) → GREATEST(0, x) when used as 2-arg clamp (not aggregate MAX)
+	reMaxZeroClamp    = regexp.MustCompile(`(?i)\bMAX\s*\(\s*0\s*,`)
 )
 
 // adaptSQLForPostgres converts common SQLite SQL fragments to PostgreSQL.
@@ -100,6 +103,12 @@ func adaptSQLForPostgres(query string) string {
 
 	// strftime('%s', col) -> EXTRACT(EPOCH FROM (col)::timestamptz)
 	q = reStrftimeEpoch.ReplaceAllString(q, "EXTRACT(EPOCH FROM ($1)::timestamptz)")
+
+	// julianday(x) -> Julian day via epoch/86400 + offset (SQLite-compatible)
+	q = reJulianday.ReplaceAllString(q, "(EXTRACT(EPOCH FROM ($1)::timestamptz)/86400.0 + 2440587.5)")
+
+	// MAX(0, expr) 2-arg clamp -> GREATEST(0, expr) on PG
+	q = reMaxZeroClamp.ReplaceAllString(q, "GREATEST(0,")
 
 	// datetime('now', ?) with bound "-N days" style arg from Go — convert to interval param
 	// Call sites pass "-7 days"; PG needs "7 days" with subtraction. Keep helper paths preferred.

@@ -56,6 +56,44 @@ func TestAdaptDatetimeNow(t *testing.T) {
 	}
 }
 
+func TestDurationMsSQL(t *testing.T) {
+	pg := DialectPostgres.durationMsSQL("?", "start_time")
+	if strings.Contains(strings.ToLower(pg), "julianday") {
+		t.Fatalf("postgres duration must not use julianday: %s", pg)
+	}
+	if !strings.Contains(strings.ToUpper(pg), "EXTRACT") {
+		t.Fatalf("expected EXTRACT for postgres: %s", pg)
+	}
+	// Adapt rewrites ? → $n for the full query path
+	full := DialectPostgres.Adapt(`UPDATE t SET duration_ms = ` + pg + ` WHERE status = ?`)
+	if strings.Contains(full, "?") {
+		t.Fatalf("expected rebound placeholders: %s", full)
+	}
+
+	sq := DialectSQLite.durationMsSQL("?", "start_time")
+	if !strings.Contains(strings.ToLower(sq), "julianday") {
+		t.Fatalf("sqlite duration should use julianday: %s", sq)
+	}
+}
+
+func TestAdaptJuliandayFallback(t *testing.T) {
+	// Legacy SQLite-only duration expression should be rewritten for PG
+	raw := `UPDATE t SET duration_ms = MAX(0, CAST((julianday(?) - julianday(start_time)) * 86400000 AS INTEGER)) WHERE status = 'running'`
+	got := DialectPostgres.Adapt(raw)
+	if strings.Contains(strings.ToLower(got), "julianday") {
+		t.Fatalf("julianday should be rewritten: %s", got)
+	}
+	if strings.Contains(strings.ToUpper(got), "MAX(0") {
+		t.Fatalf("MAX(0,...) clamp should become GREATEST: %s", got)
+	}
+	if !strings.Contains(strings.ToUpper(got), "GREATEST") {
+		t.Fatalf("expected GREATEST: %s", got)
+	}
+	if !strings.Contains(strings.ToUpper(got), "EXTRACT") {
+		t.Fatalf("expected EXTRACT: %s", got)
+	}
+}
+
 func TestAdaptSQLiteUnchanged(t *testing.T) {
 	q := `INSERT OR IGNORE INTO t (a) VALUES (?)`
 	if DialectSQLite.Adapt(q) != q {

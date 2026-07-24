@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -608,14 +609,16 @@ func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg stri
 	if errMsg == "" {
 		errMsg = "执行已中断（服务重启或会话结束）"
 	}
-	query := `
+	// duration：end - start_time（毫秒）；SQLite 用 julianday，PostgreSQL 用 EXTRACT(EPOCH)
+	durationSQL := db.Dialect().durationMsSQL("?", "start_time")
+	query := fmt.Sprintf(`
 		UPDATE tool_executions
 		SET status = 'orphaned',
 		    error = ?,
 		    end_time = ?,
-		    duration_ms = MAX(0, CAST((julianday(?) - julianday(start_time)) * 86400000 AS INTEGER))
+		    duration_ms = %s
 		WHERE status = 'running'
-	`
+	`, durationSQL)
 	res, err := db.Exec(query, errMsg, endTime, endTime)
 	if err != nil {
 		return 0, err

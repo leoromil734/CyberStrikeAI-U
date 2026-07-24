@@ -98,6 +98,22 @@ func (d Dialect) epochCompareSQL(column, op string) string {
 	return "strftime('%s', " + column + ") " + op + " strftime('%s', ?)"
 }
 
+// durationMsSQL returns SQL for duration in milliseconds between endExpr and startExpr (end - start).
+// endExpr/startExpr may be column names or placeholders ("?").
+// SQLite: julianday; PostgreSQL: EXTRACT(EPOCH). Both clamp negative to 0.
+func (d Dialect) durationMsSQL(endExpr, startExpr string) string {
+	if d.IsPostgres() {
+		return fmt.Sprintf(
+			"GREATEST(0, CAST(ROUND(EXTRACT(EPOCH FROM ((%s)::timestamptz - (%s)::timestamptz)) * 1000) AS BIGINT))",
+			endExpr, startExpr,
+		)
+	}
+	return fmt.Sprintf(
+		"MAX(0, CAST((julianday(%s) - julianday(%s)) * 86400000 AS INTEGER))",
+		endExpr, startExpr,
+	)
+}
+
 // datetimeLT compares COALESCE timestamps against a bound cutoff (RFC3339 string).
 func (d Dialect) datetimeLT(expr string) string {
 	if d.IsPostgres() {
