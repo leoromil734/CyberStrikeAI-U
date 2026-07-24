@@ -1,9 +1,14 @@
 name: "scout-suite"
 command: "scout"
-enabled: true
-short_description: "多云安全评估工具"
+# 云审计主用 prowler（维护更活跃）。Scout Suite 保留作多云补充，默认关闭
+enabled: false
+short_description: "多云安全评估工具（次选，主用 prowler）"
 description: |
   Scout Suite是一个多云安全评估工具，支持AWS、Azure、GCP、Aliyun和OCI。
+
+  **状态：次选（默认关闭）**
+  - 主用工具请改用 **prowler**（`tools/prowler.yaml`）
+  - 需要 Aliyun/OCI 等 Scout 特长时再启用本工具
 
   **主要功能：**
   - 多云安全评估

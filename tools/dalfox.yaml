@@ -4,9 +4,11 @@ command: "dalfox"
 args:
   - "url"
 enabled: true
-short_description: "高级XSS漏洞扫描器"
+short_description: "高级XSS漏洞扫描器（替代 xsser）"
 description: |
   Dalfox是一个高级XSS漏洞扫描器，支持多种XSS检测技术。
+
+  **定位：** XSS 检测的**主用工具**（替代已弃用的 xsser）。
 
   **主要功能：**
   - XSS漏洞检测

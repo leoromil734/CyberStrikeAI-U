@@ -1,9 +1,11 @@
 name: "ffuf"
 command: "ffuf"
 enabled: true
-short_description: "快速Web模糊测试工具，用于目录、参数和内容发现"
+short_description: "快速Web模糊测试工具（替代 gobuster）"
 description: |
   FFuf是一个快速的Web模糊测试工具，用于目录发现、参数模糊测试和内容发现。
+
+  **定位：** Web 模糊/目录发现的**主用工具**（替代已弃用的 gobuster；也可与 dirsearch 配合）。
 
   **主要功能：**
   - 快速目录和文件发现

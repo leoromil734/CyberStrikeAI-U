@@ -8,7 +8,7 @@
 cmd/server/              Web 服务入口
 internal/app/            应用组装、路由注册、MCP 工具注册
 internal/handler/        HTTP Handler
-internal/database/       SQLite 数据访问
+internal/database/       数据访问（SQLite / PostgreSQL）
 internal/security/       认证、限流、Shell 执行
 internal/mcp/            MCP Server、外部 MCP 管理
 internal/multiagent/     Eino 单代理、多代理、中间件

@@ -1,0 +1,57 @@
+name: "interactsh-client"
+command: "interactsh-client"
+enabled: true
+
+short_description: "OAST/OOB 回连客户端（ProjectDiscovery Interactsh），盲注/SSRF/XXE 外带验证"
+
+description: |
+  interactsh-client：获取可观察的 OAST 域名/URL，用于盲漏洞外带验证。
+
+  **定位：** 盲 SQLi / 盲 SSRF / XXE / 盲 XSS 的 **正证据基础设施**（与 dnslog 工具互补）。
+  **推荐用法：** 先启动/获取 payload 域名 → 在目标注入回调 → 观察交互日志 → 有回连才可 confirmed。
+
+  **主要功能：**
+  - 生成唯一交互域名
+  - 轮询 DNS/HTTP/SMTP 等交互事件
+  - JSON 输出便于记录到 POC
+
+  **使用场景：**
+  - 无回显注入确认
+  - SSRF 打到外网监听
+  - 模板/日志型漏洞 OOB
+
+  **注意事项：**
+  - 默认使用公共 Interactsh 服务器时注意隐私与可用性；企业环境可自建
+  - 回连本身只证明「出网/解析」，影响评估仍需结合上下文
+  - 验证铁律：有 OOB 事件 + 可控输入关联 才可 record_vulnerability
+
+parameters:
+  - name: "json"
+    type: "bool"
+    description: "JSON 行输出（便于解析）"
+    required: false
+    flag: "-json"
+    format: "flag"
+    default: true
+  - name: "n"
+    type: "int"
+    description: "生成的 payload 数量"
+    required: false
+    flag: "-n"
+    format: "flag"
+    default: 1
+  - name: "v"
+    type: "bool"
+    description: "详细模式"
+    required: false
+    flag: "-v"
+    format: "flag"
+    default: false
+  - name: "additional_args"
+    type: "string"
+    description: |
+      额外 interactsh-client 参数。
+      示例：-ss session.json -o interactions.json
+      自建服务器：-s your-interactsh.example
+    required: false
+    format: "positional"

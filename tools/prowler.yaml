@@ -1,9 +1,11 @@
 name: "prowler"
 command: "prowler"
 enabled: true
-short_description: "云安全评估工具（AWS, Azure, GCP）"
+short_description: "云安全评估主用工具（AWS/Azure/GCP，优先于 scout）"
 description: |
   Prowler是一个全面的云安全评估工具，支持AWS、Azure和GCP。
+
+  **定位：** 云配置/合规审计的**主用工具**（优先于 scout-suite；Scout 默认已关闭）。
 
   **主要功能：**
   - 云安全评估

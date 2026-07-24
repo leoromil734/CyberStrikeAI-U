@@ -2,10 +2,12 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"cyberstrike-ai/internal/database"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
@@ -15,8 +17,9 @@ import (
 )
 
 // SQLiteIndexer implements [indexer.Indexer] against knowledge_embeddings + existing schema.
+// 命名保留 SQLite；底层为 dialect-aware *database.DB（sqlite | postgres）。
 type SQLiteIndexer struct {
-	db             *sql.DB
+	db             *database.DB
 	batchSize      int
 	embeddingModel string
 }
@@ -24,7 +27,7 @@ type SQLiteIndexer struct {
 // NewSQLiteIndexer returns an indexer that writes chunk rows for one knowledge item per Store call.
 // batchSize is the embedding batch size; if <= 0, default 64 is used.
 // embeddingModel is persisted per row for retrieval-time consistency checks (may be empty).
-func NewSQLiteIndexer(db *sql.DB, batchSize int, embeddingModel string) *SQLiteIndexer {
+func NewSQLiteIndexer(db *database.DB, batchSize int, embeddingModel string) *SQLiteIndexer {
 	return &SQLiteIndexer{db: db, batchSize: batchSize, embeddingModel: strings.TrimSpace(embeddingModel)}
 }
 
@@ -100,6 +103,7 @@ func (s *SQLiteIndexer) Store(ctx context.Context, docs []*schema.Document, opts
 	defer tx.Rollback()
 
 	ids = make([]string, 0, len(docs))
+	now := time.Now().UTC()
 	for i, d := range docs {
 		chunkID := uuid.New().String()
 		itemID, metaErr := RequireMetaString(d.MetaData, metaKBItemID)
@@ -122,10 +126,11 @@ func (s *SQLiteIndexer) Store(ctx context.Context, docs []*schema.Document, opts
 		if jsonErr != nil {
 			return nil, fmt.Errorf("sqlite indexer: marshal embedding: %w", jsonErr)
 		}
+		// 用 Go 侧时间，避免依赖 datetime('now') 在 PG 上的适配差异
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO knowledge_embeddings (id, item_id, chunk_index, chunk_text, embedding, sub_indexes, embedding_model, embedding_dim, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-			chunkID, itemID, chunkIdx, d.Content, string(embeddingJSON), subIdxStr, s.embeddingModel, embedDim,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chunkID, itemID, chunkIdx, d.Content, string(embeddingJSON), subIdxStr, s.embeddingModel, embedDim, now,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("sqlite indexer: insert chunk %d: %w", i, err)

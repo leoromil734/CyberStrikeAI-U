@@ -10,7 +10,7 @@ This guide is for contributors extending CyberStrikeAI. The project is a Go sing
 cmd/server/              service entrypoint
 internal/app/            app wiring, routes, MCP tool registration
 internal/handler/        HTTP handlers
-internal/database/       SQLite access
+internal/database/       Data access (SQLite / PostgreSQL)
 internal/security/       auth, rate limits, shell execution
 internal/mcp/            MCP server and external MCP manager
 internal/multiagent/     Eino single-agent, multi-agent, middleware

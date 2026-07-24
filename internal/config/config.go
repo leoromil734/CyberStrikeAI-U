@@ -1032,8 +1032,28 @@ type SecurityConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path            string `yaml:"path"`                        // 会话数据库路径
-	KnowledgeDBPath string `yaml:"knowledge_db_path,omitempty"` // 知识库数据库路径（可选，为空则使用会话数据库）
+	// Driver: sqlite (默认) | postgres
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
+	// Path SQLite 会话库文件路径（driver=sqlite）
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
+	// KnowledgeDBPath SQLite 知识库路径；为空则与会话库共用（driver=sqlite）
+	KnowledgeDBPath string `yaml:"knowledge_db_path,omitempty" json:"knowledge_db_path,omitempty"`
+
+	// PostgreSQL（driver=postgres）：可用完整 DSN，或 host/port/user/password/dbname
+	DSN      string `yaml:"dsn,omitempty" json:"dsn,omitempty"`
+	Host     string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
+	User     string `yaml:"user,omitempty" json:"user,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	DBName   string `yaml:"dbname,omitempty" json:"dbname,omitempty"`
+	SSLMode  string `yaml:"sslmode,omitempty" json:"sslmode,omitempty"` // 默认 disable
+
+	// KnowledgeDSN 独立知识库 Postgres DSN；优先于 KnowledgeDBName
+	KnowledgeDSN string `yaml:"knowledge_dsn,omitempty" json:"knowledge_dsn,omitempty"`
+	// KnowledgeDBName 同一 Postgres 实例上的知识库数据库名；空则与主库同库（仅表隔离）
+	KnowledgeDBName string `yaml:"knowledge_dbname,omitempty" json:"knowledge_dbname,omitempty"`
+	// KnowledgeSeparate 为 true 时必须配置 knowledge_dsn 或 knowledge_dbname（postgres）
+	// 为 false 且未配置时，知识库表建在主库中。
 }
 
 type AgentConfig struct {
@@ -1875,6 +1895,7 @@ func Default() *Config {
 			ToolsDir: "tools",        // 默认工具目录
 		},
 		Database: DatabaseConfig{
+			Driver:          "sqlite",
 			Path:            "data/conversations.db",
 			KnowledgeDBPath: "data/knowledge.db", // 默认知识库数据库路径
 		},

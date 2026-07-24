@@ -1,10 +1,15 @@
 name: "jaeles"
 command: "jaeles"
 args: ["scan"]
-enabled: true
-short_description: "高级漏洞扫描器，支持自定义签名"
+# 已由 nuclei 替代（模板生态更大、更新更勤）。需要时改回 enabled: true
+enabled: false
+short_description: "高级漏洞扫描器（已弃用，请用 nuclei）"
 description: |
   Jaeles是一个高级漏洞扫描器，支持自定义签名进行漏洞检测。
+
+  **状态：已弃用（默认关闭）**
+  - 主用工具请改用 **nuclei**（`tools/nuclei.yaml`）
+  - 本配置保留仅作兼容，不建议新任务调用
 
   **主要功能：**
   - 自定义签名支持

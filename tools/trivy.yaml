@@ -1,9 +1,11 @@
 name: "trivy"
 command: "trivy"
 enabled: true
-short_description: "容器和文件系统漏洞扫描器"
+short_description: "容器和文件系统漏洞扫描器（替代 clair）"
 description: |
   Trivy是一个简单而全面的容器和文件系统漏洞扫描器。
+
+  **定位：** 容器/镜像/FS 漏洞扫描的**主用工具**（替代已弃用的 clair）。
 
   **主要功能：**
   - 容器镜像扫描

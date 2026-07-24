@@ -215,14 +215,18 @@ func (db *DB) migrateRBACOwnershipColumns() error {
 }
 
 func (db *DB) addColumnIfMissing(table, name, stmt string) error {
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, name).Scan(&count)
-	if err != nil || count == 0 {
-		if _, addErr := db.Exec(stmt); addErr != nil {
-			msg := strings.ToLower(addErr.Error())
-			if !strings.Contains(msg, "duplicate column") && !strings.Contains(msg, "already exists") {
-				return fmt.Errorf("添加%s.%s字段失败: %w", table, name, addErr)
-			}
+	exists, err := db.columnExists(table, name)
+	if err != nil {
+		// 表可能尚不存在：尝试直接 ADD，忽略重复列错误
+		exists = false
+	}
+	if exists {
+		return nil
+	}
+	if _, addErr := db.Exec(stmt); addErr != nil {
+		msg := strings.ToLower(addErr.Error())
+		if !strings.Contains(msg, "duplicate column") && !strings.Contains(msg, "already exists") {
+			return fmt.Errorf("添加%s.%s字段失败: %w", table, name, addErr)
 		}
 	}
 	return nil
@@ -349,7 +353,7 @@ func (db *DB) BootstrapRBAC(adminPasswordHash string, permissions map[string]str
 	return tx.Commit()
 }
 
-func grantSystemRolePermissions(tx *sql.Tx, permissions map[string]string) error {
+func grantSystemRolePermissions(tx *Tx, permissions map[string]string) error {
 	now := time.Now()
 	// System roles are immutable and owned by the application. Rebuild their
 	// grants deterministically so policy tightening also removes permissions

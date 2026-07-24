@@ -2,13 +2,13 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/database"
 
 	fileloader "github.com/cloudwego/eino-ext/components/document/loader/file"
 	"github.com/cloudwego/eino/components/document"
@@ -18,9 +18,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// Indexer 使用 Eino Compose 索引链（Markdown/递归分块、Lambda  enrich、SQLite 索引）与嵌入写入。
+// Indexer 使用 Eino Compose 索引链（Markdown/递归分块、Lambda enrich、SQL 索引）与嵌入写入。
 type Indexer struct {
-	db          *sql.DB
+	db          *database.DB
 	embedder    *Embedder
 	logger      *zap.Logger
 	chunkSize   int
@@ -46,7 +46,7 @@ type Indexer struct {
 }
 
 // NewIndexer 创建索引器并编译 Eino 索引链；kcfg 为完整知识库配置（含 indexing 与路径相关行为）。
-func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap.Logger, kcfg *config.KnowledgeConfig) (*Indexer, error) {
+func NewIndexer(ctx context.Context, db *database.DB, embedder *Embedder, logger *zap.Logger, kcfg *config.KnowledgeConfig) (*Indexer, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db is nil")
 	}

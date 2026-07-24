@@ -1,11 +1,14 @@
 ---
 name: zero-day-discovery
 description: >-
-  0day自主发现引擎:变体分析/补丁间隙/差分/Fuzzing/污点推理/N-day武器化/猎人思维。Use when public vulns not found and need to discover 0day or weaponize N-day.
+  0day自主发现引擎:变体分析/补丁间隙/差分/Fuzzing/污点推理/N-day武器化/猎人思维。
+  每个候选须单步验证钉死后再 confirmed。Use when public vulns not found and need to discover 0day or weaponize N-day.
 tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 0day 自主发现引擎（全网搜不到漏洞时自己挖）
+
+与 `pentest-verification` 同级：推导出的链仍是**假设**，直到最小 PoC 证据齐全才能 record。优先在已映射入口上做差分/污点/变体，避免无目标 fuzz。
 
 ```
 核心转变: 从"匹配已知漏洞库"→"理解代码/协议怎么工作,推断它哪里会坏"。0day不是运气,是方法。

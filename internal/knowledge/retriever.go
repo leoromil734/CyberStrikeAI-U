@@ -2,7 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,16 +10,17 @@ import (
 	"sync"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/database"
 
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
 
-// Retriever 检索器：SQLite 存向量 + Eino 嵌入，**纯向量检索**（余弦相似度、TopK、阈值），
+// Retriever 检索器：SQL 存向量 + Eino 嵌入，**纯向量检索**（余弦相似度、TopK、阈值），
 // 实现语义与 [retriever.Retriever] 适配层 [VectorEinoRetriever] 一致。
 type Retriever struct {
-	db       *sql.DB
+	db       *database.DB
 	embedder *Embedder
 	config   *RetrievalConfig
 	logger   *zap.Logger
@@ -28,7 +28,7 @@ type Retriever struct {
 	rerankMu sync.RWMutex
 	reranker DocumentReranker
 
-	pipeline retriever.Retriever
+	pipeline   retriever.Retriever
 	wireOpenAI *config.OpenAIConfig
 }
 
@@ -43,7 +43,7 @@ type RetrievalConfig struct {
 }
 
 // NewRetriever 创建新的检索器
-func NewRetriever(db *sql.DB, embedder *Embedder, config *RetrievalConfig, logger *zap.Logger) *Retriever {
+func NewRetriever(db *database.DB, embedder *Embedder, config *RetrievalConfig, logger *zap.Logger) *Retriever {
 	return &Retriever{
 		db:       db,
 		embedder: embedder,
@@ -175,12 +175,21 @@ JOIN knowledge_base_items i ON e.item_id = i.id
 WHERE 1=1`
 	var args []interface{}
 	if strings.TrimSpace(riskType) != "" {
-		q += ` AND TRIM(i.category) = TRIM(?) COLLATE NOCASE`
+		if r != nil && r.db != nil && r.db.IsPostgres() {
+			q += ` AND LOWER(TRIM(i.category)) = LOWER(TRIM(?))`
+		} else {
+			q += ` AND TRIM(i.category) = TRIM(?) COLLATE NOCASE`
+		}
 		args = append(args, riskType)
 	}
 	if tag := strings.TrimSpace(subIndexFilter); tag != "" {
 		tag = strings.ToLower(strings.ReplaceAll(tag, " ", ""))
-		q += ` AND (TRIM(COALESCE(e.sub_indexes,'')) = '' OR INSTR(',' || LOWER(REPLACE(e.sub_indexes,' ','')) || ',', ',' || ? || ',') > 0)`
+		if r != nil && r.db != nil && r.db.IsPostgres() {
+			// PG: position(needle in haystack) > 0 等价于 INSTR
+			q += ` AND (TRIM(COALESCE(e.sub_indexes,'')) = '' OR POSITION(',' || ? || ',' IN ',' || LOWER(REPLACE(e.sub_indexes,' ','')) || ',') > 0)`
+		} else {
+			q += ` AND (TRIM(COALESCE(e.sub_indexes,'')) = '' OR INSTR(',' || LOWER(REPLACE(e.sub_indexes,' ','')) || ',', ',' || ? || ',') > 0)`
+		}
 		args = append(args, tag)
 	}
 	return q, args

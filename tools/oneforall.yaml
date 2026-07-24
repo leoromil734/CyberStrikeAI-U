@@ -1,0 +1,103 @@
+name: "oneforall"
+command: "oneforall"
+enabled: true
+
+short_description: "子域收集框架，多数据源被动+主动枚举（OneForAll）"
+
+description: |
+  OneForAll（shmilylty/OneForAll）是子域名收集框架，整合多种被动数据源与主动爆破。
+
+  **主要功能：**
+  - 多接口被动收集（证书透明度、搜索引擎、DNS 数据集等）
+  - 子域爆破、解析校验、存活探测（依赖其内置模块）
+  - 结果导出（csv/json 等，视版本与参数）
+
+  **使用场景：**
+  - 资产发现、子域枚举
+  - 与 subfinder/amass 互补（源不同，可交叉验证）
+  - 输出再交给 **httpx** 探活、**nuclei** 扫描
+
+  **推荐链路：**
+  - **oneforall** / subfinder → httpx → nuclei / ffuf
+
+  **与 subfinder 的关系：**
+  - subfinder：轻量、偏被动 API，适合快速一轮
+  - oneforall：更重、模块多，适合深度收集
+  - 可并存，不必二选一
+
+  **CLI 形态：**
+  - 等价：`oneforall --target example.com run`
+  - 参数映射：flag 在前，`run` 作为末尾位置参数（position≥1）
+
+  **注意事项：**
+  - 首次运行会拉依赖/数据，耗时较长
+  - 部分数据源需自行配置 API Key（安装目录 `/opt/OneForAll` 内 config）
+  - 仅在授权范围内使用；主动爆破可能产生大量 DNS 查询
+
+parameters:
+  - name: "target"
+    type: "string"
+    description: |
+      目标主域名（不要带协议）。
+
+      **示例值：**
+      - "example.com"
+
+      **注意事项：**
+      - 对应 `--target`
+    required: true
+    flag: "--target"
+    format: "flag"
+
+  - name: "fmt"
+    type: "string"
+    description: |
+      导出格式（若当前版本支持 `--fmt`）。
+
+      **示例值：**
+      - "csv"
+      - "json"
+    required: false
+    flag: "--fmt"
+    format: "flag"
+
+  - name: "path"
+    type: "string"
+    description: |
+      结果导出路径（若当前版本支持 `--path`）。
+
+      **示例值：**
+      - "/tmp/oneforall_results"
+    required: false
+    flag: "--path"
+    format: "flag"
+
+  - name: "action"
+    type: "string"
+    description: |
+      子命令，放在所有 flag 之后。完整收集使用 `run`。
+
+      **示例值：**
+      - "run"
+
+      **注意事项：**
+      - 必须用 position≥1，避免变成 `oneforall run --target ...`（上游不接受）
+    required: false
+    default: "run"
+    position: 1
+    format: "positional"
+
+  - name: "additional_args"
+    type: "string"
+    description: |
+      额外 OneForAll 参数，多个用空格分隔（追加在命令末尾）。
+
+      **示例值：**
+      - "--brute True"
+      - "--dns True --req True"
+
+      **注意事项：**
+      - 参数名随 OneForAll 版本可能变化，以 `oneforall --help` 为准
+      - 若与 `action` 冲突，优先保证 `run` 仍在合理位置
+    required: false
+    format: "positional"

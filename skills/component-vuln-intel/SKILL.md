@@ -1,11 +1,14 @@
 ---
 name: component-vuln-intel
 description: >-
-  联网情报收集:识别组件后必做CVE/搜索引擎/中文社区/GitHub PoC/资产引擎/即时情报/依赖扩展+受阻换路。Use when a framework/component/version is identified and must search before exploit.
+  联网情报收集:识别组件后必做CVE/搜索引擎/中文社区/GitHub PoC/资产引擎/即时情报/依赖扩展+受阻换路。
+  全部产出为线索/tentative,验证前禁止 record_vulnerability。Use when a framework/component/version is identified and must search before exploit.
 tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 联网情报收集（识别组件→立即全网搜；结果=线索/tentative，验证前不是 confirmed Fact）
+
+**出口纪律**：本 skill 结束时应得到「候选 CVE/PoC 链接 + 建议验证步骤」，并 `upsert_project_fact`（confidence=tentative）。**禁止**在本 skill 内直接 `record_vulnerability`。验证交给 `web-attack-methods` / penetration 与 `pentest-verification`。
 
 ```
 🔴一识别出框架/组件/版本 → 必须停本地扫描立即联网(不搜就利用=盲打=违反铁律)。

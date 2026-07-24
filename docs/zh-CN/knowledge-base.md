@@ -14,10 +14,12 @@ knowledge:
     base_url: ""
     api_key: ""
 database:
+  # SQLite：独立知识库文件（推荐）
   knowledge_db_path: data/knowledge.db
+  # PostgreSQL：默认同主库；可选 knowledge_dbname / knowledge_dsn
 ```
 
-`embedding.base_url/api_key` 留空时会复用 `openai` 配置。建议知识库数据库独立保存，便于迁移和复用。
+`embedding.base_url/api_key` 留空时会复用 `openai` 配置。SQLite 下建议知识库独立文件；PostgreSQL 下可同库表隔离或独立库。
 
 ## 内容目录
 

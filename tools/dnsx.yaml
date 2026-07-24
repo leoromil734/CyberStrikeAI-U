@@ -1,0 +1,84 @@
+name: "dnsx"
+command: "dnsx"
+enabled: true
+
+short_description: "DNS 解析与记录探测（ProjectDiscovery），子域列表探活与记录枚举"
+
+description: |
+  dnsx：对主机名/子域列表做高速 DNS 解析与记录探测。
+
+  **定位：** subfinder/amass/oneforall 之后、httpx 之前的 **DNS 存活与记录层**。
+  **推荐链路：** subfinder → **dnsx** → httpx → naabu/nmap → nuclei
+
+  **主要功能：**
+  - A/AAAA/CNAME/MX/NS/TXT 等记录探测
+  - 批量解析、静默输出，便于管道
+  - 过滤可解析主机，减少对死域的 HTTP/端口浪费
+
+  **使用场景：**
+  - 子域枚举结果清洗
+  - 通配符/CDN CNAME 线索
+  - 授权范围内的 DNS 测绘
+
+  **注意事项：**
+  - 不是端口扫描器（端口用 naabu/nmap）
+  - 仅在授权范围内使用；控制并发避免打爆公共 DNS
+
+parameters:
+  - name: "list"
+    type: "string"
+    description: |
+      主机名列表文件路径（每行一个）。与 domain 二选一或配合使用。
+      示例：subs.txt
+    required: false
+    flag: "-l"
+    format: "flag"
+  - name: "domain"
+    type: "string"
+    description: |
+      单个域名/主机。示例：example.com
+    required: false
+    flag: "-d"
+    format: "flag"
+  - name: "a"
+    type: "bool"
+    description: "显示 A 记录"
+    required: false
+    flag: "-a"
+    format: "flag"
+    default: true
+  - name: "aaaa"
+    type: "bool"
+    description: "显示 AAAA 记录"
+    required: false
+    flag: "-aaaa"
+    format: "flag"
+    default: false
+  - name: "cname"
+    type: "bool"
+    description: "显示 CNAME"
+    required: false
+    flag: "-cname"
+    format: "flag"
+    default: false
+  - name: "resp"
+    type: "bool"
+    description: "在输出中显示响应详情"
+    required: false
+    flag: "-resp"
+    format: "flag"
+    default: true
+  - name: "silent"
+    type: "bool"
+    description: "静默模式，仅输出结果"
+    required: false
+    flag: "-silent"
+    format: "flag"
+    default: true
+  - name: "additional_args"
+    type: "string"
+    description: |
+      额外 dnsx 参数（空格分隔），直接追加命令末尾。
+      示例：-mx -ns -txt -retry 2
+    required: false
+    format: "positional"

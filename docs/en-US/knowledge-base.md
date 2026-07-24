@@ -14,10 +14,12 @@ knowledge:
     provider: openai
     model: text-embedding-v4
 database:
+  # SQLite separate knowledge file (recommended for local)
   knowledge_db_path: data/knowledge.db
+  # PostgreSQL: same DB by default; optional knowledge_dbname / knowledge_dsn
 ```
 
-Keep the knowledge DB separate when you want portable reusable indexes.
+Keep the knowledge DB separate when you want portable reusable indexes (SQLite file or a second Postgres database).
 
 ## Internal Pipeline
 
@@ -26,7 +28,7 @@ flowchart LR
     F["Markdown / Web item"] --> M["Manager"]
     M --> C["Chunker"]
     C --> E["Embedding"]
-    E --> V["SQLite Vector Index"]
+    E --> V["SQL Vector Index"]
     Q["Agent query"] --> MQ["MultiQuery"]
     MQ --> V
     V --> R["Rerank"]

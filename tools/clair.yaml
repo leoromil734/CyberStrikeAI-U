@@ -1,9 +1,14 @@
 name: "clair"
 command: "clair"
+# 已由 trivy 替代（安装与使用更简单）。需要时改回 enabled: true
 enabled: false
-short_description: "容器漏洞分析工具"
+short_description: "容器漏洞分析工具（已弃用，请用 trivy）"
 description: |
   Clair是一个容器漏洞分析工具，用于扫描容器镜像中的漏洞。
+
+  **状态：已弃用（默认关闭）**
+  - 主用工具请改用 **trivy**（`tools/trivy.yaml`）
+  - 本配置保留仅作兼容，不建议新任务调用
 
   **主要功能：**
   - 容器镜像扫描

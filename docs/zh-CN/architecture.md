@@ -93,7 +93,7 @@ MCP 相关：
 
 ## 数据层
 
-`internal/database/` 封装 SQLite 访问，保存：
+`internal/database/` 封装数据访问，支持 **SQLite** 与 **PostgreSQL**（`config.database.driver`），保存：
 
 - 对话、消息、过程详情。
 - 分组。
@@ -102,10 +102,12 @@ MCP 相关：
 - 知识库索引和检索日志。
 - WebShell、C2、项目、漏洞、批量任务等业务数据。
 
-默认数据库文件：
+默认（SQLite）文件：
 
 - `data/conversations.db`
 - `data/knowledge.db`
+
+PostgreSQL 时使用 `dsn` / `host` 等字段；知识库可与主库同库，或通过 `knowledge_dsn` / `knowledge_dbname` 分离。
 
 ## 安全与审计
 

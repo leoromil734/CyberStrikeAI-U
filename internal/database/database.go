@@ -47,6 +47,7 @@ func configureSQLitePragmas(db *sql.DB) error {
 // DB 数据库连接
 type DB struct {
 	*sql.DB
+	dialect                  Dialect
 	logger                   *zap.Logger
 	conversationArtifactsDir string
 	einoPlantaskBaseDir      string // skills_dir + plantask_rel_dir (per-conversation subdirs)
@@ -90,7 +91,7 @@ func (db *DB) startPassiveCheckpointLoop(name string) {
 
 // runPassiveCheckpoint 执行一次 PRAGMA wal_checkpoint(PASSIVE)。
 func (db *DB) runPassiveCheckpoint(trigger string) {
-	if db == nil || db.DB == nil {
+	if db == nil || db.DB == nil || !db.Dialect().IsSQLite() {
 		return
 	}
 	startAt := time.Now()
@@ -120,44 +121,15 @@ func (db *DB) runPassiveCheckpoint(trigger string) {
 	db.logger.Debug("SQLite PASSIVE checkpoint 完成（成功）", fields...)
 }
 
-// NewDB 创建数据库连接
+// NewDB 创建 SQLite 会话数据库连接（测试与向后兼容入口）。
+// 生产环境请优先使用 Open / OpenFromConfig（支持 postgres）。
 func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
-	if err != nil {
-		return nil, fmt.Errorf("打开数据库失败: %w", err)
-	}
-
-	configureDBPool(db)
-
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("连接数据库失败: %w", err)
-	}
-	if err := configureSQLitePragmas(db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("配置数据库 PRAGMA 失败: %w", err)
-	}
-
-	database := &DB{
-		DB:     db,
-		logger: logger,
-	}
-	// Keep conversation-scoped artifacts near database files, so cleanup can follow conversation lifecycle.
-	baseDir := filepath.Join(filepath.Dir(dbPath), "conversation_artifacts")
-	if mkErr := os.MkdirAll(baseDir, 0o755); mkErr == nil {
-		database.conversationArtifactsDir = baseDir
-	} else if logger != nil {
-		logger.Warn("创建 conversation artifacts 目录失败", zap.String("dir", baseDir), zap.Error(mkErr))
-	}
-
-	// 初始化表
-	if err := database.initTables(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("初始化表失败: %w", err)
-	}
-	database.startPassiveCheckpointLoop("conversations")
-
-	return database, nil
+	return Open(OpenOptions{
+		Dialect:          DialectSQLite,
+		Path:             dbPath,
+		ArtifactsBaseDir: filepath.Dir(dbPath),
+		Logger:           logger,
+	})
 }
 
 // SetEinoConversationDirs configures best-effort filesystem cleanup on DeleteConversation.
@@ -1461,6 +1433,22 @@ func (db *DB) dropProjectFactVersionsTable() error {
 
 // migrateVulnerabilitiesConversationFK 将 vulnerabilities.conversation_id 外键改为 ON DELETE SET NULL，删除对话时保留漏洞记录。
 func (db *DB) migrateVulnerabilitiesConversationFK() error {
+	if db.IsPostgres() {
+		// PostgreSQL：新建表即使用 ON DELETE SET NULL；已有库通过 information_schema 检查，不做表重建。
+		ok, err := vulnerabilitiesConversationFKOnDeleteSetNullPG(db)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		// 无 FK 或旧定义：仅确保 conversation_id 可空（PG ADD 不改 FK 时跳过重表，记录警告）
+		if db.logger != nil {
+			db.logger.Warn("PostgreSQL vulnerabilities.conversation_id 外键未检测为 ON DELETE SET NULL；请确认建表 DDL 或手动迁移")
+		}
+		return nil
+	}
+
 	ok, err := vulnerabilitiesConversationFKOnDeleteSetNull(db.DB)
 	if err != nil {
 		return err
@@ -1575,6 +1563,24 @@ func vulnerabilitiesConversationFKOnDeleteSetNull(db *sql.DB) (bool, error) {
 	return found, nil
 }
 
+func vulnerabilitiesConversationFKOnDeleteSetNullPG(db *DB) (bool, error) {
+	// Look for FK from vulnerabilities.conversation_id with delete_rule SET NULL
+	const q = `
+SELECT COUNT(*) FROM information_schema.referential_constraints rc
+JOIN information_schema.key_column_usage kcu
+  ON rc.constraint_name = kcu.constraint_name AND rc.constraint_schema = kcu.constraint_schema
+WHERE kcu.table_schema = current_schema()
+  AND kcu.table_name = 'vulnerabilities'
+  AND kcu.column_name = 'conversation_id'
+  AND rc.delete_rule = 'SET NULL'`
+	var n int
+	if err := db.QueryRow(q).Scan(&n); err != nil {
+		// 无权限或无表：视为已处理（建表路径负责正确 DDL）
+		return true, nil
+	}
+	return n > 0, nil
+}
+
 // migrateVulnerabilitiesTable 迁移 vulnerabilities 表，补充标签字段
 func (db *DB) migrateVulnerabilitiesTable() error {
 	columns := []struct {
@@ -1647,37 +1653,23 @@ func (db *DB) migrateC2ListenersTable() error {
 	return db.addColumnIfMissing("c2_listeners", "project_id", "ALTER TABLE c2_listeners ADD COLUMN project_id TEXT")
 }
 
-// NewKnowledgeDB 创建知识库数据库连接（只包含知识库相关的表）
+// NewKnowledgeDB 创建 SQLite 知识库数据库连接（只包含知识库相关的表）。
+// 生产环境请优先使用 OpenKnowledgeFromConfig（支持 postgres）。
 func NewKnowledgeDB(dbPath string, logger *zap.Logger) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
-	if err != nil {
-		return nil, fmt.Errorf("打开知识库数据库失败: %w", err)
-	}
+	return Open(OpenOptions{
+		Dialect:       DialectSQLite,
+		Path:          dbPath,
+		KnowledgeOnly: true,
+		Logger:        logger,
+	})
+}
 
-	configureDBPool(sqlDB)
-
-	if err := sqlDB.Ping(); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("连接知识库数据库失败: %w", err)
+// EnsureKnowledgeSchema 在当前库上确保知识库相关表存在（会话库与知识库共用时调用）。
+func (db *DB) EnsureKnowledgeSchema() error {
+	if db == nil {
+		return fmt.Errorf("db is nil")
 	}
-	if err := configureSQLitePragmas(sqlDB); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("配置知识库数据库 PRAGMA 失败: %w", err)
-	}
-
-	database := &DB{
-		DB:     sqlDB,
-		logger: logger,
-	}
-
-	// 初始化知识库表
-	if err := database.initKnowledgeTables(); err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("初始化知识库表失败: %w", err)
-	}
-	database.startPassiveCheckpointLoop("knowledge")
-
-	return database, nil
+	return db.initKnowledgeTables()
 }
 
 // initKnowledgeTables 初始化知识库数据库表（只包含知识库相关的表）
@@ -1756,11 +1748,11 @@ func (db *DB) initKnowledgeTables() error {
 
 // migrateKnowledgeEmbeddingsColumns 为已有库补充 sub_indexes、embedding_model、embedding_dim。
 func (db *DB) migrateKnowledgeEmbeddingsColumns() error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='knowledge_embeddings'`).Scan(&n); err != nil {
+	exists, err := db.tableExists("knowledge_embeddings")
+	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if !exists {
 		return nil
 	}
 	migrations := []struct {
@@ -1772,15 +1764,7 @@ func (db *DB) migrateKnowledgeEmbeddingsColumns() error {
 		{"embedding_dim", `ALTER TABLE knowledge_embeddings ADD COLUMN embedding_dim INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
-		var colCount int
-		q := `SELECT COUNT(*) FROM pragma_table_info('knowledge_embeddings') WHERE name = ?`
-		if err := db.QueryRow(q, m.col).Scan(&colCount); err != nil {
-			return err
-		}
-		if colCount > 0 {
-			continue
-		}
-		if _, err := db.Exec(m.stmt); err != nil {
+		if err := db.addColumnIfMissing("knowledge_embeddings", m.col, m.stmt); err != nil {
 			return err
 		}
 	}

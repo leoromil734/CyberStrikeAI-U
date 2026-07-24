@@ -189,13 +189,34 @@ knowledge:
 
 ## 数据库
 
+支持 **SQLite**（默认）与 **PostgreSQL**。
+
+### SQLite（默认）
+
 ```yaml
 database:
+  driver: sqlite
   path: data/conversations.db
   knowledge_db_path: data/knowledge.db
 ```
 
-默认使用 SQLite。`knowledge_db_path` 为空时可复用会话数据库；独立文件更便于迁移知识库。
+`knowledge_db_path` 为空时可复用会话数据库；独立文件更便于迁移知识库。
+
+### PostgreSQL
+
+```yaml
+database:
+  driver: postgres
+  # 完整 DSN，或改用 host/port/user/password/dbname/sslmode
+  dsn: "postgres://cyberstrike:password@127.0.0.1:5432/cyberstrike?sslmode=disable"
+  # 知识库默认同库（仅表隔离）。可选独立库：
+  # knowledge_dbname: cyberstrike_knowledge
+  # knowledge_dsn: "postgres://cyberstrike:password@127.0.0.1:5432/cyberstrike_knowledge?sslmode=disable"
+```
+
+- `driver`：`sqlite`（默认）| `postgres`
+- 生产环境推荐 PostgreSQL；本地开发可继续用 SQLite
+- 业务 SQL 经 `internal/database` 方言适配层（占位符、`INSERT OR`、时间函数等），调用方仍写 SQLite 风格 `?` 即可
 
 ## 审计与监控
 
@@ -263,7 +284,8 @@ project:
 - `hitl.audit_model` 留空时复用默认 AI 通道解析后的 `openai`。
 - `knowledge.embedding.base_url/api_key` 留空时复用主模型或 embedding 默认配置。
 - `knowledge.retrieval.rerank.base_url/api_key` 留空时复用 embedding/openai。
-- `database.knowledge_db_path` 留空时可以复用主会话数据库，但独立文件更利于备份。
+- `database.knowledge_db_path`（SQLite）留空时可复用主会话数据库，但独立文件更利于备份。
+- PostgreSQL 下知识库默认与主库同库；配置 `knowledge_dsn` 或 `knowledge_dbname` 可分离。
 
 这类配置排障时不要只看子配置段，也要看它会回落到哪个上级配置。
 

@@ -34,6 +34,30 @@ Change the initial `admin` password from the Web UI after first login. Use HTTPS
 
 Valid Chromium `chrome-extension://<32-character-extension-id>` origins are recognized automatically. The extension must still obtain host permission and authenticate with a password and Bearer token. `server.cors_allowed_origins` remains available as an exact allowlist for other trusted Web integrations; wildcards are not accepted, and changing it requires a restart.
 
+## Database
+
+Supports **SQLite** (default) and **PostgreSQL**.
+
+```yaml
+# SQLite
+database:
+  driver: sqlite
+  path: data/conversations.db
+  knowledge_db_path: data/knowledge.db
+
+# PostgreSQL
+# database:
+#   driver: postgres
+#   dsn: "postgres://cyberstrike:password@127.0.0.1:5432/cyberstrike?sslmode=disable"
+#   # optional separate knowledge DB:
+#   # knowledge_dbname: cyberstrike_knowledge
+#   # knowledge_dsn: "postgres://.../cyberstrike_knowledge?sslmode=disable"
+```
+
+- `driver`: `sqlite` (default) | `postgres`
+- Prefer PostgreSQL in production; SQLite remains fine for local use
+- SQL is adapted in `internal/database` (placeholders, `INSERT OR`, datetime helpers, etc.)
+
 ## AI Channels
 
 `ai` is the recommended model configuration entry. In the Web UI, use **System Settings → Basic Settings → AI Channel Configuration**. Saving that form writes `ai.default_channel` and `ai.channels`. The legacy `openai` field remains as a backward-compatible runtime field; on load, CyberStrikeAI ensures a default channel exists and synchronizes the resolved `ai.default_channel` into runtime `openai`.
@@ -106,7 +130,8 @@ Common Web UI operations:
 - `hitl.audit_model` can inherit from the resolved default AI channel.
 - `knowledge.embedding.base_url/api_key` can inherit from model settings.
 - rerank config can inherit from embedding/openai.
-- `database.knowledge_db_path` can be separate or reuse the main DB.
+- `database.knowledge_db_path` can be separate or reuse the main DB (SQLite).
+- On PostgreSQL, knowledge tables default to the main DB; set `knowledge_dsn` / `knowledge_dbname` to separate.
 
 When debugging, inspect both the child config and the fallback parent.
 

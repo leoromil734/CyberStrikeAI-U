@@ -1,9 +1,14 @@
 name: "gobuster"
 command: "gobuster"
+# 已由 ffuf 替代（更灵活的 FUZZ 与过滤）。需要时改回 enabled: true
 enabled: false
-short_description: "Web内容扫描工具，用于发现目录、文件和子域名"
+short_description: "Web内容扫描工具（已弃用，请用 ffuf）"
 description: |
   Gobuster是一个快速的内容发现工具，用于Web应用程序的目录、文件和子域名枚举。
+
+  **状态：已弃用（默认关闭）**
+  - 主用工具请改用 **ffuf**（`tools/ffuf.yaml`）；目录发现也可配合 dirsearch
+  - 本配置保留仅作兼容，不建议新任务调用
 
   **主要功能：**
   - 目录和文件发现

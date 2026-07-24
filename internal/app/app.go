@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
-	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -86,18 +85,8 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// CORS中间件
 	router.Use(corsMiddleware(cfg.Server.CORSAllowedOrigins))
 
-	// 初始化数据库
-	dbPath := cfg.Database.Path
-	if dbPath == "" {
-		dbPath = "data/conversations.db"
-	}
-
-	// 确保目录存在
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return nil, fmt.Errorf("创建数据库目录失败: %w", err)
-	}
-
-	db, err := database.NewDB(dbPath, log.Logger)
+	// 初始化数据库（sqlite | postgres，见 config.database）
+	db, err := database.OpenFromConfig(cfg.Database, log.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
 	}
@@ -207,28 +196,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	var knowledgeDBConn *database.DB
 	log.Logger.Debug("检查知识库配置", zap.Bool("enabled", cfg.Knowledge.Enabled))
 	if cfg.Knowledge.Enabled {
-		// 确定知识库数据库路径
-		knowledgeDBPath := cfg.Database.KnowledgeDBPath
-		var knowledgeDB *sql.DB
-
-		if knowledgeDBPath != "" {
-			// 使用独立的知识库数据库
-			// 确保目录存在
-			if err := os.MkdirAll(filepath.Dir(knowledgeDBPath), 0755); err != nil {
-				return nil, fmt.Errorf("创建知识库数据库目录失败: %w", err)
-			}
-
-			var err error
-			knowledgeDBConn, err = database.NewKnowledgeDB(knowledgeDBPath, log.Logger)
-			if err != nil {
-				return nil, fmt.Errorf("初始化知识库数据库失败: %w", err)
-			}
-			knowledgeDB = knowledgeDBConn.DB
-			log.Logger.Info("使用独立的知识库数据库", zap.String("path", knowledgeDBPath))
-		} else {
-			// 向后兼容：使用会话数据库
-			knowledgeDB = db.DB
-			log.Logger.Info("使用会话数据库存储知识库数据（建议配置knowledge_db_path以分离数据）")
+		knowledgeDB, separateKnowledge, kdbErr := openKnowledgeDatabase(cfg.Database, db, log.Logger)
+		if kdbErr != nil {
+			return nil, fmt.Errorf("初始化知识库数据库失败: %w", kdbErr)
+		}
+		if separateKnowledge {
+			knowledgeDBConn = knowledgeDB
 		}
 
 		// 创建知识库管理器
@@ -2014,6 +1987,37 @@ func registerWebshellManagementTools(mcpServer *mcp.Server, db *database.DB, web
 	logger.Debug("WebShell 管理工具注册成功")
 }
 
+// openKnowledgeDatabase 按配置打开知识库连接；separate=true 表示独立库句柄（需单独 Close）。
+func openKnowledgeDatabase(cfg config.DatabaseConfig, session *database.DB, logger *zap.Logger) (*database.DB, bool, error) {
+	if needsSeparateKnowledgeDB(cfg) {
+		kdb, err := database.OpenKnowledgeFromConfig(cfg, logger)
+		if err != nil {
+			return nil, false, err
+		}
+		logger.Info("使用独立的知识库数据库",
+			zap.String("driver", string(kdb.Dialect())),
+			zap.String("knowledge_db_path", strings.TrimSpace(cfg.KnowledgeDBPath)),
+			zap.String("knowledge_dbname", strings.TrimSpace(cfg.KnowledgeDBName)),
+		)
+		return kdb, true, nil
+	}
+	if err := session.EnsureKnowledgeSchema(); err != nil {
+		return nil, false, err
+	}
+	logger.Info("使用会话数据库存储知识库数据（sqlite 可配置 knowledge_db_path；postgres 可配置 knowledge_dsn / knowledge_dbname 以分离）")
+	return session, false, nil
+}
+
+func needsSeparateKnowledgeDB(cfg config.DatabaseConfig) bool {
+	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
+	switch driver {
+	case "postgres", "postgresql", "pg":
+		return strings.TrimSpace(cfg.KnowledgeDSN) != "" || strings.TrimSpace(cfg.KnowledgeDBName) != ""
+	default:
+		return strings.TrimSpace(cfg.KnowledgeDBPath) != ""
+	}
+}
+
 // initializeKnowledge 初始化知识库组件（用于动态初始化）
 func initializeKnowledge(
 	cfg *config.Config,
@@ -2024,28 +2028,18 @@ func initializeKnowledge(
 	app *App, // 传递 App 引用以便更新知识库组件
 	logger *zap.Logger,
 ) (*handler.KnowledgeHandler, error) {
-	// 确定知识库数据库路径
-	knowledgeDBPath := cfg.Database.KnowledgeDBPath
-	var knowledgeDB *sql.DB
-
-	if knowledgeDBPath != "" {
-		// 使用独立的知识库数据库
-		// 确保目录存在
-		if err := os.MkdirAll(filepath.Dir(knowledgeDBPath), 0755); err != nil {
-			return nil, fmt.Errorf("创建知识库数据库目录失败: %w", err)
+	knowledgeDB, separateKnowledge, err := openKnowledgeDatabase(cfg.Database, db, logger)
+	if err != nil {
+		return nil, fmt.Errorf("初始化知识库数据库失败: %w", err)
+	}
+	if separateKnowledge {
+		// 动态重载时若已有独立连接，先关闭旧句柄
+		if knowledgeDBConn != nil && knowledgeDBConn != knowledgeDB && knowledgeDBConn != db {
+			_ = knowledgeDBConn.Close()
 		}
-
-		var err error
-		knowledgeDBConn, err = database.NewKnowledgeDB(knowledgeDBPath, logger)
-		if err != nil {
-			return nil, fmt.Errorf("初始化知识库数据库失败: %w", err)
-		}
-		knowledgeDB = knowledgeDBConn.DB
-		logger.Info("使用独立的知识库数据库", zap.String("path", knowledgeDBPath))
+		knowledgeDBConn = knowledgeDB
 	} else {
-		// 向后兼容：使用会话数据库
-		knowledgeDB = db.DB
-		logger.Info("使用会话数据库存储知识库数据（建议配置knowledge_db_path以分离数据）")
+		knowledgeDBConn = nil
 	}
 
 	// 创建知识库管理器
@@ -2097,10 +2091,7 @@ func initializeKnowledge(
 		app.knowledgeRetriever = knowledgeRetriever
 		app.knowledgeIndexer = knowledgeIndexer
 		app.knowledgeHandler = knowledgeHandler
-		// 如果使用独立数据库，更新 knowledgeDB
-		if knowledgeDBPath != "" {
-			app.knowledgeDB = knowledgeDBConn
-		}
+		app.knowledgeDB = knowledgeDBConn
 		logger.Info("App 中的知识库组件已更新")
 	}
 

@@ -1,0 +1,77 @@
+name: "naabu"
+command: "naabu"
+enabled: true
+
+short_description: "高速端口发现（ProjectDiscovery），适合主机列表 top-ports 后再 nmap 精扫"
+
+description: |
+  naabu：基于 SYN/CONNECT 的快速端口发现工具。
+
+  **定位：** 主机存活后的 **端口面** 快速展开；精扫/服务版本仍建议 nmap -sCV。
+  **推荐链路：** dnsx/httpx 得主机 → **naabu** → nmap（Top 主机）→ nuclei
+
+  **主要功能：**
+  - 主机或列表端口扫描
+  - top-ports / 自定义端口
+  - 静默输出 host:port，便于管道
+
+  **使用场景：**
+  - Bug bounty / 内网授权主机端口面
+  - 比全量 nmap 更快拿开放端口集合
+
+  **注意事项：**
+  - 速率过高可能触发防护或被视为 DoS；授权范围内控制 -rate
+  - 默认不要扫全互联网；限制目标列表与端口集
+  - 与 masscan/rustscan 同类，优先其一即可，避免重复狂扫
+
+parameters:
+  - name: "host"
+    type: "string"
+    description: |
+      单个主机或 IP。示例：example.com 或 10.0.0.1
+    required: false
+    flag: "-host"
+    format: "flag"
+  - name: "list"
+    type: "string"
+    description: |
+      主机列表文件。示例：alive_subs.txt
+    required: false
+    flag: "-list"
+    format: "flag"
+  - name: "top_ports"
+    type: "string"
+    description: |
+      常用端口集：100 / 1000 等（naabu -top-ports）。
+      示例：1000
+    required: false
+    flag: "-top-ports"
+    format: "flag"
+    default: "1000"
+  - name: "p"
+    type: "string"
+    description: |
+      自定义端口。示例：80,443,8080-8090
+    required: false
+    flag: "-p"
+    format: "flag"
+  - name: "rate"
+    type: "int"
+    description: "发包速率（pps），授权环境宜保守"
+    required: false
+    flag: "-rate"
+    format: "flag"
+    default: 1000
+  - name: "silent"
+    type: "bool"
+    description: "静默输出"
+    required: false
+    flag: "-silent"
+    format: "flag"
+    default: true
+  - name: "additional_args"
+    type: "string"
+    description: |
+      额外 naabu 参数。示例：-exclude-cdn -verify
+    required: false
+    format: "positional"

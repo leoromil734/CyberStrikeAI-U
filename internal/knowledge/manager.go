@@ -10,19 +10,21 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/database"
+
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // Manager 知识库管理器
 type Manager struct {
-	db       *sql.DB
+	db       *database.DB
 	basePath string
 	logger   *zap.Logger
 }
 
 // NewManager 创建新的知识库管理器
-func NewManager(db *sql.DB, basePath string, logger *zap.Logger) *Manager {
+func NewManager(db *database.DB, basePath string, logger *zap.Logger) *Manager {
 	return &Manager{
 		db:       db,
 		basePath: basePath,

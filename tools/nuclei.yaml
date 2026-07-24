@@ -1,9 +1,12 @@
 name: "nuclei"
 command: "nuclei"
 enabled: true
-short_description: "快速漏洞扫描器，使用YAML模板进行漏洞检测"
+short_description: "基于YAML模板的快速漏洞扫描器（替代 jaeles）"
 description: |
   Nuclei是一个基于模板的快速漏洞扫描器，使用社区维护的YAML模板进行漏洞检测。
+
+  **定位：** 模板化漏洞扫描的**主用工具**（替代已弃用的 jaeles）。
+  **推荐链路：** httpx 探活后 → nuclei。
 
   **主要功能：**
   - 快速漏洞扫描

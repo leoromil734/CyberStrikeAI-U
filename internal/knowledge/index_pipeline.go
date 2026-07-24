@@ -2,11 +2,11 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/database"
 
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/compose"
@@ -31,7 +31,7 @@ func normalizeChunkStrategy(s string) string {
 func buildKnowledgeIndexChain(
 	ctx context.Context,
 	indexingCfg *config.IndexingConfig,
-	db *sql.DB,
+	db *database.DB,
 	recursive document.Transformer,
 	embeddingModel string,
 ) (compose.Runnable[[]*schema.Document, []string], error) {

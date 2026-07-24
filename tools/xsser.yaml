@@ -1,9 +1,14 @@
 name: "xsser"
 command: "xsser"
-enabled: true
-short_description: "XSS漏洞测试工具"
+# 已由 dalfox 替代（维护更活跃、检测更强）。需要时改回 enabled: true
+enabled: false
+short_description: "XSS漏洞测试工具（已弃用，请用 dalfox）"
 description: |
   XSSer是一个自动化XSS漏洞测试工具。
+
+  **状态：已弃用（默认关闭）**
+  - 主用工具请改用 **dalfox**（`tools/dalfox.yaml`）
+  - 本配置保留仅作兼容，不建议新任务调用
 
   **主要功能：**
   - XSS漏洞检测

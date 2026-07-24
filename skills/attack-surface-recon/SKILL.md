@@ -1,11 +1,14 @@
 ---
 name: attack-surface-recon
 description: >-
-  侦察/攻击面测绘:被动whois/amass/crt.sh/FOFA/Shodan,主动subfinder/httpx/naabu/katana/nuclei,DNS地域/CDN/Nginx catch-all/宝塔/UniApp指纹。开局第一动作,认知写入项目黑板。Use when starting recon, asset mapping, fingerprinting, or CDN/DNS bypass discovery.
+  侦察/攻击面测绘:被动whois/amass/crt.sh/FOFA/Shodan,主动subfinder/httpx/naabu/katana/nuclei,DNS地域/CDN/Nginx catch-all/宝塔/UniApp指纹。开局第一动作,认知写入项目黑板;产出入口Top-N供验证而非直接结案漏洞。
+  Use when starting recon, asset mapping, fingerprinting, or CDN/DNS bypass discovery.
 tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 侦察 / 攻击面测绘
+
+**本 skill 成功标准**：资产 + 指纹 + **优先入口 Top-N** + Do-Not-Repeat。nuclei/httpx 命中默认 **tentative**，验证交给 `web-attack-methods` / penetration 角色。每确认端口/指纹/入口 → `upsert_project_fact`。
 
 ```
 === 侦察/攻击面测绘(开局第一动作,60%战时在这,别裸奔进利用;端口/指纹等立即 upsert_project_fact) ===
@@ -26,8 +29,11 @@ tags: [渗透测试, penetration-testing, 红队]
   terminal: katana -list alive_subs.txt -silent -d 3 | tee urls.txt; gau {domain} >> urls.txt
   terminal: cat urls.txt | grep -iE '\.(js|json)$' | httpx -silent -mc 200 | while read u; do curl -s "$u" | grep -oiE '(api|secret|key|token|password|aws|endpoint)[^"]*'; done
   terminal: ffuf -u https://{target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt -mc 200,301,302,403 -fs {catch-all-size}
-  terminal: nuclei -l alive_subs.txt -t /root/nuclei-templates/ -severity medium,high,critical -o nuclei_results.txt
+  terminal: nuclei -l alive_subs.txt -severity medium,high,critical -o nuclei_results.txt
+  盲洞/SSRF OOB: interactsh-client（或 dnslog）拿回调域再注入
   → httpx输出识别到框架/版本 → 立即触发 `component-vuln-intel` 搜索序列
+  CyberStrike MCP 工具名: dnsx / naabu / httpx / nuclei / interactsh-client（与上表 terminal 命令对应）
+  🚨CDN/Cloudflare TLS指纹: httpx 标 cdn 或见 cf-ray 后，接口深测前加载 `cdn-tls-fingerprint`；python 默认栈易被拦，用 curl_cffi impersonate=chrome（install-python-package + execute-python-script）
 🚨DNS地域限制绕过: 国内CDN(987dns/dnspod/阿里云)常对海外DNS返0.0.0.0,用114.114.114.114解析才拿到真实IP。多DNS对比: dig @1.1.1.1 vs @114.114.114.114 vs @8.8.8.8,差异即CDN地域策略。真实IP藏在国内DNS结果中。
 🚨CDN响应过滤绕过(GCCDN/PWS等): CDN对特定URL模式(admin路径/actuator)返502而非转发后端响应:
   指纹识别: Server: PWS/x.x.x.x | Via: 1.1 PS-XXX-XXXX:N (W) | X-Px: ms CS-XXX-XXXXnone(origin) | 通配*.gccdn.net CNAME

@@ -12,8 +12,14 @@ func formatSQLiteUTC(t time.Time) string {
 }
 
 // sqliteEpochGE returns SQL comparing column to param as Unix seconds (timezone-safe).
+// Prefer (db *DB).epochCompare for dialect-aware SQL; this keeps SQLite call sites working.
 func sqliteEpochGE(column, op string) string {
-	return "strftime('%s', " + column + ") " + op + " strftime('%s', ?)"
+	return DialectSQLite.epochCompareSQL(column, op)
+}
+
+// epochCompare returns dialect-aware epoch comparison SQL for this DB.
+func (db *DB) epochCompare(column, op string) string {
+	return db.Dialect().epochCompareSQL(column, op)
 }
 
 // ParseRFC3339Time parses API/query timestamps (RFC3339 or RFC3339Nano).
