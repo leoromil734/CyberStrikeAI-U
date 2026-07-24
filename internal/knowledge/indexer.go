@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
