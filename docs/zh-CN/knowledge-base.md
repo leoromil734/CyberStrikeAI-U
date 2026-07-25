@@ -162,10 +162,15 @@ knowledge:
 
 索引失败：
 
-- 检查 embedding API Key、模型名、base_url。
-- 降低 `batch_size`。
-- 增大 `request_timeout_seconds`。
-- 查看服务日志中的 400/401/429/5xx。
+- 错误含 `invalid character '<'`：嵌入接口返回了 **HTML**（登录页/404/网关页），不是 JSON。检查：
+  - `knowledge.embedding.base_url` 必须是 **OpenAI 兼容 API 根**，通常以 `/v1` 结尾  
+    - 百炼：`https://dashscope.aliyuncs.com/compatible-mode/v1`  
+    - OpenAI：`https://api.openai.com/v1`  
+  - `model` 与端点同一厂商：百炼用 `text-embedding-v3` / `text-embedding-v4`；OpenAI 用 `text-embedding-3-small` 等  
+  - `api_key` 有效且有嵌入额度；勿把聊天中转站 HTML 首页当成 API  
+- 留空 `embedding.base_url` 时会回退 `openai.base_url`；两者都空才默认官方 OpenAI。  
+- 降低 `batch_size`；增大 `request_timeout_seconds`。  
+- 查看服务日志中的 400/401/429/5xx 与启动时「知识库嵌入客户端已初始化」一行（model/baseURL）。
 
 检索为空：
 

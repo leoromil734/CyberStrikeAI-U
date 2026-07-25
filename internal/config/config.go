@@ -1347,7 +1347,7 @@ type ParameterConfig struct {
 	ItemType    string      `yaml:"item_type,omitempty"` // 当 type 为 array 时，数组元素类型，如 string, number, object
 	Flag        string      `yaml:"flag,omitempty"`      // 命令行标志，如 "-u", "--url", "-p"
 	Position    *int        `yaml:"position,omitempty"`  // 位置参数的位置（从0开始）
-	Format      string      `yaml:"format,omitempty"`    // 参数格式: "flag", "positional", "combined" (flag=value), "template"
+	Format      string      `yaml:"format,omitempty"`    // 参数格式: "flag", "positional", "combined", "template", "stdin"
 	Template    string      `yaml:"template,omitempty"`  // 模板字符串，如 "{flag} {value}" 或 "{value}"
 	Options     []string    `yaml:"options,omitempty"`   // 可选值列表（用于枚举）
 }

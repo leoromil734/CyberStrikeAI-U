@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -239,6 +240,49 @@ func TestBuildCommandArgs_NmapSkipsEmptyOptionalFlags(t *testing.T) {
 	targetIdx := indexOf(cmdArgs, "110.52.223.114")
 	if pnIdx < 0 || targetIdx < 0 || targetIdx >= pnIdx {
 		t.Fatalf("expected target before -Pn, got: %v", cmdArgs)
+	}
+}
+
+func TestBuildCommandArgs_DNSXDomainUsesStdin(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name:    "dnsx",
+		Command: "dnsx",
+		Parameters: []config.ParameterConfig{
+			{Name: "domain", Type: "string", Format: "stdin"},
+			{Name: "a", Type: "bool", Flag: "-a", Format: "flag"},
+			{Name: "silent", Type: "bool", Flag: "-silent", Format: "flag"},
+			{Name: "additional_args", Type: "string", Format: "positional"},
+		},
+	}
+	args := map[string]interface{}{
+		"domain":          "adspark.top",
+		"a":               true,
+		"silent":          true,
+		"additional_args": "-retry 2",
+	}
+
+	cmdArgs := executor.buildCommandArgs("dnsx", toolConfig, args)
+	joined := strings.Join(cmdArgs, " ")
+	if strings.Contains(joined, "adspark.top") || strings.Contains(joined, "-d") {
+		t.Fatalf("domain must not be emitted as dnsx -d argument, got: %v", cmdArgs)
+	}
+	if joined != "-a -silent -retry 2" {
+		t.Fatalf("unexpected dnsx arguments: %v", cmdArgs)
+	}
+
+	cmd := exec.Command("dnsx", cmdArgs...)
+	executor.attachToolStdin(cmd, toolConfig, args)
+	stdin, ok := cmd.Stdin.(io.Reader)
+	if !ok {
+		t.Fatal("expected dnsx domain on stdin")
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		t.Fatalf("read dnsx stdin: %v", err)
+	}
+	if string(data) != "adspark.top\n" {
+		t.Fatalf("unexpected dnsx stdin: %q", data)
 	}
 }
 

@@ -188,7 +188,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	// 执行命令
 	cmd := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 	applyDefaultTerminalEnv(cmd)
-	attachNonInteractiveStdin(cmd)
+	e.attachToolStdin(cmd, toolConfig, args)
 	_ = prepareShellCmdSession(cmd)
 
 	e.logger.Debug("执行安全工具",
@@ -209,6 +209,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, cb, e.toolOutputMaxBytes, spill)
 		}
@@ -221,6 +222,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, nil, e.toolOutputMaxBytes, spill)
 		}
@@ -350,6 +352,34 @@ func (e *Executor) RegisterTools(mcpServer *mcp.Server) {
 	e.logger.Debug("工具注册完成",
 		zap.Int("registeredCount", len(e.config.Tools)),
 	)
+}
+
+// attachToolStdin 将 format=stdin 的参数按行写入标准输入；没有输入参数时保持非交互模式。
+func (e *Executor) attachToolStdin(cmd *exec.Cmd, toolConfig *config.ToolConfig, args map[string]interface{}) {
+	if cmd == nil || toolConfig == nil {
+		return
+	}
+
+	inputLines := make([]string, 0)
+	for _, param := range toolConfig.Parameters {
+		if param.Format != "stdin" {
+			continue
+		}
+		value := e.getParamValue(args, param)
+		if value == nil {
+			continue
+		}
+		formattedValue := strings.TrimSpace(e.formatParamValue(param, value))
+		if formattedValue != "" {
+			inputLines = append(inputLines, formattedValue)
+		}
+	}
+
+	if len(inputLines) == 0 {
+		attachNonInteractiveStdin(cmd)
+		return
+	}
+	cmd.Stdin = strings.NewReader(strings.Join(inputLines, "\n") + "\n")
 }
 
 // buildCommandArgs 构建命令参数
@@ -504,6 +534,9 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 					}
 					cmdArgs = append(cmdArgs, formattedValue)
 				}
+			case "stdin":
+				// stdin 参数由 attachToolStdin 写入进程标准输入，不属于命令行参数。
+				continue
 			case "positional":
 				// 位置参数（已在上面处理）
 				cmdArgs = append(cmdArgs, formattedValue)

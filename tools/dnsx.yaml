@@ -36,10 +36,10 @@ parameters:
   - name: "domain"
     type: "string"
     description: |
-      单个域名/主机。示例：example.com
+      单个待解析域名/主机，通过标准输入传给 dnsx。示例：example.com
+      注意：dnsx 的 -d 表示子域爆破基础域，必须配合 -w 使用，不适用于单域名解析。
     required: false
-    flag: "-d"
-    format: "flag"
+    format: "stdin"
   - name: "a"
     type: "bool"
     description: "显示 A 记录"
