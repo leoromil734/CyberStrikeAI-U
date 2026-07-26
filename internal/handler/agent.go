@@ -622,11 +622,15 @@ func (h *AgentHandler) appendAssistantMessageNotice(messageID, notice string) er
 	if strings.TrimSpace(messageID) == "" || trimmedNotice == "" {
 		return nil
 	}
+	contains := "INSTR(content, ?) > 0"
+	if h.db.IsPostgres() {
+		contains = "POSITION(? IN content) > 0"
+	}
 	_, err := h.db.Exec(
 		`UPDATE messages
 		 SET content = CASE
 			WHEN content IS NULL OR TRIM(content) = '' THEN ?
-			WHEN INSTR(content, ?) > 0 THEN content
+			WHEN `+contains+` THEN content
 			ELSE content || '\n\n' || ?
 		 END,
 		     updated_at = ?
@@ -648,11 +652,15 @@ func (h *AgentHandler) mergeAssistantMessagePartialOnCancel(messageID, partial s
 	if strings.TrimSpace(messageID) == "" || trimmedPartial == "" {
 		return nil
 	}
+	contains := "INSTR(content, ?) > 0"
+	if h.db.IsPostgres() {
+		contains = "POSITION(? IN content) > 0"
+	}
 	_, err := h.db.Exec(
 		`UPDATE messages
 		 SET content = CASE
 			WHEN content IS NULL OR TRIM(content) = '' OR TRIM(content) = '处理中...' THEN ?
-			WHEN INSTR(content, ?) > 0 THEN content
+			WHEN `+contains+` THEN content
 			ELSE content || '\n\n' || ?
 		 END,
 		     updated_at = ?

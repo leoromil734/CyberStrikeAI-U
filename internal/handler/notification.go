@@ -615,7 +615,7 @@ func pruneNotificationReads(db *database.DB, userID string, maxRows int) error {
 			SELECT event_id
 			FROM notification_reads_by_user
 			WHERE user_id = ?
-			ORDER BY read_at DESC, rowid DESC
+			ORDER BY read_at DESC, event_id DESC
 			LIMIT ?
 		)
 	`, userID, userID, maxRows)

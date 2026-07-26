@@ -1514,9 +1514,10 @@ type ListC2EventsFilter struct {
 	Offset    int
 }
 
-func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interface{}) {
+func buildC2EventsWhere(dialect Dialect, filter ListC2EventsFilter) (where string, args []interface{}) {
 	conditions := []string{"1=1"}
 	args = []interface{}{}
+	listenerIDExpr := dialect.jsonTextSQL("c2_events.data_json", "listener_id")
 	if filter.Level != "" {
 		conditions = append(conditions, "level = ?")
 		args = append(args, filter.Level)
@@ -1540,8 +1541,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 			)
 			OR EXISTS (
 				SELECT 1 FROM c2_listeners l
-				WHERE json_valid(c2_events.data_json)
-					AND l.id = json_extract(c2_events.data_json, '$.listener_id')
+				WHERE l.id = `+listenerIDExpr+`
 					AND COALESCE(l.project_id, '') = ''
 			)
 		)`)
@@ -1560,8 +1560,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 			)
 			OR EXISTS (
 				SELECT 1 FROM c2_listeners l
-				WHERE json_valid(c2_events.data_json)
-					AND l.id = json_extract(c2_events.data_json, '$.listener_id')
+				WHERE l.id = `+listenerIDExpr+`
 					AND COALESCE(l.project_id, '') = ?
 			)
 		)`)
@@ -1577,7 +1576,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 		args = append(args, filter.TaskID)
 	}
 	if filter.Since != nil {
-		conditions = append(conditions, sqliteEpochGE("created_at", ">="))
+		conditions = append(conditions, dialect.epochCompareSQL("created_at", ">="))
 		args = append(args, formatSQLiteUTC(*filter.Since))
 	}
 	return strings.Join(conditions, " AND "), args
@@ -1626,8 +1625,8 @@ func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
-func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access RBACListAccess) (string, []interface{}) {
-	where, args := buildC2EventsWhere(filter)
+func buildC2EventsWhereForAccess(dialect Dialect, filter ListC2EventsFilter, access RBACListAccess) (string, []interface{}) {
+	where, args := buildC2EventsWhere(dialect, filter)
 	conditions := []string{where}
 	appendC2EventAccessFilter(&conditions, &args, access)
 	return strings.Join(conditions, " AND "), args
@@ -1635,7 +1634,7 @@ func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access RBACListAcces
 
 // CountC2Events 与 ListC2Events 相同过滤条件下的记录总数
 func (db *DB) CountC2Events(filter ListC2EventsFilter) (int64, error) {
-	where, args := buildC2EventsWhere(filter)
+	where, args := buildC2EventsWhere(db.Dialect(), filter)
 	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
 	var n int64
 	err := db.QueryRow(query, args...).Scan(&n)
@@ -1643,7 +1642,7 @@ func (db *DB) CountC2Events(filter ListC2EventsFilter) (int64, error) {
 }
 
 func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) (int64, error) {
-	where, args := buildC2EventsWhereForAccess(filter, access)
+	where, args := buildC2EventsWhereForAccess(db.Dialect(), filter, access)
 	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
 	var n int64
 	err := db.QueryRow(query, args...).Scan(&n)
@@ -1652,7 +1651,7 @@ func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access RBACListA
 
 // CountC2EventsByLevelForAccess 与 ListC2Events 相同过滤条件下按级别统计
 func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access RBACListAccess) (map[string]int64, error) {
-	where, args := buildC2EventsWhereForAccess(filter, access)
+	where, args := buildC2EventsWhereForAccess(db.Dialect(), filter, access)
 	query := `SELECT level, COUNT(*) FROM c2_events WHERE ` + where + ` GROUP BY level`
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -1679,7 +1678,7 @@ func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access RB
 
 // ListC2Events 事件查询，按创建时间倒序
 func (db *DB) ListC2Events(filter ListC2EventsFilter) ([]*C2Event, error) {
-	where, args := buildC2EventsWhere(filter)
+	where, args := buildC2EventsWhere(db.Dialect(), filter)
 	limit := filter.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 200
@@ -1719,7 +1718,7 @@ func (db *DB) ListC2Events(filter ListC2EventsFilter) ([]*C2Event, error) {
 }
 
 func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) ([]*C2Event, error) {
-	where, args := buildC2EventsWhereForAccess(filter, access)
+	where, args := buildC2EventsWhereForAccess(db.Dialect(), filter, access)
 	limit := filter.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 200

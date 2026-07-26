@@ -1592,7 +1592,7 @@ func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]Proc
 	}
 
 	rows, err := db.Query(
-		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE message_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ? OFFSET ?",
+		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE message_id = ? ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
 		messageID, limit, offset,
 	)
 	if err != nil {
@@ -1632,11 +1632,10 @@ func (db *DB) GetProcessDetailOffset(messageID, detailID string) (int, error) {
 		return 0, fmt.Errorf("messageID and detailID are required")
 	}
 	var createdAt string
-	var rowID int64
 	if err := db.QueryRow(
-		"SELECT created_at, rowid FROM process_details WHERE message_id = ? AND id = ?",
+		"SELECT created_at FROM process_details WHERE message_id = ? AND id = ?",
 		messageID, detailID,
-	).Scan(&createdAt, &rowID); err != nil {
+	).Scan(&createdAt); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("过程详情不存在")
 		}
@@ -1646,8 +1645,8 @@ func (db *DB) GetProcessDetailOffset(messageID, detailID string) (int, error) {
 	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM process_details
 		 WHERE message_id = ?
-		   AND (created_at < ? OR (created_at = ? AND rowid < ?))`,
-		messageID, createdAt, createdAt, rowID,
+		   AND (created_at < ? OR (created_at = ? AND id < ?))`,
+		messageID, createdAt, createdAt, detailID,
 	).Scan(&offset); err != nil {
 		return 0, fmt.Errorf("计算过程详情锚点位置失败: %w", err)
 	}

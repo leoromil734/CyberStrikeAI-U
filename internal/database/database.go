@@ -862,28 +862,36 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建漏洞提醒投递表失败: %w", err)
 	}
 
-	for tableName, ddl := range map[string]string{
-		"workflow_definitions":         createWorkflowDefinitionsTable,
-		"workflow_runs":                createWorkflowRunsTable,
-		"workflow_node_runs":           createWorkflowNodeRunsTable,
-		"workflow_package_inspections": createWorkflowPackageInspectionsTable,
-		"workflow_package_imports":     createWorkflowPackageImportsTable,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			return fmt.Errorf("创建%s表失败: %w", tableName, err)
+	workflowTables := []struct {
+		name string
+		ddl  string
+	}{
+		{"workflow_definitions", createWorkflowDefinitionsTable},
+		{"workflow_runs", createWorkflowRunsTable},
+		{"workflow_node_runs", createWorkflowNodeRunsTable},
+		{"workflow_package_inspections", createWorkflowPackageInspectionsTable},
+		{"workflow_package_imports", createWorkflowPackageImportsTable},
+	}
+	for _, table := range workflowTables {
+		if _, err := db.Exec(table.ddl); err != nil {
+			return fmt.Errorf("创建%s表失败: %w", table.name, err)
 		}
 	}
 
-	for tableName, ddl := range map[string]string{
-		"c2_listeners": createC2ListenersTable,
-		"c2_sessions":  createC2SessionsTable,
-		"c2_tasks":     createC2TasksTable,
-		"c2_files":     createC2FilesTable,
-		"c2_events":    createC2EventsTable,
-		"c2_profiles":  createC2ProfilesTable,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			return fmt.Errorf("创建%s表失败: %w", tableName, err)
+	c2Tables := []struct {
+		name string
+		ddl  string
+	}{
+		{"c2_listeners", createC2ListenersTable},
+		{"c2_sessions", createC2SessionsTable},
+		{"c2_tasks", createC2TasksTable},
+		{"c2_files", createC2FilesTable},
+		{"c2_events", createC2EventsTable},
+		{"c2_profiles", createC2ProfilesTable},
+	}
+	for _, table := range c2Tables {
+		if _, err := db.Exec(table.ddl); err != nil {
+			return fmt.Errorf("创建%s表失败: %w", table.name, err)
 		}
 	}
 
@@ -1034,8 +1042,12 @@ func (db *DB) migrateMessagesTable() error {
 		}
 	}
 
-	// 回填已有数据：让 updated_at 至少等于 created_at，避免前端出现空/当前时间回退。
-	_, _ = db.Exec("UPDATE messages SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''")
+	// 回填已有数据：SQLite 旧库可能用空字符串表示缺失时间；PostgreSQL TIMESTAMPTZ 只能与 NULL 比较。
+	missingUpdatedAt := "updated_at IS NULL"
+	if db.Dialect().IsSQLite() {
+		missingUpdatedAt += " OR updated_at = ''"
+	}
+	_, _ = db.Exec("UPDATE messages SET updated_at = created_at WHERE " + missingUpdatedAt)
 
 	// reasoning_content：DeepSeek 思考模式 + 工具调用续跑；与 last_react_input 互补，供消息表回退路径回放
 	var rcColCount int

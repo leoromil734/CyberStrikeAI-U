@@ -97,16 +97,15 @@ func (db *DB) UpdateSkillStats(skillName string, totalCalls, successCalls, faile
 		INSERT INTO skill_stats (skill_name, total_calls, success_calls, failed_calls, last_call_time, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(skill_name) DO UPDATE SET
-			total_calls = total_calls + ?,
-			success_calls = success_calls + ?,
-			failed_calls = failed_calls + ?,
-			last_call_time = COALESCE(?, last_call_time),
-			updated_at = ?
+			total_calls = skill_stats.total_calls + excluded.total_calls,
+			success_calls = skill_stats.success_calls + excluded.success_calls,
+			failed_calls = skill_stats.failed_calls + excluded.failed_calls,
+			last_call_time = COALESCE(excluded.last_call_time, skill_stats.last_call_time),
+			updated_at = excluded.updated_at
 	`
 
 	_, err := db.Exec(query,
 		skillName, totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
-		totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
 	)
 
 	if err != nil {

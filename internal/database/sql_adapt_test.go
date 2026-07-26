@@ -3,6 +3,7 @@ package database
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdaptPostgresPlaceholders(t *testing.T) {
@@ -91,6 +92,51 @@ func TestAdaptJuliandayFallback(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToUpper(got), "EXTRACT") {
 		t.Fatalf("expected EXTRACT: %s", got)
+	}
+}
+
+func TestPostgresDialectQueryFragments(t *testing.T) {
+	d := DialectPostgres
+	fragments := []string{
+		d.hourBucketUTC("start_time"),
+		d.dateTrunc("created_at"),
+		d.containsSQL("content", "?"),
+		d.jsonTextSQL("data_json", "listener_id"),
+	}
+	got := d.Adapt(strings.Join(fragments, " "))
+	for _, forbidden := range []string{"strftime", "json_valid", "json_extract", "instr", "?"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Fatalf("postgres fragments contain %q: %s", forbidden, got)
+		}
+	}
+	for _, required := range []string{"DATE_TRUNC", "TO_CHAR", "POSITION", "substring", "$1"} {
+		if !strings.Contains(got, required) {
+			t.Fatalf("postgres fragments missing %q: %s", required, got)
+		}
+	}
+}
+
+func TestBuildC2EventsWhereUsesDialect(t *testing.T) {
+	since := time.Date(2026, time.July, 26, 7, 44, 0, 0, time.UTC)
+	filter := ListC2EventsFilter{ProjectID: "project-1", Since: &since}
+
+	postgresWhere, args := buildC2EventsWhere(DialectPostgres, filter)
+	postgresWhere = DialectPostgres.Adapt(postgresWhere)
+	if len(args) != 4 {
+		t.Fatalf("postgres args = %d, want 4", len(args))
+	}
+	for _, forbidden := range []string{"json_valid", "json_extract", "strftime", "?"} {
+		if strings.Contains(strings.ToLower(postgresWhere), forbidden) {
+			t.Fatalf("postgres C2 filter contains %q: %s", forbidden, postgresWhere)
+		}
+	}
+	if !strings.Contains(postgresWhere, "substring") || !strings.Contains(postgresWhere, "EXTRACT(EPOCH") {
+		t.Fatalf("postgres C2 filter was not dialect-aware: %s", postgresWhere)
+	}
+
+	sqliteWhere, _ := buildC2EventsWhere(DialectSQLite, filter)
+	if !strings.Contains(sqliteWhere, "json_valid") || !strings.Contains(sqliteWhere, "json_extract") || !strings.Contains(sqliteWhere, "strftime") {
+		t.Fatalf("sqlite C2 filter lost SQLite expressions: %s", sqliteWhere)
 	}
 }
 

@@ -152,9 +152,34 @@ func (d Dialect) sinceDaysAgo(column string, days int) (sql string, arg interfac
 
 func (d Dialect) dateTrunc(column string) string {
 	if d.IsPostgres() {
-		return fmt.Sprintf("((%s)::timestamptz AT TIME ZONE 'utc')::date", column)
+		return fmt.Sprintf("TO_CHAR(((%s)::timestamptz AT TIME ZONE 'utc')::date, 'YYYY-MM-DD')", column)
 	}
 	return fmt.Sprintf("date(%s)", column)
+}
+
+// hourBucketUTC returns a sortable UTC hour bucket as text.
+func (d Dialect) hourBucketUTC(column string) string {
+	if d.IsPostgres() {
+		return fmt.Sprintf("TO_CHAR(DATE_TRUNC('hour', (%s)::timestamptz AT TIME ZONE 'utc'), 'YYYY-MM-DD HH24:00:00')", column)
+	}
+	return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00:00', %s, 'utc')", column)
+}
+
+// containsSQL returns a portable case-sensitive substring predicate.
+func (d Dialect) containsSQL(haystack, needle string) string {
+	if d.IsPostgres() {
+		return fmt.Sprintf("POSITION(%s IN %s) > 0", needle, haystack)
+	}
+	return fmt.Sprintf("INSTR(%s, %s) > 0", haystack, needle)
+}
+
+// jsonTextSQL extracts a top-level JSON string field from a TEXT column.
+func (d Dialect) jsonTextSQL(column, key string) string {
+	escapedKey := strings.ReplaceAll(key, "'", "''")
+	if d.IsPostgres() {
+		return fmt.Sprintf(`substring(%s from '"%s"\s*:\s*"([^"]+)"')`, column, escapedKey)
+	}
+	return fmt.Sprintf("CASE WHEN json_valid(%s) THEN json_extract(%s, '$.%s') END", column, column, escapedKey)
 }
 
 // serialPK is INTEGER PRIMARY KEY AUTOINCREMENT / BIGSERIAL PRIMARY KEY.

@@ -757,7 +757,7 @@ func (db *DB) ListAssignableRBACResourcesPage(resourceType, search string, limit
 			WHERE LOWER(title) LIKE ? ESCAPE '\' OR LOWER(id) LIKE ? ESCAPE '\'
 			ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 	case "asset":
-		query = `SELECT id, COALESCE(NULLIF(host,''),NULLIF(domain,''),NULLIF(ip,''),id), protocol || CASE WHEN port>0 THEN ':' || port ELSE '' END FROM assets
+		query = `SELECT id, COALESCE(NULLIF(host,''),NULLIF(domain,''),NULLIF(ip,''),id), protocol || CASE WHEN port>0 THEN ':' || CAST(port AS TEXT) ELSE '' END FROM assets
 			WHERE LOWER(host) LIKE ? ESCAPE '\' OR LOWER(domain) LIKE ? ESCAPE '\' OR LOWER(ip) LIKE ? ESCAPE '\'
 			ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 	case "webshell":
@@ -908,7 +908,7 @@ func (db *DB) lookupRBACResourceOptionsByIDs(resourceType string, ids []string) 
 	case "vulnerability":
 		query = `SELECT id, title, severity FROM vulnerabilities WHERE id IN (` + placeholders + `)`
 	case "asset":
-		query = `SELECT id, COALESCE(NULLIF(host,''),NULLIF(domain,''),NULLIF(ip,''),id), protocol || CASE WHEN port>0 THEN ':' || port ELSE '' END FROM assets WHERE id IN (` + placeholders + `)`
+		query = `SELECT id, COALESCE(NULLIF(host,''),NULLIF(domain,''),NULLIF(ip,''),id), protocol || CASE WHEN port>0 THEN ':' || CAST(port AS TEXT) ELSE '' END FROM assets WHERE id IN (` + placeholders + `)`
 	case "webshell":
 		query = `SELECT id, COALESCE(NULLIF(remark, ''), url), type FROM webshell_connections WHERE id IN (` + placeholders + `)`
 	case "batch_task":

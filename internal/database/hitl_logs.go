@@ -63,7 +63,7 @@ func (db *DB) PurgeHitlInterruptLogsBefore(cutoff time.Time) (int64, error) {
 		return 0, fmt.Errorf("database is nil")
 	}
 	res, err := db.Exec(
-		`DELETE FROM hitl_interrupts WHERE status != 'pending' AND datetime(COALESCE(decided_at, created_at)) < datetime(?)`,
+		`DELETE FROM hitl_interrupts WHERE status != 'pending' AND `+db.Dialect().datetimeLT("COALESCE(decided_at, created_at)"),
 		cutoff.UTC().Format(time.RFC3339),
 	)
 	if err != nil {

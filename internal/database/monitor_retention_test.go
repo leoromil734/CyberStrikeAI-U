@@ -92,6 +92,60 @@ func TestPurgeToolExecutionsBefore(t *testing.T) {
 	}
 }
 
+func TestStatsUpdatesAccumulate(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "stats.db")
+	db, err := NewDB(dbPath, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer db.Close()
+
+	firstCall := time.Date(2026, time.July, 26, 7, 40, 0, 0, time.UTC)
+	secondCall := firstCall.Add(time.Minute)
+
+	if err := db.UpdateToolStats("list_project_facts", 1, 1, 0, &firstCall); err != nil {
+		t.Fatalf("first UpdateToolStats: %v", err)
+	}
+	if err := db.UpdateToolStats("list_project_facts", 1, 0, 1, &secondCall); err != nil {
+		t.Fatalf("second UpdateToolStats: %v", err)
+	}
+	toolStats, err := db.LoadToolStats()
+	if err != nil {
+		t.Fatalf("LoadToolStats: %v", err)
+	}
+	toolStat := toolStats["list_project_facts"]
+	if toolStat == nil {
+		t.Fatal("expected stats for list_project_facts")
+	}
+	if toolStat.TotalCalls != 2 || toolStat.SuccessCalls != 1 || toolStat.FailedCalls != 1 {
+		t.Fatalf("tool stats = %+v, want total=2 success=1 failed=1", toolStat)
+	}
+	if toolStat.LastCallTime == nil || !toolStat.LastCallTime.Equal(secondCall) {
+		t.Fatalf("tool last call time = %v, want %v", toolStat.LastCallTime, secondCall)
+	}
+
+	if err := db.UpdateSkillStats("capability-primitive-search", 2, 2, 0, &firstCall); err != nil {
+		t.Fatalf("first UpdateSkillStats: %v", err)
+	}
+	if err := db.UpdateSkillStats("capability-primitive-search", 3, 1, 2, nil); err != nil {
+		t.Fatalf("second UpdateSkillStats: %v", err)
+	}
+	skillStats, err := db.LoadSkillStats()
+	if err != nil {
+		t.Fatalf("LoadSkillStats: %v", err)
+	}
+	skillStat := skillStats["capability-primitive-search"]
+	if skillStat == nil {
+		t.Fatal("expected stats for capability-primitive-search")
+	}
+	if skillStat.TotalCalls != 5 || skillStat.SuccessCalls != 3 || skillStat.FailedCalls != 2 {
+		t.Fatalf("skill stats = %+v, want total=5 success=3 failed=2", skillStat)
+	}
+	if skillStat.LastCallTime == nil || !skillStat.LastCallTime.Equal(firstCall) {
+		t.Fatalf("skill last call time = %v, want %v", skillStat.LastCallTime, firstCall)
+	}
+}
+
 func TestPurgeToolExecutionsBefore_zeroRetentionSkipsViaService(t *testing.T) {
 	// RetentionDaysEffective: 0 means no purge at service layer; DB method still works when called directly.
 	dbPath := filepath.Join(t.TempDir(), "monitor.db")

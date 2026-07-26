@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -967,16 +968,15 @@ func (db *DB) UpdateToolStats(toolName string, totalCalls, successCalls, failedC
 		INSERT INTO tool_stats (tool_name, total_calls, success_calls, failed_calls, last_call_time, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tool_name) DO UPDATE SET
-			total_calls = total_calls + ?,
-			success_calls = success_calls + ?,
-			failed_calls = failed_calls + ?,
-			last_call_time = COALESCE(?, last_call_time),
-			updated_at = ?
+			total_calls = tool_stats.total_calls + excluded.total_calls,
+			success_calls = tool_stats.success_calls + excluded.success_calls,
+			failed_calls = tool_stats.failed_calls + excluded.failed_calls,
+			last_call_time = COALESCE(excluded.last_call_time, tool_stats.last_call_time),
+			updated_at = excluded.updated_at
 	`
 
 	_, err := db.Exec(query,
 		toolName, totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
-		totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
 	)
 
 	if err != nil {
@@ -1001,33 +1001,22 @@ func truncateCallsTimelineBucket(t time.Time, dailyBuckets bool) time.Time {
 		y, m, d := t.Date()
 		return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
 	}
-	return t.Truncate(time.Hour)
+	y, m, d := t.Date()
+	return time.Date(y, m, d, t.Hour(), 0, 0, 0, time.Local)
 }
 
 // LoadCallsTimeline 按时间范围加载调用趋势（since 起至今，含边界）
 func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTimelineBucket, error) {
-	var query string
-	if dailyBuckets {
-		query = `
-			SELECT date(start_time, 'localtime') AS bucket,
-				COUNT(*) AS total,
-				SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END) AS failed
-			FROM tool_executions
-			WHERE start_time >= ?
-			GROUP BY bucket
-			ORDER BY bucket
-		`
-	} else {
-		query = `
-			SELECT strftime('%Y-%m-%d %H:00:00', start_time, 'localtime') AS bucket,
-				COUNT(*) AS total,
-				SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END) AS failed
-			FROM tool_executions
-			WHERE start_time >= ?
-			GROUP BY bucket
-			ORDER BY bucket
-		`
-	}
+	hourExpr := db.Dialect().hourBucketUTC("start_time")
+	query := `
+		SELECT ` + hourExpr + ` AS bucket,
+			COUNT(*) AS total,
+			SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END) AS failed
+		FROM tool_executions
+		WHERE start_time >= ?
+		GROUP BY bucket
+		ORDER BY bucket
+	`
 
 	rows, err := db.Query(query, since)
 	if err != nil {
@@ -1035,7 +1024,7 @@ func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTime
 	}
 	defer rows.Close()
 
-	buckets := make([]CallsTimelineBucket, 0)
+	bucketTotals := make(map[time.Time]struct{ total, failed int })
 	for rows.Next() {
 		var bucketStr string
 		var total, failed int
@@ -1043,25 +1032,36 @@ func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTime
 			db.logger.Warn("加载调用趋势失败", zap.Error(err))
 			continue
 		}
-		bucketTime, err := parseCallsTimelineBucket(bucketStr, dailyBuckets)
+		hourUTC, err := time.ParseInLocation("2006-01-02 15:04:05", bucketStr, time.UTC)
 		if err != nil {
 			db.logger.Warn("解析调用趋势时间桶失败", zap.Error(err), zap.String("bucket", bucketStr))
 			continue
 		}
+		bucketTime := truncateCallsTimelineBucket(hourUTC, dailyBuckets)
+		entry := bucketTotals[bucketTime]
+		entry.total += total
+		entry.failed += failed
+		bucketTotals[bucketTime] = entry
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	bucketTimes := make([]time.Time, 0, len(bucketTotals))
+	for bucketTime := range bucketTotals {
+		bucketTimes = append(bucketTimes, bucketTime)
+	}
+	sort.Slice(bucketTimes, func(i, j int) bool { return bucketTimes[i].Before(bucketTimes[j]) })
+	buckets := make([]CallsTimelineBucket, 0, len(bucketTimes))
+	for _, bucketTime := range bucketTimes {
+		entry := bucketTotals[bucketTime]
 		buckets = append(buckets, CallsTimelineBucket{
 			BucketTime: bucketTime,
-			Total:      total,
-			Failed:     failed,
+			Total:      entry.total,
+			Failed:     entry.failed,
 		})
 	}
 	return buckets, nil
-}
-
-func parseCallsTimelineBucket(bucketStr string, dailyBuckets bool) (time.Time, error) {
-	if dailyBuckets {
-		return time.ParseInLocation("2006-01-02", bucketStr, time.Local)
-	}
-	return time.ParseInLocation("2006-01-02 15:04:05", bucketStr, time.Local)
 }
 
 // DecreaseToolStats 减少工具统计信息（用于删除执行记录时）

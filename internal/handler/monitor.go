@@ -775,6 +775,10 @@ func truncateToBucket(t time.Time, bucketSize time.Duration, dailyBuckets bool) 
 		y, m, d := t.Date()
 		return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 	}
+	if bucketSize == time.Hour {
+		y, m, d := t.Date()
+		return time.Date(y, m, d, t.Hour(), 0, 0, 0, t.Location())
+	}
 	return t.Truncate(bucketSize)
 }
 

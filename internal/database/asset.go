@@ -474,8 +474,8 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 		query += " AND " + assetEffectiveLastScanExpr + " IS NOT NULL"
 	}
 	if filter.ScanOverdueDays != nil {
-		query += " AND (" + assetEffectiveLastScanExpr + " IS NULL OR datetime(" + assetEffectiveLastScanExpr + ") < datetime('now', ?))"
-		args = append(args, fmt.Sprintf("-%d days", *filter.ScanOverdueDays))
+		query += " AND (" + assetEffectiveLastScanExpr + " IS NULL OR " + assetEffectiveLastScanExpr + " < ?)"
+		args = append(args, time.Now().AddDate(0, 0, -*filter.ScanOverdueDays))
 	}
 	if filter.LastScanBefore != nil {
 		query += " AND " + assetEffectiveLastScanExpr + " < ?"
@@ -1101,9 +1101,11 @@ func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[st
 	}
 	where, args := appendAssetAccess(" WHERE 1=1", nil, access, "assets")
 	stats := map[string]interface{}{}
+	recentSince := time.Now().AddDate(0, 0, -7)
+	rowArgs := append([]interface{}{recentSince}, args...)
 	row := db.QueryRow(`SELECT COUNT(*),COUNT(DISTINCT NULLIF(ip,'')),COUNT(DISTINCT NULLIF(domain,'')),
 		COUNT(DISTINCT CASE WHEN port>0 THEN CAST(port AS TEXT) END),
-		COALESCE(SUM(CASE WHEN datetime(last_seen_at)>=datetime('now','-7 days') THEN 1 ELSE 0 END),0) FROM assets`+where, args...)
+		COALESCE(SUM(CASE WHEN last_seen_at >= ? THEN 1 ELSE 0 END),0) FROM assets`+where, rowArgs...)
 	var total, ips, domains, ports, recent int
 	if err := row.Scan(&total, &ips, &domains, &ports, &recent); err != nil {
 		return nil, err
@@ -1127,14 +1129,16 @@ func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[st
 	stats["period_days"] = days
 
 	coverage := map[string]interface{}{}
+	monthSince := time.Now().AddDate(0, 0, -30)
+	coverageArgs := append([]interface{}{recentSince, monthSince, monthSince}, args...)
 	coverageRow := db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN last_scan_at IS NOT NULL THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN datetime(last_scan_at)>=datetime('now','-7 days') THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN datetime(last_scan_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN last_scan_at >= ? THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN last_scan_at >= ? THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN last_scan_at IS NULL THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN last_scan_at IS NOT NULL AND datetime(last_scan_at)<datetime('now','-30 days') THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN last_scan_at IS NOT NULL AND last_scan_at < ? THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN status='active' THEN 1 ELSE 0 END),0)
-		FROM assets`+where, args...)
+		FROM assets`+where, coverageArgs...)
 	var scanned, scanned7, scanned30, neverScanned, stale, active int
 	if err := coverageRow.Scan(&scanned, &scanned7, &scanned30, &neverScanned, &stale, &active); err != nil {
 		return nil, err
@@ -1150,9 +1154,11 @@ func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[st
 	stats["coverage"] = coverage
 
 	assetDaily := map[string]map[string]int{}
-	trendWhere, trendArgs := appendAssetAccess(" WHERE datetime(first_seen_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access, "assets")
-	trendRows, err := db.Query(`SELECT date(first_seen_at), COUNT(*)
-		FROM assets`+trendWhere+` GROUP BY date(first_seen_at) ORDER BY date(first_seen_at)`, trendArgs...)
+	trendSince := time.Now().AddDate(0, 0, -(days - 1))
+	trendWhere, trendArgs := appendAssetAccess(" WHERE first_seen_at >= ?", []interface{}{trendSince}, access, "assets")
+	firstSeenDate := db.Dialect().dateTrunc("first_seen_at")
+	trendRows, err := db.Query(`SELECT `+firstSeenDate+`, COUNT(*)
+		FROM assets`+trendWhere+` GROUP BY `+firstSeenDate+` ORDER BY `+firstSeenDate, trendArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1168,8 +1174,9 @@ func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[st
 	if err := trendRows.Close(); err != nil {
 		return nil, err
 	}
-	inactiveWhere, inactiveArgs := appendAssetAccess(" WHERE status='inactive' AND datetime(updated_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access, "assets")
-	inactiveRows, err := db.Query(`SELECT date(updated_at), COUNT(*) FROM assets`+inactiveWhere+` GROUP BY date(updated_at) ORDER BY date(updated_at)`, inactiveArgs...)
+	inactiveWhere, inactiveArgs := appendAssetAccess(" WHERE status='inactive' AND updated_at >= ?", []interface{}{trendSince}, access, "assets")
+	updatedDate := db.Dialect().dateTrunc("updated_at")
+	inactiveRows, err := db.Query(`SELECT `+updatedDate+`, COUNT(*) FROM assets`+inactiveWhere+` GROUP BY `+updatedDate+` ORDER BY `+updatedDate, inactiveArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1190,10 +1197,11 @@ func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[st
 	}
 
 	riskDaily := map[string]map[string]int{}
-	riskWhere, riskArgs := appendVulnerabilityAccessFilter(" WHERE datetime(created_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access)
-	riskRows, err := db.Query(`SELECT date(created_at), COUNT(*),
+	riskWhere, riskArgs := appendVulnerabilityAccessFilter(" WHERE created_at >= ?", []interface{}{trendSince}, access)
+	createdDate := db.Dialect().dateTrunc("created_at")
+	riskRows, err := db.Query(`SELECT `+createdDate+`, COUNT(*),
 		COALESCE(SUM(CASE WHEN LOWER(severity) IN ('critical','high') THEN 1 ELSE 0 END),0)
-		FROM vulnerabilities`+riskWhere+` GROUP BY date(created_at) ORDER BY date(created_at)`, riskArgs...)
+		FROM vulnerabilities`+riskWhere+` GROUP BY `+createdDate+` ORDER BY `+createdDate, riskArgs...)
 	if err != nil {
 		return nil, err
 	}
