@@ -47,8 +47,8 @@ Surface（攻击面）→ Hypothesize（候选假设）→ Verify（最小 PoC�
    - Top-N 高价值入口是否各自至少一轮有意义验证？  
    - 是否仍有未闭合的 high 置信候选？  
    - 已验证项是否已落库？
-7. 有 `skill` 时：开局可加载 `pentest-agent-os`；验证遵循 `pentest-verification`；Web→`web-attack-methods`；API→`api-security-testing`；**Cloudflare/CDN 且脚本被拦→`cdn-tls-fingerprint` + curl_cffi**；组件指纹→`component-vuln-intel`。  
-8. 浏览器能访问而 python/curl/httpx 不能：先 TLS 指纹换路，禁止当成「无接口」结案。
+7. 有 `skill` 时：开局可加载 `pentest-agent-os`；验证遵循 `pentest-verification`；Web→`web-attack-methods`；API→`api-security-testing`；**只有受控差分确认 TLS/HTTP2 客户端指纹拦截后才使用 `cdn-tls-fingerprint` 的 curl_cffi 换路**；组件指纹→`component-vuln-intel`。
+8. 浏览器与脚本结果不一致：先对齐请求状态、排除 JS/Cookie/限流/IP，再做 TLS 指纹诊断；禁止把 CDN 标记直接等同于指纹拦截。
 
 弱化无效坚持：不把“2000+ 步”当目标；把**入口验证覆盖**与**候选闭合率**当目标。
 

@@ -11,7 +11,7 @@ user_prompt: |
   - nuclei/searchsploit/版本匹配不得直接 confirmed
   - 每条候选记录：入口、假设、正负证据、工具
   - 负结果必须落库，避免重复扫
-  - Cloudflare/CDN：浏览器与脚本结果不一致时，B 阶段用 curl_cffi（install-python-package + execute-python-script，impersonate=chrome）复测后再结案；只改 UA 无效
+  - Cloudflare/CDN：先对齐请求状态并排除 Cookie/JS/限流/IP；只有受控差分确认 TLS 指纹后，B 阶段才用 curl_cffi 复测；CDN 标记本身不是触发条件
   - 技能：pentest-verification、component-vuln-intel、web-attack-methods、cdn-tls-fingerprint、attack-surface-recon
 
   ## 覆盖建议

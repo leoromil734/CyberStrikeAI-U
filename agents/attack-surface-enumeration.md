@@ -70,7 +70,7 @@ max_iterations: 0
 
 - `attack-surface-recon`、`pentest-verification`
 - 指纹明确后：`component-vuln-intel`（只产线索）
-- 边缘 CDN/Cloudflare：`cdn-tls-fingerprint`（识别 TLS/JA3 风险；深测接口建议 curl_cffi，勿把 challenge 当无入口）
+- 边缘 CDN/Cloudflare：只做标注。仅在标准客户端持续停在边缘、同条件浏览器到业务层时加载 `cdn-tls-fingerprint` 做受控差分；确认后才使用 curl_cffi
 
 ## 核心职责
 
@@ -89,7 +89,7 @@ max_iterations: 0
 
 1. 读黑板与交接包，列出「已知 / 未知」。  
 2. dnsx（若仍有主机名列表）→ httpx 指纹；naabu/nmap 补端口面。  
-3. 标注 CDN/WAF（`cf-ray`/cloudflare 等）；浏览器可开而脚本不能 → fact 写 TLS/Bot 嫌疑，验证阶段走 curl_cffi。  
+3. 标注 CDN/WAF（`cf-ray`/cloudflare 等），但不据此切换客户端；浏览器与脚本存在稳定差分时写 tentative，并交验证阶段做 TLS 指纹受控诊断。
 4. katana/gau/waybackurls/ffuf 补入口与历史路径。  
 5. arjun/paramspider 补参数面。  
 6. 可选 nuclei 限域线索扫描 → tentative；边缘狂拦则停扫改标注。  

@@ -7,12 +7,12 @@ user_prompt: |
   发现端点/Schema → 假设（越权/注入/批量赋值/JWT）→ 最小请求验证 → 落库/负结果
 
   ## 技能
-  pentest-verification；**api-security-testing**（主）；**cdn-tls-fingerprint**（Cloudflare/CDN/TLS 指纹）；web-attack-methods；component-vuln-intel；OOB→interactsh-client
+  pentest-verification；**api-security-testing**（主）；**cdn-tls-fingerprint**（仅稳定浏览器/脚本差分诊断，确认后才用 curl_cffi）；web-attack-methods；component-vuln-intel；OOB→interactsh-client
 
   ## 检查清单
   1) 收集 base URL、路径前缀、OpenAPI/Swagger/GraphQL introspection
-  2) 若 cf-ray/cloudflare 或浏览器与脚本结果不一致：install curl_cffi，Session(impersonate="chrome") 建可达基线后再测（只改 UA 无效）
-  3) api-schema-analyzer / graphql-scanner / arjun / httpx 或 curl_cffi 映射方法与参数
+  2) CDN/`cf-ray` 只标注，不切客户端；若标准客户端持续停在边缘而同条件浏览器到业务层，先对齐 Cookie/认证/方法/请求体并排除 JS/限流/IP，再做 curl_cffi 单请求诊断；确认后才复用
+  3) api-schema-analyzer / graphql-scanner / arjun / httpx 映射方法与参数；仅确认 TLS 指纹拦截后在受影响请求中使用 curl_cffi
   4) 匿名 vs 低权 vs 高权：同 ID 横向越权、垂直越权、批量赋值 role/isAdmin（同一客户端 Session）
   5) JWT：jwt-analyzer（none/弱密钥/声明篡改）仅在有证据时 record
   6) 注入：sqlmap/手测；入口须已证明非边缘误拦

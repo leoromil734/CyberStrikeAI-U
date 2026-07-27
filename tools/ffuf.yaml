@@ -1,7 +1,7 @@
 name: "ffuf"
 command: "ffuf"
 enabled: true
-short_description: "快速Web模糊测试工具（替代 gobuster）"
+short_description: "Web 模糊与路径发现；默认自动选择已存在小字典并校准 catch-all"
 description: |
   FFuf是一个快速的Web模糊测试工具，用于目录发现、参数模糊测试和内容发现。
 
@@ -19,6 +19,12 @@ description: |
   - 目录枚举
   - 参数发现
   - 内容发现
+
+  **执行纪律：**
+  - 先用 2–3 个随机路径建立 catch-all 基线，再运行 ffuf
+  - 默认启用自动校准并匹配全部状态码，避免漏掉 405/500 等高价值差分
+  - 优先小字典快速覆盖；只有发现技术栈、命名规律或高价值入口后才升级大字典
+  - 若传入自定义字典，必须是执行环境内真实存在的文件
 parameters:
   - name: "url"
     type: "string"
@@ -28,17 +34,66 @@ parameters:
     format: "flag"
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径"
+    description: "字典文件路径；省略时按候选路径选择第一个真实存在的文件"
     required: false
-    default: "/usr/share/wordlists/dirb/common.txt"
+    existing_file: true
+    fallback_paths:
+      - "/opt/cyberstrike/wordlists/raft-small-directories.txt"
+      - "/opt/SecLists/Discovery/Web-Content/raft-small-directories.txt"
+      - "/usr/share/seclists/Discovery/Web-Content/raft-small-directories.txt"
+      - "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
+      - "/usr/share/dirb/wordlists/common.txt"
+      - "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt"
+      - "/usr/share/wordlists/dirb/common.txt"
     flag: "-w"
     format: "flag"
   - name: "match_codes"
     type: "string"
-    description: "匹配的HTTP状态码（逗号分隔）"
+    description: "匹配的HTTP状态码；默认 all，配合自动校准/过滤器保留异常差分"
     required: false
-    default: "200,204,301,302,307,401,403"
+    default: "all"
     flag: "-mc"
+    format: "flag"
+  - name: "auto_calibration"
+    type: "bool"
+    description: "自动识别并过滤 catch-all 响应"
+    required: false
+    default: true
+    flag: "-ac"
+    format: "flag"
+  - name: "noninteractive"
+    type: "bool"
+    description: "禁用交互控制台，适合 MCP 执行"
+    required: false
+    default: true
+    flag: "-noninteractive"
+    format: "flag"
+  - name: "threads"
+    type: "int"
+    description: "并发线程数；默认保守，确认未限流后再提高"
+    required: false
+    default: 20
+    flag: "-t"
+    format: "flag"
+  - name: "rate_limit"
+    type: "int"
+    description: "每秒最大请求数"
+    required: false
+    default: 80
+    flag: "-rate"
+    format: "flag"
+  - name: "timeout"
+    type: "int"
+    description: "单请求超时（秒）"
+    required: false
+    default: 10
+    flag: "-timeout"
+    format: "flag"
+  - name: "filter_size"
+    type: "string"
+    description: "过滤响应大小；已测得稳定 catch-all 大小时使用"
+    required: false
+    flag: "-fs"
     format: "flag"
   - name: "additional_args"
     type: "string"

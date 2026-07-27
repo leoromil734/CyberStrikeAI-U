@@ -12,15 +12,15 @@ user_prompt: |
   - 识别组件/版本：component-vuln-intel（结果=线索）
   - 公开无洞：zero-day-discovery
   - 盲洞 OOB：interactsh-client
-  - CDN/Cloudflare/TLS 指纹：cdn-tls-fingerprint + curl_cffi（勿只改 UA）
+  - 疑似 TLS 客户端指纹差分：cdn-tls-fingerprint 先归因，确认后才使用 curl_cffi
   - 落库：pentest-blackboard
 
   ## 推荐顺序
   1) 明确 URL/范围/认证态；写 target/* fact
   2) httpx 指纹（含 cdn）+ katana/gau/waybackurls 扩入口 + ffuf/dirsearch 补路径
-  3) 若边缘拦截：curl_cffi chrome 基线后再测接口
+  3) CDN 只标注；标准客户端持续停在边缘且同条件浏览器到业务层时，先排除 Cookie/JS/限流/IP，再做 curl_cffi 单请求诊断；确认后才替换受影响接口请求
   4) nuclei 限域线索（非结案）；arjun/paramspider 补参数
-  5) 按入口验证：SQLi→sqlmap；XSS→dalfox；SSRF/盲洞→interactsh-client+手测；越权/上传→手测+脚本（CDN 下脚本优先 curl_cffi）
+  5) 按入口验证：SQLi→sqlmap；XSS→dalfox；SSRF/盲洞→interactsh-client+手测；越权/上传→手测+脚本（默认标准客户端，确认 TLS 指纹后才用 curl_cffi）
   6) 正证据→record_vulnerability；负证据→负结果 fact；禁止空转同一参数集 3 次
 
   ## 成功标准

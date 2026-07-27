@@ -2,7 +2,7 @@ name: "oneforall"
 command: "oneforall"
 enabled: true
 
-short_description: "子域收集框架，多数据源被动+主动枚举（OneForAll）"
+short_description: "根域深度子域增量收集；subfinder 首轮后按深度门控调用，补齐异构数据源"
 
 description: |
   OneForAll（shmilylty/OneForAll）是子域名收集框架，整合多种被动数据源与主动爆破。
@@ -12,18 +12,19 @@ description: |
   - 子域爆破、解析校验、存活探测（依赖其内置模块）
   - 结果导出（csv/json 等，视版本与参数）
 
-  **使用场景：**
-  - 资产发现、子域枚举
-  - 与 subfinder/amass 互补（源不同，可交叉验证）
-  - 输出再交给 **httpx** 探活、**nuclei** 扫描
+  **使用场景与触发条件：**
+  - 根域深度侦察：subfinder 快速轮之后，调用一次 OneForAll 补齐异构数据源
+  - subfinder 结果很少、目标价值高、或用户要求完整攻击面时必须调用
+  - 单 URL/IP、通配 DNS 已确认、快速探活任务或上游明确禁止全量枚举时跳过，并记录原因
+  - 与 subfinder/amass 结果去重后交给 dnsx/httpx，不重复扫描相同主机
 
   **推荐链路：**
-  - **oneforall** / subfinder → httpx → nuclei / ffuf
+  - subfinder（快）→ **oneforall**（深度补齐，默认关闭爆破/HTTP探测）→ dnsx → httpx
 
   **与 subfinder 的关系：**
-  - subfinder：轻量、偏被动 API，适合快速一轮
-  - oneforall：更重、模块多，适合深度收集
-  - 可并存，不必二选一
+  - subfinder：轻量、偏被动 API，适合首轮快速反馈
+  - oneforall：数据源更多但更重，适合作为第二阶段增量收集
+  - 正常根域深度侦察应各执行一次，而不是长期只使用 subfinder
 
   **CLI 形态：**
   - 等价：`oneforall --target example.com run`

@@ -1,206 +1,137 @@
 ---
 name: cdn-tls-fingerprint
 description: >-
-  CDN/WAF边缘拦截与TLS指纹:Cloudflare/Akamai/Fastly/网宿识别,JA3/JA4与HTTP2指纹导致
-  python-requests/curl/httpx/sqlmap被拦;curl_cffi浏览器伪装、浏览器自动化、源站绕过与接口测试换路。
-  Use when Cloudflare/CDN 403/503/challenge, TLS fingerprint block, API testing blocked, need curl_cffi.
+  诊断 CDN/WAF 边缘的 TLS、JA3/JA4 与 HTTP/2 客户端指纹差分，并在受控对比确认后使用 curl_cffi。仅在标准客户端被边缘拦截而同条件浏览器可达时使用；看到 CDN、cf-ray 或普通 403 时不要触发。
+  Use when a controlled browser-versus-CLI comparison suggests TLS/client fingerprint blocking, not merely when a site uses a CDN.
 tags: [渗透测试, penetration-testing, CDN, Cloudflare, TLS, 红队]
 ---
 
-## CDN / TLS 指纹与接口测试换路
+# CDN / TLS 客户端指纹诊断
 
-授权测试中：**边缘拦截 ≠ 业务 403**。很多「接口打不开」是 CDN/Bot 管理按 **TLS/JA3/JA4 + HTTP/2 + 客户端行为** 丢弃了非浏览器流量，而不是 API 本身鉴权失败。
+本 skill 的职责是**归因和换路**，不是把 `curl_cffi` 变成默认 HTTP 客户端。
 
-与 `proxy-tool-bootstrap`（IP/代理换路）、`web-attack-methods`（路径/协议绕 CDN）、`api-security-testing`（业务鉴权）配合使用。
-
----
-
-### 1) 识别：你在打 CDN 还是源站？
-
-| 信号 | 常见含义 |
-|------|----------|
-| 响应头 `server: cloudflare` / `cf-ray` | Cloudflare 边缘 |
-| `CF-Cache-Status` / `cf-mitigated` | CF 缓存或缓解动作 |
-| 正文含 `Just a moment` / `cf-browser-verification` / Turnstile / Challenge | JS/人机挑战 |
-| `server: AkamaiGHost` / `X-Akamai-*` | Akamai |
-| Fastly / `x-served-by` / `via: 1.1 varnish` | Fastly 等 |
-| 网宿 `_jsc_ch_conf` / `ws_sec_page.js` | 网宿 JS 挑战（见 web-attack-methods） |
-| PWS / gccdn / 固定时序 502 | 路径/策略过滤（未必是 TLS） |
-| 同 URL：**浏览器 200，curl/python 403/503/空/连接重置** | **高度疑似 TLS/JA3 或 Bot 指纹** |
-| httpx/nuclei/sqlmap 大批量后突然全 403 | 速率 + 指纹双重触发 |
-
-**事实落库建议：**
-
-```
-fact_key: infra/cdn_edge
-summary: Cloudflare边缘 + 疑似TLS/Bot拦截（浏览器可访问，python-requests 403）
-body: 证据头、状态码差分、已测客户端（curl/requests/httpx/浏览器）
-confidence: confirmed|tentative
+```text
+看到 CDN                 != TLS 指纹拦截
+看到 cf-ray              != TLS 指纹拦截
+单次 403/429/503         != TLS 指纹拦截
+浏览器与 CLI 有受控差分  = 可以进入诊断
+curl_cffi 唯一变量下到达业务层 = 才确认客户端指纹拦截
 ```
 
----
+## 1. 触发门槛
 
-### 2) 分层诊断（一次只改一个变量）
+只有同时满足以下条件，才进入 `curl_cffi` 诊断：
 
+1. 标准客户端对同一请求低速重试后，持续停留在边缘：403/503、挑战页、连接重置或非业务响应。
+2. 真实浏览器在相同网络出口访问同 URL、同方法和同认证态，能够到达业务响应。
+3. 已对齐关键变量：Cookie、Authorization、CSRF、请求体、Content-Type、重定向和必要 Header。
+4. 已排除明显的 JS Challenge、验证码、速率限制、IP 信誉和地区限制。
+
+以下情况不加载本 skill，继续使用 `httpx`、系统 `curl` 或普通脚本：
+
+- 仅 `httpx -cdn` 标出 CDN
+- 响应头只有 `server: cloudflare` / `cf-ray`
+- 所有客户端都得到相同应用层 401/403/404
+- 浏览器依赖新 Cookie 或完成 JS Challenge 后才成功
+- 降速或更换出口后标准客户端恢复
+
+## 2. 一次只改变一个变量
+
+使用固定测试用例记录：
+
+```text
+URL / method / body
+network egress
+headers / cookies / auth
+redirect policy
+request rate
+client stack
+status / response markers / edge headers
 ```
-A. 浏览器能开、CLI 不能
-   → 优先 TLS/HTTP2/JA3 指纹 或 Cookie/JS 挑战，不是先狂换 payload
 
-B. 浏览器也 Challenge
-   → 需要过挑战拿 cf_clearance 等 Cookie，再复用到脚本；或改用真实浏览器自动化
+按顺序执行：
 
-C. 全部客户端 502 且时序极稳
-   → 更像 URL/WAF 规则过滤（走 web-attack-methods CDN 502 矩阵），不是指纹
+```text
+S0 标准客户端低速基线
+   -> 已到业务层：停止，不使用 curl_cffi
+   -> 边缘拦截：进入 S1
 
-D. 仅扫描器被拦、慢速 curl_cffi chrome 正常
-   → 指纹 + 速率；降并发、加间隔、统一浏览器伪装客户端
+S1 同条件真实浏览器
+   -> 浏览器也被拦：不是已确认 TLS 差分，转浏览器挑战/限流/IP 诊断
+   -> 浏览器到业务层：进入 S2
+
+S2 对齐 Cookie、认证、方法、请求体与重定向后复测标准客户端
+   -> 恢复：差异来自请求状态，不是 TLS
+   -> 仍停在边缘：进入 S3
+
+S3 安装并只发送 1 个 curl_cffi 诊断请求
+   -> curl_cffi 到业务层、标准客户端仍在边缘：确认 TLS/HTTP2 客户端指纹
+   -> curl_cffi 仍挑战：未确认；优先真实浏览器或获取挑战 Cookie
 ```
 
-**禁止**：把「默认 urllib/requests 被 CF 拦」写成「接口不存在」或「无越权面」。
+## 3. 结论分类
 
----
+- `tls_fingerprint_confirmed`：相同请求条件下，只有浏览器 TLS 栈/`curl_cffi` 到达业务层。
+- `cookie_or_js_challenge`：获得挑战 Cookie 或执行 JS 后才可达；使用浏览器流程。
+- `rate_or_ip_block`：降速或换出口后恢复；使用限速/代理策略。
+- `application_denial`：各客户端都到达相同业务 401/403；回到鉴权/业务测试。
+- `inconclusive`：变量未对齐或结果不稳定；不得宣称 TLS 指纹拦截。
 
-### 3) 为何 python-requests / 系统 curl / 部分工具会触发拦截
+建议写入 fact：测试矩阵、响应标记、唯一变化变量和结论置信度。
 
-边缘可见的客户端画像通常包括：
+## 4. 确认后使用 `curl_cffi`
 
-1. **TLS 指纹（JA3/JA4）**：密码套件顺序、扩展、曲线 — OpenSSL 默认 ≠ Chrome  
-2. **HTTP/2 指纹**：SETTINGS、伪头顺序、优先级  
-3. **HTTP 头集合**：缺 `sec-ch-ua` / 错误 `Accept-Language` / 头顺序异常  
-4. **行为**：无 Cookie 直打敏感路径、极高 RPS、无 Referer 的 API 爆破  
-
-因此：**只改 User-Agent 往往不够**；必须换 **能模拟浏览器 TLS 栈** 的客户端。
-
----
-
-### 4) 主换路：`curl_cffi`（接口测试首选）
-
-[curl_cffi](https://github.com/lexiforest/curl_cffi) 基于 curl-impersonate，可 `impersonate` Chrome/Safari/Edge 等，显著降低 Cloudflare 等对「非浏览器 TLS」的拦截。
-
-#### 安装（会话内）
+仅在 `tls_fingerprint_confirmed` 后安装：
 
 ```bash
-# 优先用项目已有能力
-install-python-package  # 包名 curl_cffi
-# 或
 pip install curl_cffi
 ```
 
-#### 最小可用示例（API GET/POST）
+最小诊断/复用示例：
 
 ```python
 from curl_cffi import requests
 
-# impersonate 取常见浏览器画像；版本需与库支持列表一致，如 chrome, chrome120, chrome124, safari, edge
 session = requests.Session(impersonate="chrome")
-
-headers = {
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    # 需要时从浏览器复制：Authorization / Cookie / X-CSRF-Token / 业务自定义头
-}
-
-r = session.get("https://target.example/api/v1/resource", headers=headers, timeout=30)
-print(r.status_code, r.headers.get("cf-ray"), r.text[:500])
-
-r2 = session.post(
+response = session.get(
     "https://target.example/api/v1/resource",
-    headers={**headers, "Content-Type": "application/json"},
-    json={"id": 1},
+    headers={
+        "Accept": "application/json, text/plain, */*",
+        "Authorization": "Bearer <same-token-as-baseline>",
+    },
+    cookies={"session": "<same-cookie-as-baseline>"},
     timeout=30,
+    allow_redirects=False,
 )
-print(r2.status_code, r2.text[:500])
+print(response.status_code)
+print(response.headers.get("server"), response.headers.get("cf-ray"))
+print(response.text[:500])
 ```
 
-#### 带浏览器 Cookie（已过 Challenge 时）
+CyberStrikeAI 中使用 `install-python-package` 安装，`execute-python-script` 执行。不要为了普通探活、爬取、目录枚举或没有拦截的网站安装它。
 
-1. 浏览器手动或 Playwright 通过挑战  
-2. 导出 `cf_clearance`、`__cf_bm` 及业务 Cookie  
-3. 注入 `session.cookies` 或 `headers["Cookie"]`  
-4. **仍建议** `impersonate="chrome"`，避免「有 Cookie 但 TLS 仍是 Python」再次触发  
+确认后也只替换**受影响的结论性请求**：
 
-#### 代理
+- 探活、批量资产筛选仍优先 `httpx`
+- 路径发现仍优先 `ffuf`/`dirsearch`
+- 普通 API 差分可使用标准脚本
+- 只有被证实卡在 TLS/HTTP2 客户端指纹的请求才复用同一个 `curl_cffi.Session`
 
-```python
-# HTTP/SOCKS 代理（与 proxy-tool-bootstrap 配合）
-proxies = {"http": "socks5://127.0.0.1:1080", "https": "socks5://127.0.0.1:1080"}
-r = session.get(url, headers=headers, proxies=proxies, timeout=30)
+## 5. `curl_cffi` 仍失败时
+
+- 强 JS Challenge / Turnstile：使用真实浏览器完成挑战，再判断是否需要复用 Cookie。
+- 有 Cookie 仍失败：重新核对 TLS 画像、Cookie 绑定、出口 IP 和浏览器请求头，不要反复更换 `impersonate` 猜测。
+- 所有客户端稳定 502：检查路径规则、上游故障或反向代理，不归因 TLS。
+- 429 或批量后全 403：降低并发和速率，先诊断限流/IP 信誉。
+- 已授权且存在源站线索：可对齐 Host/SNI 做最小源站验证，但需保持范围约束。
+
+## 6. 与漏洞验证衔接
+
+```text
+Surface: httpx 只标注 CDN/边缘
+Diagnose: 受控客户端差分，确认或否定 TLS 指纹
+Verify: 在同一个已验证可达客户端上做业务漏洞差分
+Record: 区分 edge_block、app_403、auth_fail 与真实漏洞证据
 ```
 
-#### 批量 BOLA/越权矩阵注意
-
-- 全场统一 `Session(impersonate="chrome")`，不要混用 requests + curl_cffi 导致有的过有的不过  
-- 降速：请求间隔 0.5–2s 随机；避免 nuclei/ffuf 默认高并发顶 CF  
-- 失败分类落库：`edge_block` vs `app_403` vs `auth_fail`  
-
-#### 在 CyberStrikeAI 中的调用方式
-
-- `install-python-package` 安装 `curl_cffi`  
-- `execute-python-script` 跑上述脚本  
-- 或 `exec`：`python3 -c '...'`  
-- **不要**在已确认 TLS 拦截时，继续用裸 `httpx`/`requests` 做结论性 API 测试  
-
----
-
-### 5) 备选换路（curl_cffi 仍不够时）
-
-| 手段 | 适用 |
-|------|------|
-| **Playwright / 真实 Chrome** | 强 JS Challenge、Turnstile；拿 Cookie 再交给 curl_cffi |
-| **浏览器插件 / 手工导出 HAR** | 复制真实请求头与 Cookie 做最小复现 |
-| **源站 IP 直连** | 历史 DNS、证书透明度、Shodan、邮件头、SSRF、同 IP 多站；`Host`/`Sni` 对齐；**仅授权** |
-| **非标端口 / 灰度域名** | 未套 CDN 的 admin/api-test 子域 |
-| **协议换路** | WebSocket/gRPC 若边缘规则只拦 HTTP API（见 web-attack-methods） |
-| **代理池 + 降速** | 纯 IP 信誉问题；**不能替代** TLS 伪装 |
-| 系统 `curl --http2` | 仍可能是非 Chrome JA3；优先 curl_cffi |
-
-sqlmap/nuclei/ffuf：若边缘只认浏览器 TLS，可：
-
-- 用 curl_cffi 确认入口真实可达后，再决定是否值得上扫描器  
-- sqlmap：`--proxy` + 自定义 header；或改用 curl_cffi 手测注入差分  
-- 扫描器打在 **源站**（若授权且已找到）而非边缘  
-
----
-
-### 6) Cloudflare 常见响应怎么处理
-
-```
-403/503 + cf-ray + 短 HTML
-  → 先 curl_cffi chrome；仍 challenge → 浏览器过挑战取 Cookie
-
-429
-  → 降并发 + 代理换路（proxy-tool-bootstrap）；保留 curl_cffi
-
-200 但正文是挑战页
-  → 不要当业务 JSON 解析；检测 title/关键字后再换浏览器链路
-
-应用 JSON: {"code":401,"msg":"unauthorized"}
-  → 已到应用层；按 API 鉴权/BOLA 测，不再当 CDN 问题
-```
-
----
-
-### 7) 与发现闭环的衔接
-
-```
-Surface: httpx 标注 cdn/tech；写 infra/cdn_*
-Verify API:
-  1) 浏览器或 curl_cffi 建立「可达基线」
-  2) 再在同一客户端上做 BOLA/注入/越权
-  3) 扫描器命中若仅在被拦客户端出现 → 标为无效线索
-Negate: 「默认 python 被 CF 拦」不得写成「无 SSRF/无接口」
-```
-
-### 8) 触发器（强制）
-
-- **触发-CDN1**：浏览器与脚本结果不一致 → 加载本 skill，改用 `curl_cffi` 复测后再下结论  
-- **触发-CDN2**：见 `server: cloudflare` / `cf-ray` → 接口测试默认走浏览器 TLS 伪装客户端  
-- **触发-CDN3**：curl_cffi 仍 challenge → 浏览器 Cookie 复用或源站/协议换路；禁止无脑加大 nuclei 线程  
-
----
-
-### 9) 参考
-
-- curl_cffi / curl-impersonate（浏览器 TLS 伪装）  
-- Cloudflare Bot Management / WAF 文档（概念：TLS fingerprinting）  
-- 项目内：`proxy-tool-bootstrap`、`web-attack-methods` CDN 段、`api-security-testing`
+默认客户端被边缘拦截不能证明“接口不存在”或“没有漏洞”；同样，网站存在 CDN 也不能证明必须使用 `curl_cffi`。

@@ -1,8 +1,8 @@
 ---
 name: api-security-testing
 description: >-
-  API安全测试清单:OWASP API Top10 2023,GraphQL/JWT/OpenAPI;CDN/Cloudflare下TLS指纹须curl_cffi。
-  Use when testing REST/GraphQL APIs, BOLA/IDOR, JWT, mass assignment, Cloudflare blocked API.
+  API安全测试清单:OWASP API Top10 2023,GraphQL/JWT/OpenAPI；标准客户端优先，仅在受控差分确认 TLS 指纹拦截后使用 curl_cffi。
+  Use when testing REST/GraphQL APIs, BOLA/IDOR, JWT, mass assignment, or diagnosing a controlled browser-versus-CLI edge-block discrepancy.
 tags: [渗透测试, penetration-testing, API, 红队]
 ---
 
@@ -11,22 +11,22 @@ tags: [渗透测试, penetration-testing, API, 红队]
 对齐 [OWASP API Security Top 10 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/)。**扫描≠漏洞**；每条 confirmed 需最小证据包（见 `pentest-verification`）。
 
 ```
-=== -1. 客户端基线（CDN/Cloudflare 时强制）===
-- 若响应含 cf-ray / server: cloudflare，或「浏览器 200、requests/curl 403」:
-  → 加载 `cdn-tls-fingerprint`；API 请求改用 curl_cffi Session(impersonate="chrome")
-  → install-python-package: curl_cffi；execute-python-script 发 GET/POST/JSON
-  → 未建立可达基线前，禁止把失败写成「无此接口/无越权」
-- 强 JS Challenge: 浏览器拿 cf_clearance 等 Cookie 后再注入 curl_cffi
-- 扫描器(nuclei/sqlmap)在边缘被指纹拦时: 先 curl_cffi 手测，或改打授权源站
+=== -1. 客户端基线（标准客户端优先）===
+- 默认使用 httpx、系统 curl 或普通脚本建立业务响应基线；存在 CDN/Cloudflare 不改变默认客户端
+- 只有“标准客户端持续停在边缘 + 同条件浏览器到达业务层”时，才加载 `cdn-tls-fingerprint` 做受控差分
+- 先对齐 Cookie、Authorization、CSRF、方法、请求体、重定向和速率；排除 JS Challenge、限流与 IP 信誉
+- 仅当 curl_cffi 成为唯一变化且到达业务层时，确认 TLS/HTTP2 指纹拦截；之后只替换受影响请求
+- 强 JS Challenge 使用浏览器；不得仅因 `cf-ray`、CDN 标记或普通 403 就安装 curl_cffi
+- 未建立可达基线前，禁止把边缘失败写成“无此接口/无越权”
 
 === 0. 库存 (API9) ===
 - 收集: Swagger/OpenAPI/GraphQL introspection、JS 打包 API、移动端 baseURL
-- 工具: api-schema-analyzer, graphql-scanner, katana, gau, httpx；被 CDN 拦时改 curl_cffi 拉 schema
+- 工具: api-schema-analyzer, graphql-scanner, katana, gau, httpx；仅在已确认 TLS 指纹拦截后用 curl_cffi 拉 schema
 - 产出: endpoint 表 + 版本/影子环境 → fact: target/api_inventory (tentative ok)
 
 === 1. 认证 (API2) ===
 - 无 token / 过期 token / 错误 alg JWT / 密码重置链 / MFA 跳过
-- 工具: jwt-analyzer, curl_cffi/httpx, execute-python-script
+- 工具: jwt-analyzer, httpx, execute-python-script；受控差分确认 TLS 指纹后才使用 curl_cffi
 - 正证据: 获得他户会话或绕过登录；负证据: 一致 401
 
 === 2. BOLA 对象级授权 (API1) — 最高产 ===
@@ -69,7 +69,7 @@ tags: [渗透测试, penetration-testing, API, 红队]
 
 ### 推荐工具顺序
 
-`httpx` 探活并识别 CDN →（若 CF/TLS 拦）`curl_cffi` 建基线 → schema/introspection → 双身份会话 → BOLA 矩阵（同一 curl_cffi Session）→ jwt-analyzer → SSRF OOB → sqlmap（入口已证明可达时）
+`httpx` 探活并标记 CDN → schema/introspection → 双身份会话 → BOLA 矩阵 → jwt-analyzer → SSRF OOB → sqlmap（入口已证明可达时）。仅当受控客户端差分确认 TLS 指纹拦截，才在受影响步骤中插入 `curl_cffi`。
 
 ### 与角色
 

@@ -1,51 +1,57 @@
-# CDN / Cloudflare 与 TLS 指纹（接口测试）
+# CDN / Cloudflare 与 TLS 客户端指纹诊断
 
-> 当目标前有 Cloudflare、Akamai、Fastly、网宿等 CDN/WAF 时，**非浏览器 TLS 指纹**（Python `requests`、默认 `urllib`、部分 `curl`/`httpx`、大量扫描器）可能在边缘被拦截，表现为 403/503/挑战页/空响应，而真实浏览器或 **curl_cffi 浏览器伪装** 可正常访问 API。
+CDN/WAF 可能根据 TLS JA3/JA4、HTTP/2、Cookie、行为和 IP 信誉拦截请求，但 **CDN 存在不等于 TLS 指纹拦截**。
 
-## Summary
+## 关键判断
 
-* 边缘拦截 ≠ 业务鉴权失败  
-* 只改 User-Agent 通常无效，需要 **TLS(JA3/JA4) + HTTP/2** 级伪装  
-* 接口/BOLA 测试基线客户端：优先 **curl_cffi**（`impersonate="chrome"`）  
-* 强 JS Challenge：浏览器/Playwright 过挑战 → Cookie 注入 curl_cffi  
-* 可选：找源站 IP 直连（仅授权）、代理降速、WebSocket 等协议换路  
+- `server: cloudflare`、`cf-ray`：只证明请求经过 Cloudflare。
+- 单次 403/429/503：可能是应用拒绝、限流、挑战或 IP 信誉。
+- 浏览器成功、脚本失败：只是客户端差分线索，必须先对齐请求状态。
+- 相同 URL、方法、认证、Cookie、Header、请求体、出口和速率下，仅改变客户端栈，`curl_cffi` 到业务层而标准客户端仍停在边缘：才确认 TLS/HTTP2 客户端指纹拦截。
 
-## Detection
+## 诊断顺序
 
-| 观察 | 判断 |
-|------|------|
-| `server: cloudflare`、`cf-ray` | CF 边缘 |
-| 浏览器 200，python/curl 403 | TLS/Bot 指纹嫌疑 |
-| 正文 Challenge / Turnstile | 需浏览器侧通过 |
-| 稳定 502 + 路径相关 | 规则过滤（非指纹）见 Web/CDN 手法 |
+1. 标准客户端低速重试，记录状态码、边缘头和正文标记。
+2. 同网络出口用真实浏览器复测。
+3. 对齐 Cookie、Authorization、CSRF、方法、请求体和重定向。
+4. 排除 JS Challenge、验证码、限流、IP/地区和应用层 401/403。
+5. 仍有稳定差分时，只发一个 `curl_cffi` 诊断请求。
+6. 只有诊断确认后，才在后续受影响请求中复用 `curl_cffi.Session`。
 
-## curl_cffi 最小示例
+## 结论分类
+
+- `tls_fingerprint_confirmed`：唯一改变客户端栈后到达业务层。
+- `cookie_or_js_challenge`：获得 Cookie 或执行 JS 后才成功，应使用浏览器流程。
+- `rate_or_ip_block`：降速或换出口后恢复。
+- `application_denial`：各客户端都到达同一业务 401/403。
+- `inconclusive`：变量未对齐或结果不稳定。
+
+## 确认后的最小示例
 
 ```python
 from curl_cffi import requests
-s = requests.Session(impersonate="chrome")
-r = s.get("https://target/api/...", headers={"Accept": "application/json"}, timeout=30)
-# 状态码与业务 JSON 才可作为后续 BOLA/注入的基线
+
+session = requests.Session(impersonate="chrome")
+response = session.get(
+    "https://target/api/...",
+    headers={"Accept": "application/json"},
+    timeout=30,
+    allow_redirects=False,
+)
+print(response.status_code, response.headers.get("cf-ray"), response.text[:500])
 ```
 
-安装：`pip install curl_cffi` 或 CyberStrike `install-python-package`。
+安装：`pip install curl_cffi` 或 CyberStrikeAI 的 `install-python-package`。未确认时不要安装，不要用于普通探活、目录扫描或常规 API 请求。
 
-## Verification discipline
+## 验证纪律
 
-1. 先建立「可达基线」（curl_cffi 或浏览器）  
-2. 同一客户端上做安全测试  
-3. 仅被拦截客户端上的失败 **不得** 记为「接口不存在」  
-4. 落库区分 `edge_block` vs 应用层 401/403  
+1. 标准工具优先：资产探活继续用 `httpx`，路径发现继续用 `ffuf`/`dirsearch`。
+2. `curl_cffi` 只替换已确认受客户端指纹影响的结论性请求。
+3. 边缘失败不得直接记为“接口不存在”，CDN 标记也不得直接记为“TLS 指纹拦截”。
+4. 落库必须包含测试矩阵，并区分 `edge_block`、`app_403`、`auth_fail` 和真实漏洞证据。
 
-## Tools mapping (CyberStrikeAI)
+## 关联
 
-* `install-python-package` + `execute-python-script`（curl_cffi）  
-* `exec`、浏览器/`analyze_image`（挑战页识别，可选）  
-* `interactsh-client`（OOB 与指纹问题独立）  
-* Skill：`cdn-tls-fingerprint`、`proxy-tool-bootstrap`、`api-security-testing`  
-
-## References
-
-* [lexiforest/curl_cffi](https://github.com/lexiforest/curl_cffi)  
-* curl-impersonate / JA3 fingerprinting 概念  
-* 项目 skill：`skills/cdn-tls-fingerprint/SKILL.md`
+- Skill：`cdn-tls-fingerprint`、`proxy-tool-bootstrap`、`api-security-testing`
+- 工具：`httpx`、`install-python-package`、`execute-python-script`
+- 参考：[curl_cffi](https://github.com/lexiforest/curl_cffi)

@@ -5,16 +5,16 @@ user_prompt: |
 
   ## 流程
   1) 确认根域名/IP 与 in-scope
-  2) 子域：subfinder / amass / oneforall（交接禁止全量则跳过）
+  2) 子域：subfinder 快速首轮；深度/完整侦察或结果不足时 OneForAll 第二阶段补齐；amass 按需补源；跳过 OneForAll 必须说明原因
   3) DNS 清洗：dnsx → 存活与指纹：httpx；端口：naabu top-ports → nmap 精扫（或 masscan/rustscan）
-  4) 标注 CDN/WAF（cloudflare/`cf-ray` 等）；脚本被拦而浏览器可开 → fact 写 TLS/Bot 嫌疑，后续接口测建议 curl_cffi
-  5) URL：katana / gau / waybackurls；路径：ffuf/dirsearch
+  4) 标注 CDN/WAF（cloudflare/`cf-ray` 等），但不直接切换客户端；稳定浏览器/脚本差分交 Verify 做 TLS 指纹受控诊断
+  5) URL：katana / gau / waybackurls；路径：ffuf/dirsearch（ffuf 默认不传猜测字典路径）
   6) 可选测绘 API：fofa/zoomeye/quake/shodan（可用则用，失败换路）
   7) nuclei 仅作线索；被 CF 狂拦则停扫并标注；组件指纹后记 fact 并建议 component-vuln-intel
   8) 每确认一项立即 upsert_project_fact
 
   ## 技能
-  attack-surface-recon、component-vuln-intel、cdn-tls-fingerprint（识别标注）、pentest-verification、pentest-blackboard
+  attack-surface-recon、component-vuln-intel、cdn-tls-fingerprint（仅稳定客户端差分诊断）、pentest-verification、pentest-blackboard
 
   ## 禁止
   默认不 record_vulnerability；不扩展出范围；不重复交接包已完成的枚举参数集；不把 CDN challenge/TLS 拦截写成「无入口」。

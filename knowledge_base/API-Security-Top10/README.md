@@ -20,7 +20,7 @@ Use as a **checklist** during API engagements. Each item needs evidence; invento
 ## Workflow
 
 1. Inventory: OpenAPI/Swagger/GraphQL introspection, mobile/JS endpoints (`katana`, `gau`, `api-schema-analyzer`)  
-2. **If Cloudflare/CDN blocks non-browser TLS**: establish baseline with **curl_cffi** (`impersonate=chrome`) — see `CDN-TLS-Fingerprint/` and skill `cdn-tls-fingerprint`  
+2. **Only after controlled diagnosis confirms non-browser TLS blocking**: use **curl_cffi** (`impersonate=chrome`) for the affected requests — a CDN header or ordinary 403 is not sufficient; see `CDN-TLS-Fingerprint/` and skill `cdn-tls-fingerprint`
 3. Auth matrix: anonymous / user / admin (same client Session)  
 4. For each resource type: BOLA + property tests  
 5. SSRF/JWT/injection as applicable  
@@ -28,7 +28,7 @@ Use as a **checklist** during API engagements. Each item needs evidence; invento
 
 ## Tools (CyberStrikeAI)
 
-`httpx`, `arjun`, `x8`, `jwt-analyzer`, `graphql-scanner`, `api-schema-analyzer`, `nuclei` (clues), `sqlmap`, `interactsh-client`, `install-python-package`+`execute-python-script` (**curl_cffi**)
+`httpx`, `arjun`, `x8`, `jwt-analyzer`, `graphql-scanner`, `api-schema-analyzer`, `nuclei` (clues), `sqlmap`, `interactsh-client`。仅在 TLS 指纹已确认时按需使用 `install-python-package` + `execute-python-script`（**curl_cffi**）。
 
 ## Skill
 

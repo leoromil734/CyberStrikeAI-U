@@ -1,8 +1,8 @@
 name: "httpx"
-command: "httpx"
+command: "httpx-pd"
 enabled: true
 
-short_description: "HTTP 探活与指纹工具，批量检测存活、状态码、标题与技术栈"
+short_description: "ProjectDiscovery HTTP 探活与指纹工具；MCP 名 httpx，实际命令 httpx-pd"
 
 description: |
   ProjectDiscovery httpx：对 URL/主机做高速 HTTP 探测与基础指纹。
@@ -23,8 +23,9 @@ description: |
   - subfinder/oneforall → **httpx** → nuclei / katana / ffuf
 
   **注意事项：**
-  - 本工具是 ProjectDiscovery 的 `httpx` CLI，不是 Python 的 `httpx` 库
-  - 大量目标时控制线程与超时，避免对目标造成过大压力
+  - MCP 名仍为 `httpx`，实际执行安装器提供的 `httpx-pd`，从命令层规避 Python `httpx` 同名 CLI
+  - 若提示 `httpx-pd` 不存在，重新运行 `install-tools-ubuntu24.sh`；不要退回 Python `httpx`
+  - 大量目标时控制线程、速率与超时，避免对目标造成过大压力
   - 仅在授权范围内使用
 
 parameters:
@@ -85,10 +86,42 @@ parameters:
 
   - name: "tech_detect"
     type: "bool"
-    description: "启用技术栈识别"
+    description: "启用技术栈识别；侦察默认开启，直接为组件漏洞检索提供线索"
+    required: false
+    default: true
+    flag: "-td"
+    format: "flag"
+
+  - name: "cdn_detect"
+    type: "bool"
+    description: "识别 CDN/WAF；仅用于标注边缘，不代表已确认 TLS 指纹拦截"
+    required: false
+    default: true
+    flag: "-cdn"
+    format: "flag"
+
+  - name: "web_server"
+    type: "bool"
+    description: "显示 Web Server 指纹"
+    required: false
+    default: true
+    flag: "-server"
+    format: "flag"
+
+  - name: "content_length"
+    type: "bool"
+    description: "显示 Content-Length，便于识别 catch-all 与响应差分"
+    required: false
+    default: true
+    flag: "-cl"
+    format: "flag"
+
+  - name: "ip"
+    type: "bool"
+    description: "显示解析 IP，便于资产归并与 CDN 判断"
     required: false
     default: false
-    flag: "-td"
+    flag: "-ip"
     format: "flag"
 
   - name: "follow_redirects"
@@ -109,15 +142,25 @@ parameters:
 
   - name: "threads"
     type: "int"
-    description: "并发线程数"
+    description: "并发线程数；先小批量基线，再按目标规模提高"
     required: false
+    default: 30
     flag: "-t"
+    format: "flag"
+
+  - name: "rate_limit"
+    type: "int"
+    description: "每秒最大请求数，避免因高频触发 WAF/限流后污染探活结论"
+    required: false
+    default: 100
+    flag: "-rl"
     format: "flag"
 
   - name: "timeout"
     type: "int"
     description: "单请求超时（秒）"
     required: false
+    default: 10
     flag: "-timeout"
     format: "flag"
 

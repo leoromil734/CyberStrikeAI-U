@@ -116,13 +116,15 @@ TOOLS_MINIMAL=(
   "hydra|hydra|apt|hydra"
   "john|john|apt|john"
   "binwalk|binwalk|apt|binwalk"
+  # 保证最小安装也有可用字典，ffuf YAML 会优先选此路径
+  "web-wordlist|/opt/cyberstrike/wordlists/raft-small-directories.txt|script|install_web_wordlist"
   # 主用：ffuf（替代 gobuster）
   "ffuf|ffuf|go|github.com/ffuf/ffuf/v2@latest"
   # 主用：nuclei（替代 jaeles）
   "nuclei|nuclei|go|github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
   "subfinder|subfinder|go|github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
-  # 探活主用（YAML: tools/httpx.yaml）
-  "httpx|httpx|go|github.com/projectdiscovery/httpx/cmd/httpx@latest"
+  # 探活主用：单独命名为 httpx-pd，避免被 Python httpx CLI 抢占
+  "httpx|httpx-pd|script|install_httpx_pd"
 )
 
 TOOLS_CORE_EXTRA=(
@@ -149,8 +151,7 @@ TOOLS_CORE_EXTRA=(
   "traceroute|traceroute|apt|traceroute"
   "tcpdump|tcpdump|apt|tcpdump"
   "ncat|ncat|apt|ncat"
-  "seclists|seclists|apt|seclists"
-  "wordlists|wordlists|apt|wordlists"
+  # Web 小字典由 minimal 中的 install_web_wordlist 提供；不依赖 Kali 专属 seclists/wordlists 包
   # go（目录爆破主用 ffuf；不再装 gobuster/jaeles）
   "katana|katana|go|github.com/projectdiscovery/katana/cmd/katana@latest"
   "naabu|naabu|go|github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"
@@ -656,6 +657,59 @@ for a in data.get('assets', []):
 }
 
 # ---------- 自定义安装函数 ----------
+install_web_wordlist() {
+  local name="web-wordlist"
+  local dest_dir="/opt/cyberstrike/wordlists"
+  local dest="${dest_dir}/raft-small-directories.txt"
+  if [[ -s "$dest" ]]; then mark_skip "$name (已存在)"; return 0; fi
+  info "安装 ffuf 小字典 → $dest ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+  if ! mkdir -p "$dest_dir"; then
+    mark_fail "$name" "无法创建目录: $dest_dir"
+    return 0
+  fi
+  if curl -fsSL -o "$dest" "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-small-directories.txt" \
+    && [[ -s "$dest" ]]; then
+    chmod 0644 "$dest"
+    mark_ok "$name → $dest"
+    return 0
+  fi
+
+  rm -f "$dest"
+  if printf '%s\n' \
+    admin api api/v1 api/v2 assets backup backups config dashboard debug docs download \
+    graphql health login management metrics openapi.json robots.txt server-status static swagger \
+    swagger-ui uploads .env .git/config >"$dest" && [[ -s "$dest" ]]; then
+    chmod 0644 "$dest"
+    mark_ok "$name → $dest (内置最小兜底字典)"
+  else
+    rm -f "$dest"
+    mark_fail "$name" "字典下载及最小兜底生成均失败"
+  fi
+}
+
+install_httpx_pd() {
+  local name="httpx" check="httpx-pd"
+  if already_ok "$check"; then mark_skip "$name (已存在)"; return 0; fi
+  if ! command -v go >/dev/null 2>&1; then
+    mark_fail "$name" "go 不可用"
+    return 0
+  fi
+  info "安装 ProjectDiscovery httpx → ${TOOLS_BIN_DIR}/httpx-pd ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  local tmp
+  tmp=$(mktemp -d)
+  if env GOBIN="$tmp" GOPROXY="$GOPROXY" go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
+    && [[ -x "$tmp/httpx" ]]; then
+    install -m 0755 "$tmp/httpx" "${TOOLS_BIN_DIR}/httpx-pd"
+    mark_ok "$name → ${TOOLS_BIN_DIR}/httpx-pd"
+  else
+    mark_fail "$name" "ProjectDiscovery httpx 安装失败"
+  fi
+  rm -rf "$tmp"
+}
+
 install_jwt_tool() {
   local name="jwt-analyzer" check="jwt_tool"
   if already_ok "$check"; then mark_skip "$name"; return 0; fi
@@ -950,12 +1004,12 @@ print_summary() {
   echo "  export PATH=\"/usr/local/go/bin:${TOOLS_BIN_DIR}:\$HOME/.local/bin:\$HOME/go/bin:\$PATH\""
   echo ""
   info "验证示例:"
-  echo "  command -v nmap nuclei subfinder ffuf httpx sqlmap dirsearch oneforall dalfox trivy prowler"
+  echo "  command -v nmap nuclei subfinder ffuf httpx-pd sqlmap dirsearch oneforall dalfox trivy prowler"
   echo ""
   info "主用工具映射（已弃用项默认不装/YAML disabled）："
   echo "  容器: trivy（非 clair） | XSS: dalfox（非 xsser） | 目录: ffuf（非 gobuster）"
   echo "  模板扫描: nuclei（非 jaeles） | 云审计: prowler（非 scout）"
-  echo "  子域: subfinder + oneforall + amass | 探活: httpx"
+  echo "  子域: subfinder + oneforall + amass | 探活: MCP httpx → httpx-pd"
   echo ""
   info "说明: tools/*.yaml 无需修改；命令在 PATH 中即可被 CyberStrikeAI 调用。"
   echo "      未安装的工具执行时会跳过或报 command not found，不影响平台本身。"

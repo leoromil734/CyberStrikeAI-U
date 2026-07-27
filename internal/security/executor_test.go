@@ -3,7 +3,9 @@ package security
 import (
 	"context"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -283,6 +285,84 @@ func TestBuildCommandArgs_DNSXDomainUsesStdin(t *testing.T) {
 	}
 	if string(data) != "adspark.top\n" {
 		t.Fatalf("unexpected dnsx stdin: %q", data)
+	}
+}
+
+func TestBuildCommandArgs_HTTPXUsesProjectDiscoveryFlags(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name:    "httpx",
+		Command: "httpx-pd",
+		Parameters: []config.ParameterConfig{
+			{Name: "target", Type: "string", Required: true, Flag: "-u", Format: "flag"},
+			{Name: "silent", Type: "bool", Default: true, Flag: "-silent", Format: "flag"},
+			{Name: "status_code", Type: "bool", Default: true, Flag: "-sc", Format: "flag"},
+		},
+	}
+
+	cmdArgs := executor.buildCommandArgs("httpx", toolConfig, map[string]interface{}{"target": "https://example.com"})
+	if got := strings.Join(cmdArgs, " "); got != "-u https://example.com -silent -sc" {
+		t.Fatalf("unexpected ProjectDiscovery httpx arguments: %q", got)
+	}
+}
+
+func TestBuildCommandArgs_PreservesPositionalAction(t *testing.T) {
+	position := 1
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name:    "oneforall",
+		Command: "oneforall",
+		Parameters: []config.ParameterConfig{
+			{Name: "target", Type: "string", Required: true, Flag: "--target", Format: "flag"},
+			{Name: "action", Type: "string", Default: "run", Position: &position, Format: "positional"},
+		},
+	}
+
+	cmdArgs := executor.buildCommandArgs("oneforall", toolConfig, map[string]interface{}{"target": "example.com"})
+	if got := strings.Join(cmdArgs, " "); got != "--target example.com run" {
+		t.Fatalf("positional action was dropped or reordered: %q", got)
+	}
+}
+
+func TestResolveToolFileArgs_UsesExistingFallback(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	fallback := filepath.Join(t.TempDir(), "wordlist.txt")
+	if err := os.WriteFile(fallback, []byte("admin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	toolConfig := &config.ToolConfig{Parameters: []config.ParameterConfig{{
+		Name:          "wordlist",
+		Type:          "string",
+		ExistingFile:  true,
+		Default:       filepath.Join(t.TempDir(), "missing.txt"),
+		FallbackPaths: []string{fallback},
+	}}}
+
+	resolved, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("resolve fallback: %v", err)
+	}
+	if got := resolved["wordlist"]; got != fallback {
+		t.Fatalf("expected fallback %q, got %#v", fallback, got)
+	}
+}
+
+func TestResolveToolFileArgs_RejectsExplicitMissingFile(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	fallback := filepath.Join(t.TempDir(), "wordlist.txt")
+	if err := os.WriteFile(fallback, []byte("admin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	toolConfig := &config.ToolConfig{Parameters: []config.ParameterConfig{{
+		Name:          "wordlist",
+		Type:          "string",
+		ExistingFile:  true,
+		FallbackPaths: []string{fallback},
+	}}}
+
+	_, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{"wordlist": filepath.Join(t.TempDir(), "missing.txt")})
+	if err == nil || !strings.Contains(err.Error(), "文件不存在") {
+		t.Fatalf("expected explicit missing-file error, got %v", err)
 	}
 }
 

@@ -11,7 +11,7 @@ tags: [渗透测试, penetration-testing, 红队]
 - 下列手法是**验证菜单**，不是未复现即可 report 的清单。  
 - 每条路径：最小请求 → 观察正/负证据 → 再 confirmed / record。对齐 `pentest-verification`。  
 - 推荐工具映射：SQLi→sqlmap；XSS→dalfox；爬入口→katana/ffuf；线索→nuclei；JWT→jwt-analyzer；参数→arjun；探活→httpx；DNS→dnsx；端口→naabu；OOB→interactsh-client。  
-- **CDN/Cloudflare 接口**：浏览器可访问而 python/curl 403 → `cdn-tls-fingerprint` + **curl_cffi**（`impersonate=chrome`），勿只改 UA。  
+- **客户端指纹诊断**：标准客户端持续停在边缘、同条件浏览器到业务层时，先对齐 Cookie/认证/方法/请求体并排除 JS/限流/IP；加载 `cdn-tls-fingerprint` 受控诊断，确认后才用 **curl_cffi**。
 - API/BOLA 专项加载 `api-security-testing`。  
 - 组件/版本一旦明确 → 并行加载 `component-vuln-intel`（结果=线索）。
 
@@ -88,14 +88,15 @@ CDN 502分析: 区分URL模式过滤(时序固定~0.3s,所有方法/编码/端�
   关键判断: 路径穿越(`/api/v1/v/..;/a/doLogin`)如果返回Tomcat 404=穿透CDN到后端,返回502=CDN URL模式拦截
   nginx 502 vs CDN PWS 502: nginx=边缘层反代挂了, PWS=CDN全局策略
 
-🚨Cloudflare/通用CDN · TLS指纹拦截(接口测试高频):
-  识别: server:cloudflare / cf-ray / CF-Cache-Status | 正文 Just a moment/Turnstile | 浏览器200但 requests/urllib/系统curl/httpx 403·503·空
-  根因: 边缘看 JA3/JA4 TLS + HTTP/2 + 行为；只改 User-Agent 通常无效
-  主换路: install curl_cffi → Session(impersonate="chrome") 再打 API/JSON
+🚨Cloudflare/通用CDN · TLS指纹诊断（非默认客户端）:
+  边缘标记: server:cloudflare / cf-ray / CF-Cache-Status；这些只能证明 CDN，不能证明 TLS 指纹拦截
+  进入诊断: 标准客户端低速重试仍停在边缘，且同条件浏览器到业务层
+  先排除: Cookie/Authorization/CSRF/方法/请求体/重定向差异、JS Challenge、限流、IP/地区
+  受控验证: 上述条件相同，只将客户端栈切为 curl_cffi；若到达业务层才确认 TLS/HTTP2 指纹
+  确认后: install curl_cffi → Session(impersonate="chrome")，仅替换受影响的 API/JSON 请求
     from curl_cffi import requests as crequests
     s=crequests.Session(impersonate="chrome")
     s.get(url, headers={"Accept":"application/json","Authorization":"Bearer ..."})
-  Challenge 页: 浏览器/Playwright 过验证 → 导出 cf_clearance/__cf_bm 注入 curl_cffi Cookie（仍保持 impersonate）
-  次换路: 源站IP+Host/SNI | 未套CDN子域 | WS/协议绕 | 代理+降速（proxy-tool-bootstrap）
-  纪律: 未用浏览器TLS客户端复测前，禁止把失败记成「接口不存在」；完整流程 skill `cdn-tls-fingerprint`
+  curl_cffi 仍 Challenge: 未确认 TLS 指纹，转浏览器/Playwright 挑战流程，不要轮换画像猜测
+  纪律: CDN/403 本身不触发 curl_cffi；完整流程 skill `cdn-tls-fingerprint`
 ```

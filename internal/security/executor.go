@@ -159,6 +159,16 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		return e.executeInternalTool(ctx, toolName, toolConfig.Command, args)
 	}
 
+	// 文件型参数在启动进程前完成校验和默认路径解析，避免工具因缺失字典输出整页帮助。
+	resolvedArgs, validationErr := e.resolveToolFileArgs(toolConfig, args)
+	if validationErr != nil {
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{Type: "text", Text: validationErr.Error()}},
+			IsError: true,
+		}, nil
+	}
+	args = resolvedArgs
+
 	// 构建命令 - 根据工具类型使用不同的参数格式
 	cmdArgs := e.buildCommandArgs(toolName, toolConfig, args)
 
@@ -382,6 +392,63 @@ func (e *Executor) attachToolStdin(cmd *exec.Cmd, toolConfig *config.ToolConfig,
 	cmd.Stdin = strings.NewReader(strings.Join(inputLines, "\n") + "\n")
 }
 
+// resolveToolFileArgs validates explicit file arguments and resolves configured fallback files.
+// Explicit invalid paths never silently fall back because that would hide a caller mistake.
+func (e *Executor) resolveToolFileArgs(toolConfig *config.ToolConfig, args map[string]interface{}) (map[string]interface{}, error) {
+	if toolConfig == nil {
+		return args, nil
+	}
+
+	resolved := make(map[string]interface{}, len(args)+1)
+	for key, value := range args {
+		resolved[key] = value
+	}
+
+	for _, param := range toolConfig.Parameters {
+		if !param.ExistingFile {
+			continue
+		}
+
+		explicitValue, explicitlyProvided := args[param.Name]
+		explicitPath := strings.TrimSpace(fmt.Sprintf("%v", explicitValue))
+		if explicitlyProvided && explicitValue != nil && explicitPath != "" {
+			if !isRegularFile(explicitPath) {
+				return nil, fmt.Errorf("参数 %s 指定的文件不存在或不是普通文件: %s", param.Name, explicitPath)
+			}
+			resolved[param.Name] = explicitPath
+			continue
+		}
+		delete(resolved, param.Name)
+
+		candidates := make([]string, 0, len(param.FallbackPaths)+1)
+		if defaultPath, ok := param.Default.(string); ok && strings.TrimSpace(defaultPath) != "" {
+			candidates = append(candidates, strings.TrimSpace(defaultPath))
+		}
+		candidates = append(candidates, param.FallbackPaths...)
+		for _, candidate := range candidates {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" && isRegularFile(candidate) {
+				resolved[param.Name] = candidate
+				break
+			}
+		}
+
+		if selected, ok := resolved[param.Name]; ok && strings.TrimSpace(fmt.Sprintf("%v", selected)) != "" {
+			continue
+		}
+		if param.Required || len(candidates) > 0 {
+			return nil, fmt.Errorf("参数 %s 没有可用文件；请显式传入有效路径，已检查: %s", param.Name, strings.Join(candidates, ", "))
+		}
+	}
+
+	return resolved, nil
+}
+
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // buildCommandArgs 构建命令参数
 func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConfig, args map[string]interface{}) []string {
 	cmdArgs := make([]string, 0)
@@ -418,7 +485,7 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 
 		// 对于需要子命令的工具（如 gobuster dir），position 0 必须紧跟在命令名后、所有 flag 之前
 		for _, param := range positionalParams {
-			if param.Name == "additional_args" || param.Name == "scan_type" || param.Name == "action" {
+			if param.Name == "additional_args" || param.Name == "scan_type" {
 				continue
 			}
 			if param.Position != nil && *param.Position == 0 {
@@ -563,9 +630,8 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 				continue
 			}
 			for _, param := range positionalParams {
-				// 跳过特殊参数，它们会在后面单独处理
-				// action 参数仅用于工具内部逻辑，不传递给命令
-				if param.Name == "additional_args" || param.Name == "scan_type" || param.Name == "action" {
+				// 跳过由执行器单独处理的特殊参数。
+				if param.Name == "additional_args" || param.Name == "scan_type" {
 					continue
 				}
 

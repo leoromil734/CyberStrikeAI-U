@@ -12,12 +12,12 @@
 2. `pentest-verification` + `pentest-blackboard`（纪律）  
 3. `attack-surface-recon`（Surface）  
 4. 组件指纹后：`component-vuln-intel`  
-5. Web 验证：`web-attack-methods`；API：`api-security-testing`；CDN/TLS：`cdn-tls-fingerprint`；深挖：`zero-day-discovery`  
+5. Web 验证：`web-attack-methods`；API：`api-security-testing`；稳定浏览器/脚本边缘差分诊断：`cdn-tls-fingerprint`；深挖：`zero-day-discovery`
 
 ### 推荐 MCP 工具链（2025–2026 赏金向）
 
-`subfinder` → `dnsx` → `httpx` → `naabu` → `nmap` → `katana`/`gau`/`ffuf` → `nuclei`(线索) → `sqlmap`/`dalfox`/`jwt-analyzer` + `interactsh-client`(OOB)  
-遇 Cloudflare 等：`install-python-package`(curl_cffi) + `execute-python-script`（见 skill `cdn-tls-fingerprint`）
+`subfinder` →（深度根域补 `oneforall`）→ `dnsx` → `httpx` → `naabu` → `nmap` → `katana`/`gau`/`ffuf` → `nuclei`(线索) → `sqlmap`/`dalfox`/`jwt-analyzer` + `interactsh-client`(OOB)
+CDN 仅标注；标准客户端与浏览器有稳定受控差分时才加载 `cdn-tls-fingerprint`，确认 TLS 指纹后再安装 `curl_cffi`。
 
 编排与角色提示已要求上述路由；**skill 不会自动执行**，需模型调用 `skill` 工具加载全文。
 

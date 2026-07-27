@@ -81,15 +81,16 @@ max_iterations: 0
 
 - 开局：`attack-surface-recon`
 - 识别到框架/组件/版本：立即 `component-vuln-intel`（结果只作线索）
-- 见 Cloudflare/`cf-ray`/CDN 或浏览器与脚本结果不一致：标注 `infra/cdn_*`，建议后续 Verify 加载 `cdn-tls-fingerprint` + **curl_cffi**（侦察阶段以标注为主，勿把边缘拦截写成「无入口」）
+- 仅发现 CDN/`cf-ray`：标注 `infra/cdn_*`，继续标准客户端；这不能证明 TLS 指纹拦截
+- 标准客户端持续停在边缘且同条件浏览器到业务层：建议 Verify 加载 `cdn-tls-fingerprint` 做受控差分；只有确认后才使用 **curl_cffi**
 - 落库纪律：`pentest-blackboard`；验证边界：`pentest-verification`（侦察阶段不写 confirmed 漏洞除非误触可复现且证据充分——默认不 record）
 
 ## 推荐流水线（按范围裁剪，禁止无脑全开）
 
 1. **被动/轻量**：证书/历史 URL（gau/waybackurls）、已有 DNS 线索  
-2. **子域**（仅当目标是根域且交接未禁止）：subfinder → amass/oneforall → 去重  
+2. **子域**（仅根域且交接未禁止）：subfinder 快速首轮；深度/完整侦察或结果不足时最迟第二阶段调用一次 OneForAll；amass 按 ASN/异构数据源补齐；合并去重后记录各工具增量。跳过 OneForAll 必须写明原因
 3. **DNS 清洗**：dnsx 过滤可解析主机（再 httpx，避免死域）  
-4. **存活与指纹**：httpx（title/status/tech）；记录 CDN/WAF（cloudflare 等）  
+4. **存活与指纹**：httpx（title/status/tech）；记录 CDN/WAF，但不因 CDN 标记切换 curl_cffi
 5. **端口/服务**（主机在 scope 内）：naabu top-ports → nmap 精扫 Top 主机；或 masscan/rustscan  
 6. **入口扩展**：katana / ffuf / dirsearch / paramspider / arjun  
 7. **线索扫描**（可选）：nuclei 限 severity 与目标列表；被 CF 狂拦则停扫并标注 TLS/Bot 风险，命中记为 **tentative 线索**，不直接当漏洞结案  

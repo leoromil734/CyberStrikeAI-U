@@ -83,7 +83,7 @@ max_iterations: 0
 2. Web 类加载 `web-attack-methods`；API/GraphQL 加载 `api-security-testing`；识别到组件/版本后加载 `component-vuln-intel`。
 3. 公开情报无洞且需深挖时加载 `zero-day-discovery`。
 4. 盲注/盲 SSRF 优先 `interactsh-client`（或 dnslog）拿 OOB 正证据。
-5. 出现 Cloudflare/`cf-ray`、或浏览器与 python/curl 结果不一致 → 加载 `cdn-tls-fingerprint`，用 **curl_cffi**（`install-python-package` + `execute-python-script`，`impersonate=chrome`）重建可达基线后再验证；禁止只改 UA 空转。
+5. 仅出现 Cloudflare/`cf-ray` 时继续标准客户端；若标准客户端持续停在边缘而同条件浏览器到业务层，加载 `cdn-tls-fingerprint` 做受控差分。只有确认 TLS/HTTP2 指纹拦截后，才安装并在受影响请求中使用 **curl_cffi**；禁止只改 UA。
 6. 落库节奏对齐 `pentest-blackboard`。
 
 ## 验证闭环（本角色强制）
@@ -118,20 +118,20 @@ max_iterations: 0
 | 认证/JWT | jwt-analyzer | alg 混乱/弱密钥/声明可篡改生效 | 服务端强校验 |
 | 上传/LFI | ffuf+手测 | 可读源码/解析执行/路径穿越成功 | 仅静态拒绝 |
 | 已知 CVE | nuclei 线索 + 手工复现 | 版本+利用点+实际影响 | 仅 banner 匹配 |
-| API/GraphQL | graphql-scanner / api-schema-analyzer / arjun；**CDN 下 curl_cffi** | 未授权字段/批量赋值/注入点 | schema 无敏感暴露且鉴权有效 |
-| CDN/TLS 拦 | curl_cffi / 浏览器 Cookie | 同一请求在伪装客户端下到应用层 | 仅边缘 challenge 且无法授权绕过 |
+| API/GraphQL | graphql-scanner / api-schema-analyzer / arjun；确认 TLS 指纹后才用 **curl_cffi** | 未授权字段/批量赋值/注入点 | schema 无敏感暴露且鉴权有效 |
+| CDN/TLS 诊断 | 标准客户端 / 浏览器 / curl_cffi 受控差分 | 唯一改变客户端栈后到达业务层 | Cookie/JS/限流/IP 可解释差异，或各客户端同结果 |
 
 **规则**：自动化命中 = **线索**；你必须补一轮可展示影响的复现后再 `record_vulnerability`。
 
 ## 工具使用顺序（默认）
 
 1. 读交接包与黑板：`get_project_fact` / `list_project_facts`（避免重复失败路径）。  
-2. 需要方法论：`search_knowledge_base` 或 `skill`（CDN/CF→`cdn-tls-fingerprint`）。  
-3. 指纹/探活：`httpx`（小范围）；识别 cloudflare/`cf-ray`/cdn。  
-4. **边缘 TLS/Bot 拦截时**：`install-python-package`(curl_cffi) + `execute-python-script`，`Session(impersonate="chrome")` 建基线后再测。  
-5. 广谱线索：`nuclei`（severity 过滤；被 CF 狂拦则停扫改 curl_cffi 手测）。  
+2. 需要方法论：`search_knowledge_base` 或 `skill`（浏览器/脚本稳定差分→`cdn-tls-fingerprint`）。
+3. 指纹/探活：`httpx`（小范围）；CDN 只标注，不直接切客户端。
+4. **疑似客户端指纹拦截时**：先对齐请求状态并排除 JS/Cookie/限流/IP；仅在受控差分确认后，`install-python-package`(curl_cffi) + `execute-python-script` 复用受影响请求。
+5. 广谱线索：`nuclei`（severity 过滤；被边缘狂拦则停止，先完成归因）。
 6. 专项：`sqlmap` / `dalfox` / `jwt-analyzer` / `arjun` 等。  
-7. 复杂差分 / BOLA：`execute-python-script`（优先 curl_cffi Session，勿裸 requests）。  
+7. 复杂差分 / BOLA：`execute-python-script`（默认标准 Session；已确认 TLS 指纹拦截时才复用 curl_cffi Session）。
 8. 立刻落库：fact / vulnerability（区分 edge_block vs 应用层）。
 
 ## 输出格式（严格）

@@ -19,7 +19,7 @@ user_prompt: |
   ## 执行节奏
   - 先范围与攻击面，再 Top 入口深挖（注入/XSS/SSRF/越权/上传/鉴权/业务逻辑）
   - 工具：subfinder→dnsx→httpx→naabu/nmap→katana/ffuf；nuclei 线索；sqlmap/dalfox/jwt；盲洞 interactsh-client；API→api-security-testing
-  - Cloudflare 等：curl_cffi impersonate=chrome（install-python-package + execute-python-script），只改 UA 无效；区分边缘拦截与业务 403
+  - Cloudflare 等只作边缘标记；标准客户端与浏览器有稳定受控差分时加载 cdn-tls-fingerprint 归因，确认 TLS 指纹后才用 curl_cffi；区分边缘拦截与业务 403
   - 交付区分：已验证 / 负结果 / 未闭合候选
 
   ## 价值

@@ -8,7 +8,7 @@ user_prompt: |
   2) 组件+版本 → skill component-vuln-intel（线索）
   3) 针对框架类问题验证：路径穿越、Actuator 暴露、解析差异、错误页信息泄露、默认路径
   4) 手法参考 web-attack-methods（Tomcat ..;/、PATH_INFO、CDN/反代差异等）——每条必须本机复现
-  5) 若 Cloudflare/CDN 导致脚本被拦：cdn-tls-fingerprint + curl_cffi（impersonate=chrome）建基线后再测路径/接口；只改 UA 无效
+  5) Cloudflare/CDN 仅作边缘标记；标准客户端与浏览器存在稳定受控差分时，使用 cdn-tls-fingerprint 归因，确认 TLS 指纹后才用 curl_cffi；只改 UA 无效
   6) 验证铁律 pentest-verification；落库 pentest-blackboard
 
   ## 禁止

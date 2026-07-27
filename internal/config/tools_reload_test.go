@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -107,5 +108,81 @@ func TestMergeToolsFromDir_DirOverridesInline(t *testing.T) {
 	}
 	if merged[0].Command != "dir-cmd" {
 		t.Fatalf("dir tool should win, got command %q", merged[0].Command)
+	}
+}
+
+func TestLoadToolFromFileRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.yaml")
+	content := "name: bad\ncommand: bad\nenabled: true\ndescription: bad\nparameters:\n  - name: target\n    type: string\n    requried: true\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadToolFromFile(path)
+	if err == nil || !strings.Contains(err.Error(), "requried") {
+		t.Fatalf("expected unknown YAML field error, got %v", err)
+	}
+}
+
+func TestRepositoryToolConfigsPassStrictParsing(t *testing.T) {
+	toolsDir := filepath.Join("..", "..", "tools")
+	entries, err := os.ReadDir(toolsDir)
+	if err != nil {
+		t.Fatalf("read repository tools: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".yaml") && !strings.HasSuffix(entry.Name(), ".yml")) {
+			continue
+		}
+		t.Run(entry.Name(), func(t *testing.T) {
+			if _, err := LoadToolFromFile(filepath.Join(toolsDir, entry.Name())); err != nil {
+				t.Fatalf("strict parse: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepositoryCriticalToolContracts(t *testing.T) {
+	toolsDir := filepath.Join("..", "..", "tools")
+	load := func(name string) *ToolConfig {
+		t.Helper()
+		tool, err := LoadToolFromFile(filepath.Join(toolsDir, name+".yaml"))
+		if err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		return tool
+	}
+	parameter := func(tool *ToolConfig, name string) ParameterConfig {
+		t.Helper()
+		for _, param := range tool.Parameters {
+			if param.Name == name {
+				return param
+			}
+		}
+		t.Fatalf("tool %s missing parameter %s", tool.Name, name)
+		return ParameterConfig{}
+	}
+
+	httpx := load("httpx")
+	if httpx.Command != "httpx-pd" {
+		t.Fatalf("httpx must use collision-free ProjectDiscovery binary, got %q", httpx.Command)
+	}
+	if target := parameter(httpx, "target"); target.Flag != "-u" || target.Format != "flag" {
+		t.Fatalf("unexpected httpx target mapping: %+v", target)
+	}
+
+	ffuf := load("ffuf")
+	wordlist := parameter(ffuf, "wordlist")
+	if !wordlist.ExistingFile || len(wordlist.FallbackPaths) == 0 {
+		t.Fatalf("ffuf wordlist must resolve an existing fallback before execution: %+v", wordlist)
+	}
+	if wordlist.Default != nil {
+		t.Fatalf("ffuf must not force an environment-specific default wordlist: %+v", wordlist.Default)
+	}
+
+	oneforall := load("oneforall")
+	action := parameter(oneforall, "action")
+	if action.Position == nil || *action.Position < 1 || action.Default != "run" {
+		t.Fatalf("oneforall action must follow flags as positional run: %+v", action)
 	}
 }

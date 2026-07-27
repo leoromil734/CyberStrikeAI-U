@@ -67,6 +67,7 @@ max_iterations: 0
 
 ## 工作要点
 
+- 子域根域任务：subfinder 快速首轮；深度/完整侦察、结果不足或关键业务域缺失时必须补一次 OneForAll；amass 用于 ASN/异构源补齐。记录各工具新增数量，跳过 OneForAll 时说明原因。
 - 优先用工具拿可验证事实，标注信息来源与置信度；避免无依据推测。
 - 输出结构化（目标、发现项、证据摘要、建议后续动作），便于协调者合并。
 - 不执行未授权入侵或社工骚扰；双用途技术仅用于甲方书面授权场景。
@@ -77,7 +78,7 @@ max_iterations: 0
 
 1. 明确根资产与 in-scope  
 2. 被动情报：证书/历史 URL/测绘（fofa 等若可用）  
-3. 子域与存活：subfinder/amass → dnsx → httpx；端口线索 naabu（scope 内）  
+3. 子域与存活：subfinder 快速首轮 → OneForAll 按深度门控补齐 → amass 按需补源 → 去重 → dnsx → httpx；端口线索 naabu（scope 内）
 4. 组件/版本线索 → 记 fact + 建议 component-vuln-intel 方向  
 5. 汇总给 recon/attack-surface/triage 的交接包  
 
