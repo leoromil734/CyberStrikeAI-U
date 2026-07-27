@@ -9,6 +9,8 @@
     const CHAT_SCROLL_FOLLOW_THRESHOLD_PX = 48;
     /** FAB 隐藏：用户已手动滚近底部 */
     const CHAT_SCROLL_FAB_HIDE_THRESHOLD_PX = 120;
+    /** 超过两屏的平滑滚动既慢又容易被后续布局变化打断，长距离直接定位 */
+    const CHAT_SCROLL_SMOOTH_MAX_DISTANCE_PX = 1600;
     /** 用户上滑后的短暂锁，防止 SSE 与 scroll 事件竞态抢滚动 */
     const DETACH_LOCK_MS = 280;
 
@@ -21,6 +23,10 @@
     let lastScrollTop = 0;
     let programmaticScroll = false;
     let detachLockUntil = 0;
+    let contentMutationObserver = null;
+    let contentResizeObserver = null;
+    /** ResizeObserver 只观察消息区直接子节点，避免重复 observe */
+    const observedContentNodes = new Set();
 
     function getChatMessagesEl() {
         return document.getElementById('chat-messages');
@@ -115,6 +121,14 @@
         });
     }
 
+    function shouldUseSmoothScroll(el, smoothRequested) {
+        if (!smoothRequested || !el) return false;
+        return distanceFromBottom(el) <= Math.max(
+            CHAT_SCROLL_SMOOTH_MAX_DISTANCE_PX,
+            el.clientHeight * 2
+        );
+    }
+
     function updateScrollToBottomFab() {
         const fab = document.getElementById('chat-scroll-to-bottom');
         if (!fab) return;
@@ -161,7 +175,8 @@
     function forceScrollChatToBottom(smooth) {
         setScrollFollowing();
         cancelAnimationFrame(scrollFollowRaf);
-        if (smooth) {
+        const el = getChatMessagesEl();
+        if (shouldUseSmoothScroll(el, smooth)) {
             scrollChatToBottomSmooth();
         } else {
             scrollChatToBottomInstant();
@@ -270,12 +285,70 @@
         updateScrollToBottomFab();
     }
 
+    function observeChatContentNode(node) {
+        if (!contentResizeObserver || !node || node.nodeType !== 1 || observedContentNodes.has(node)) return;
+        observedContentNodes.add(node);
+        contentResizeObserver.observe(node);
+    }
+
+    function unobserveChatContentNode(node) {
+        if (!contentResizeObserver || !observedContentNodes.has(node)) return;
+        observedContentNodes.delete(node);
+        contentResizeObserver.unobserve(node);
+    }
+
+    function findDirectChatContentNode(node, chatEl) {
+        let current = node && node.nodeType === 1 ? node : (node && node.parentNode);
+        while (current && current.parentNode !== chatEl) {
+            current = current.parentNode;
+        }
+        return current && current.parentNode === chatEl ? current : null;
+    }
+
+    function scheduleAfterContentLayoutChange() {
+        scheduleChatScrollToBottomIfFollowing(scrollMode === 'following');
+        updateScrollToBottomFab();
+    }
+
+    /**
+     * 历史会话会分帧追加消息，Markdown/折叠区也可能异步改变高度。
+     * following 模式下每次布局变化都重新收敛到底部；detached 模式只更新按钮，不抢用户阅读位置。
+     */
+    function bindChatContentObservers(el) {
+        if (!el) return;
+
+        if (typeof ResizeObserver === 'function') {
+            contentResizeObserver = new ResizeObserver(scheduleAfterContentLayoutChange);
+            Array.prototype.forEach.call(el.children, observeChatContentNode);
+        }
+
+        if (typeof MutationObserver === 'function') {
+            contentMutationObserver = new MutationObserver(function (records) {
+                records.forEach(function (record) {
+                    if (record.target === el) {
+                        Array.prototype.forEach.call(record.removedNodes || [], unobserveChatContentNode);
+                        Array.prototype.forEach.call(record.addedNodes || [], observeChatContentNode);
+                        return;
+                    }
+                    observeChatContentNode(findDirectChatContentNode(record.target, el));
+                });
+                scheduleAfterContentLayoutChange();
+            });
+            contentMutationObserver.observe(el, {
+                childList: true,
+                subtree: true,
+                characterData: true
+            });
+        }
+    }
+
     function bindChatScrollListeners() {
         if (listenersBound) return;
         const el = getChatMessagesEl();
         if (!el) return;
         listenersBound = true;
         lastScrollTop = el.scrollTop;
+        bindChatContentObservers(el);
 
         el.addEventListener('wheel', function (e) {
             if (e.deltaY < -1) setScrollDetached();
