@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/security"
@@ -45,14 +46,14 @@ func ToolsFromDefinitions(
 			return nil, fmt.Errorf("tool %q: %w", d.Function.Name, err)
 		}
 		out = append(out, &mcpBridgeTool{
-			info:           info,
-			name:           d.Function.Name,
-			agent:          ag,
-			holder:         holder,
-			record:         rec,
-			chunk:          toolOutputChunk,
-			invokeNotify:   invokeNotify,
-			einoAgentName:  strings.TrimSpace(einoAgentName),
+			info:          info,
+			name:          d.Function.Name,
+			agent:         ag,
+			holder:        holder,
+			record:        rec,
+			chunk:         toolOutputChunk,
+			invokeNotify:  invokeNotify,
+			einoAgentName: strings.TrimSpace(einoAgentName),
 		})
 	}
 	return out, nil
@@ -92,7 +93,17 @@ type mcpBridgeTool struct {
 	chunk         func(toolName, toolCallID, chunk string)
 	invokeNotify  *ToolInvokeNotifyHolder
 	einoAgentName string
+
+	recoveryMu     sync.Mutex
+	execRecoveries map[string]execRecoveryState
 }
+
+type execRecoveryState struct {
+	lastCommand string
+	attempts    int
+}
+
+const maxExecSyntaxRepairAttempts = 1
 
 func (m *mcpBridgeTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	_ = ctx
@@ -120,7 +131,117 @@ func (m *mcpBridgeTool) InvokableRun(ctx context.Context, argumentsInJSON string
 		}
 		m.invokeNotify.Fire(tid, m.name, m.einoAgentName, success, body, err)
 	}()
-	return runMCPToolInvocation(ctx, m.agent, m.holder, m.name, argumentsInJSON, m.record, m.chunk)
+	out, err = runMCPToolInvocation(ctx, m.agent, m.holder, m.name, argumentsInJSON, m.record, m.chunk)
+	out = m.decorateExecSyntaxFailure(argumentsInJSON, out, err)
+	return out, err
+}
+
+func (m *mcpBridgeTool) decorateExecSyntaxFailure(argumentsInJSON, out string, invokeErr error) string {
+	if m == nil || !strings.EqualFold(strings.TrimSpace(m.name), "exec") || invokeErr != nil {
+		return out
+	}
+
+	conversationID := ""
+	if m.holder != nil {
+		conversationID = strings.TrimSpace(m.holder.Get())
+	}
+	if conversationID == "" {
+		conversationID = "_default"
+	}
+
+	body, isToolError := strings.CutPrefix(out, ToolErrorPrefix)
+	if !isToolError || !isRepairableExecSyntaxFailure(body) {
+		m.clearExecRecovery(conversationID)
+		return out
+	}
+
+	command := execCommandFromArguments(argumentsInJSON)
+	m.recoveryMu.Lock()
+	if m.execRecoveries == nil {
+		m.execRecoveries = make(map[string]execRecoveryState)
+	}
+	state := m.execRecoveries[conversationID]
+	if state.attempts >= maxExecSyntaxRepairAttempts {
+		unchanged := command != "" && command == state.lastCommand
+		m.recoveryMu.Unlock()
+		return ToolErrorPrefix + body + execSyntaxRepairExhaustedMessage(unchanged)
+	}
+	state.attempts++
+	state.lastCommand = command
+	m.execRecoveries[conversationID] = state
+	m.recoveryMu.Unlock()
+
+	return ToolErrorPrefix + body + execSyntaxRepairInstruction(state.attempts)
+}
+
+func (m *mcpBridgeTool) clearExecRecovery(conversationID string) {
+	m.recoveryMu.Lock()
+	defer m.recoveryMu.Unlock()
+	delete(m.execRecoveries, conversationID)
+}
+
+func execCommandFromArguments(argumentsInJSON string) string {
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.Command)
+}
+
+func isRepairableExecSyntaxFailure(result string) bool {
+	result = strings.ToLower(result)
+	markers := []string{
+		"syntax error",
+		"syntaxerror:",
+		"indentationerror:",
+		"unexpected token",
+		"unexpected eof while looking for matching",
+		"unterminated quoted string",
+		"unmatched '",
+		"bad substitution",
+	}
+	for _, marker := range markers {
+		if strings.Contains(result, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func execSyntaxRepairInstruction(attempt int) string {
+	return fmt.Sprintf(`
+
+[Exec Recovery]
+retryable: true
+repair_attempt: %d/%d
+required_action: Inspect the parser error, produce a DIFFERENT corrected command, and call exec exactly once more before continuing.
+constraints:
+- Never repeat the failed command unchanged.
+- Do not nest a multiline Python/JavaScript program inside a shell double-quoted -c argument.
+- Prefer a single-quoted heredoc (for example, python3 - <<'PY') or a temporary script file so the shell cannot expand the program body.
+- Preserve the original task intent; change only quoting, script transport, shell selection, or syntax needed to execute it.
+
+[exec 智能恢复]
+这是可修复的命令语法错误。请检查解析器报错，生成一条不同的修正命令，并且仅重试一次 exec 后再继续。禁止原样重复失败命令；多行 Python/JavaScript 优先使用单引号 heredoc 或临时脚本，避免外层 Shell 提前展开脚本正文。`, attempt, maxExecSyntaxRepairAttempts)
+}
+
+func execSyntaxRepairExhaustedMessage(unchanged bool) string {
+	reason := "the repaired command still has a syntax error"
+	if unchanged {
+		reason = "the failed command was repeated unchanged"
+	}
+	return fmt.Sprintf(`
+
+[Exec Recovery]
+retryable: false
+repair_attempt: exhausted
+reason: %s
+required_action: Do not call exec again with the same strategy. Use a different tool/transport, or report the blocking syntax issue with the failed command and parser output.
+
+[exec 智能恢复]
+语法修复重试额度已耗尽。不要继续使用同一策略调用 exec；请改用其他工具或脚本传输方式，或者明确报告失败命令及解析器输出。`, reason)
 }
 
 // runMCPToolInvocation 与 mcpBridgeTool.InvokableRun 共用。

@@ -3,7 +3,7 @@ command: "sh"
 args: ["-c"]
 enabled: true
 # 简短描述（用于工具列表，减少token消耗）
-short_description: "系统命令执行工具，用于执行Shell命令和系统操作（谨慎使用）"
+short_description: "系统命令执行工具；多行 Python/JavaScript 应使用单引号 heredoc 或临时脚本，避免嵌套在 Shell 双引号中"
 # 工具详细描述
 description: |
   系统命令执行工具，用于执行Shell命令和系统操作。
@@ -37,6 +37,8 @@ parameters:
       - 完整的Shell命令
       - 可以包含管道、重定向等Shell特性
       - 支持环境变量
+      - 多行 Python/JavaScript 不要嵌套在外层 Shell 双引号的 `-c` 参数中；优先使用单引号 heredoc（如 `python3 - <<'PY'`）或临时脚本文件
+      - 工具返回 Shell/Python 语法错误并要求修复重试时，必须生成不同的修正命令；禁止原样重复
 
       **示例值：**
       - 简单命令: "ls -la"
