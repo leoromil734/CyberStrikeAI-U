@@ -137,14 +137,22 @@ func RunEinoSingleChatModelAgent(
 	if len(mainOrchestratorPre) > 0 {
 		handlers = append(handlers, mainOrchestratorPre...)
 	}
-	if einoSkillMW != nil {
-		if einoFSTools && einoLoc != nil {
-			fsMw, fsErr := subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, einoSingleAgentName, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
-			if fsErr != nil {
-				return nil, fmt.Errorf("eino single filesystem 中间件: %w", fsErr)
-			}
-			handlers = append(handlers, fsMw)
+	var singleFsMW adk.ChatModelAgentMiddleware
+	if einoSkillMW != nil && einoFSTools && einoLoc != nil {
+		singleFsMW, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, einoSingleAgentName, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
+		if err != nil {
+			return nil, fmt.Errorf("eino single filesystem 中间件: %w", err)
 		}
+	} else if needsReductionReadFileMiddleware(ma.EinoMiddleware.ReductionEnable, einoSkillMW != nil && einoFSTools, einoLoc) {
+		singleFsMW, err = reductionReadFileMiddleware(ctx, einoLoc)
+		if err != nil {
+			return nil, fmt.Errorf("eino single reduction read_file 中间件: %w", err)
+		}
+	}
+	if singleFsMW != nil {
+		handlers = append(handlers, singleFsMW)
+	}
+	if einoSkillMW != nil {
 		handlers = append(handlers, einoSkillMW)
 	}
 	handlers = appendEinoChatModelTailMiddlewares(handlers, einoChatModelTailConfig{

@@ -238,14 +238,22 @@ func RunDeepAgent(
 			if len(subPre) > 0 {
 				subHandlers = append(subHandlers, subPre...)
 			}
-			if einoSkillMW != nil {
-				if einoFSTools && einoLoc != nil {
-					subFs, fsErr := subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, id, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
-					if fsErr != nil {
-						return nil, fmt.Errorf("子代理 %q filesystem 中间件: %w", id, fsErr)
-					}
-					subHandlers = append(subHandlers, subFs)
+			var subFs adk.ChatModelAgentMiddleware
+			if einoSkillMW != nil && einoFSTools && einoLoc != nil {
+				subFs, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, id, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
+				if err != nil {
+					return nil, fmt.Errorf("子代理 %q filesystem 中间件: %w", id, err)
 				}
+			} else if needsReductionReadFileMiddleware(ma.EinoMiddleware.ReductionEnable, einoSkillMW != nil && einoFSTools, einoLoc) {
+				subFs, err = reductionReadFileMiddleware(ctx, einoLoc)
+				if err != nil {
+					return nil, fmt.Errorf("子代理 %q reduction read_file 中间件: %w", id, err)
+				}
+			}
+			if subFs != nil {
+				subHandlers = append(subHandlers, subFs)
+			}
+			if einoSkillMW != nil {
 				subHandlers = append(subHandlers, einoSkillMW)
 			}
 			subHandlers = appendEinoChatModelTailMiddlewares(subHandlers, einoChatModelTailConfig{
@@ -397,6 +405,19 @@ func RunDeepAgent(
 		}
 	}
 
+	var mainFilesystemMW adk.ChatModelAgentMiddleware
+	if einoSkillMW != nil && einoFSTools && einoLoc != nil {
+		mainFilesystemMW, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, orchestratorName, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
+		if err != nil {
+			return nil, fmt.Errorf("主代理 filesystem 中间件: %w", err)
+		}
+	} else if needsReductionReadFileMiddleware(ma.EinoMiddleware.ReductionEnable, einoSkillMW != nil && einoFSTools, einoLoc) {
+		mainFilesystemMW, err = reductionReadFileMiddleware(ctx, einoLoc)
+		if err != nil {
+			return nil, fmt.Errorf("主代理 reduction read_file 中间件: %w", err)
+		}
+	}
+
 	// noNestedTaskMiddleware 必须在最外层（最先拦截），防止 skill 或其他中间件内部触发 task 调用绕过检测。
 	deepHandlers := []adk.ChatModelAgentMiddleware{newNoNestedTaskMiddleware()}
 	var taskBlackboardSupplement string
@@ -412,6 +433,11 @@ func RunDeepAgent(
 	}
 	if len(mainOrchestratorPre) > 0 {
 		deepHandlers = append(deepHandlers, mainOrchestratorPre...)
+	}
+	// Deep receives the full filesystem through deep.Config.Backend. When that
+	// path is unavailable, reduction still needs its standalone read_file tool.
+	if deepBackend == nil && mainFilesystemMW != nil {
+		deepHandlers = append(deepHandlers, mainFilesystemMW)
 	}
 	if einoSkillMW != nil {
 		deepHandlers = append(deepHandlers, einoSkillMW)
@@ -431,6 +457,9 @@ func RunDeepAgent(
 	supHandlers := []adk.ChatModelAgentMiddleware{}
 	if len(mainOrchestratorPre) > 0 {
 		supHandlers = append(supHandlers, mainOrchestratorPre...)
+	}
+	if mainFilesystemMW != nil {
+		supHandlers = append(supHandlers, mainFilesystemMW)
 	}
 	if einoSkillMW != nil {
 		supHandlers = append(supHandlers, einoSkillMW)
@@ -493,6 +522,11 @@ func RunDeepAgent(
 			peFsMw, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, "executor", einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
 			if err != nil {
 				return nil, fmt.Errorf("plan_execute filesystem 中间件: %w", err)
+			}
+		} else if needsReductionReadFileMiddleware(ma.EinoMiddleware.ReductionEnable, einoSkillMW != nil && einoFSTools, einoLoc) {
+			peFsMw, err = reductionReadFileMiddleware(ctx, einoLoc)
+			if err != nil {
+				return nil, fmt.Errorf("plan_execute reduction read_file 中间件: %w", err)
 			}
 		}
 		peRoot, perr := NewPlanExecuteRoot(ctx, &PlanExecuteRootArgs{

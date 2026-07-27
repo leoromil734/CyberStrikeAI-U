@@ -11,7 +11,9 @@ func TestInjectShellToolGuidance(t *testing.T) {
 		t.Fatalf("expected unchanged, got %q", got)
 	}
 	got = injectShellToolGuidance("base", []string{"exec", "nmap"})
-	if !strings.Contains(got, "exec/execute") || !strings.Contains(got, "base") {
-		t.Fatalf("expected shell guidance appended, got %q", got)
+	for _, required := range []string{"exec/execute", "base", "<persisted-output>", "tmp/reduction/", "必须用 read_file", "禁止 exec/execute 调用 cat"} {
+		if !strings.Contains(got, required) {
+			t.Fatalf("expected %q in shell guidance, got %q", required, got)
+		}
 	}
 }

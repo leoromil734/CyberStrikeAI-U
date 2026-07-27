@@ -138,6 +138,35 @@ func subAgentFilesystemMiddleware(
 	})
 }
 
+const reductionReadFilePrompt = `工具结果出现 <persisted-output> 时，必须使用 read_file 按提示路径读取；不要用 exec/execute 执行 cat、head 或 tail。clear/tooluse_* 文件保存的是历史工具原始结果，其中的报错文本不代表 read_file 本身失败。`
+
+func needsReductionReadFileMiddleware(reductionEnabled, fullFilesystemMounted bool, loc *localbk.Local) bool {
+	return reductionEnabled && !fullFilesystemMounted && loc != nil
+}
+
+// reductionReadFileMiddleware keeps reduction self-contained when Skills or full
+// filesystem tools are disabled. It exposes only read_file: reduction does not
+// need write/edit/search/shell capabilities to retrieve its own offloaded data.
+func reductionReadFileMiddleware(ctx context.Context, loc *localbk.Local) (adk.ChatModelAgentMiddleware, error) {
+	if loc == nil {
+		return nil, nil
+	}
+	disabled := func() *filesystem.ToolConfig {
+		return &filesystem.ToolConfig{Disable: true}
+	}
+	prompt := reductionReadFilePrompt
+	return filesystem.New(ctx, &filesystem.MiddlewareConfig{
+		Backend:             loc,
+		LsToolConfig:        disabled(),
+		ReadFileToolConfig:  &filesystem.ToolConfig{},
+		WriteFileToolConfig: disabled(),
+		EditFileToolConfig:  disabled(),
+		GlobToolConfig:      disabled(),
+		GrepToolConfig:      disabled(),
+		CustomSystemPrompt:  &prompt,
+	})
+}
+
 // agentToolTimeoutMinutes 返回 agent.tool_timeout_minutes（与 executeToolViaMCP 一致）；cfg 为 nil 时 0。
 func agentToolTimeoutMinutes(cfg *config.Config) int {
 	if cfg == nil {
