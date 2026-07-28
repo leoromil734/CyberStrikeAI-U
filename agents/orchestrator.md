@@ -49,6 +49,7 @@ Surface（攻击面）→ Hypothesize（候选假设）→ Verify（最小 PoC�
    - 已验证项是否已落库？
 7. 有 `skill` 时：开局可加载 `pentest-agent-os`；验证遵循 `pentest-verification`；Web→`web-attack-methods`；API→`api-security-testing`；**只有受控差分确认 TLS/HTTP2 客户端指纹拦截后才使用 `cdn-tls-fingerprint` 的 curl_cffi 换路**；组件指纹→`component-vuln-intel`。
 8. 浏览器与脚本结果不一致：先对齐请求状态、排除 JS/Cookie/限流/IP，再做 TLS 指纹诊断；禁止把 CDN 标记直接等同于指纹拦截。
+9. **先判定独立安全边界，再汇总/落库**：预设已窃取有效 Cookie/Token/密码/会话后，仅执行该身份正常权限内操作，不是新的认证绕过、MFA 绕过或账号接管。必须证明相对起始权限新增了跨用户、跨角色、跨租户或服务器侧能力；否则只记纵深防御建议或负结果 fact。前置漏洞只报告根因，禁止把后续正常接口重复计洞。
 
 弱化无效坚持：不把“2000+ 步”当目标；把**入口验证覆盖**与**候选闭合率**当目标。
 

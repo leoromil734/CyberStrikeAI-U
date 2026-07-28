@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	factRhythmCore = "勿等会话结束或收尾再批量写入。每**确认**一条新认知（开放端口/服务版本、入口路径、认证态或凭据特征、可利用点或攻击面变化）后，**立即**调用 `upsert_project_fact`（同 fact_key 覆盖更新）。每**验证**出一条可复现漏洞（含 POC/影响）后，**立即**调用 `record_vulnerability`；与事实可各记一次。继续下一步工作前优先落库，避免上下文压缩后细节丢失。未绑项目时说明无法写黑板，仍在本轮保留证据摘要。"
+	factRhythmCore              = "勿等会话结束或收尾再批量写入。每**确认**一条新认知（开放端口/服务版本、入口路径、认证态或凭据特征、可利用点或攻击面变化）后，**立即**调用 `upsert_project_fact`（同 fact_key 覆盖更新）。每**验证**出一条可复现漏洞（含 POC/影响）后，**立即**调用 `record_vulnerability`；与事实可各记一次。继续下一步工作前优先落库，避免上下文压缩后细节丢失。未绑项目时说明无法写黑板，仍在本轮保留证据摘要。"
 	factRhythmCoordinatorSuffix = "委派/子任务返回新认知或漏洞时，由协调者及时写入，勿假定子代理已记。"
 	factRhythmSubAgentSuffix    = "若工具集中无上述工具，须在交付物末尾给出「待落库」结构化条目（fact_key 建议、summary、body/POC 要点），供协调者**立即**写入。"
 )
@@ -54,6 +54,17 @@ func factEdgeRecordingGuidance() string {
 - body 中「依赖事实」段落可与 links 并存（人读）；结构化关系以 links 为准。`
 }
 
+func vulnerabilityIndependencePolicy() string {
+	return `### 独立漏洞判定（防止把既有权限误报为漏洞）
+
+正式输出或调用 ` + "`record_vulnerability`" + ` 前，必须先固定**攻击者起始状态**，并用基线/攻击对照证明该问题本身带来了起始权限之外的新能力：匿名→已认证、用户 A→用户 B、普通用户→管理员、租户 A→租户 B、受限输入→服务器侧读写/执行等。
+
+- **已失陷凭据不是免费前提**：若攻击链预设已拿到有效 Cookie、Session、JWT、密码、API Key 或管理员凭据，则使用该身份正常权限内的接口/数据只是既有会话能力，不得再报告为“认证绕过、MFA 绕过、账号接管”或独立漏洞。
+- 典型反例：先假设已取得用户有效 session，再读取**该用户自己的** MFA seed、资料或正常业务数据；这最多是纵深防御/需重新认证的加固建议，不能证明独立漏洞。应改记 tentative/info fact 或负结果，不进入正式漏洞列表。
+- **可报告的例外**：同一请求在匿名/低权限/其他主体基线下仍成功；访问其他用户/角色/租户数据；服务端忽略 scope/audience/撤销状态；或前置漏洞本身已被独立证明。此时只报告实际跨越边界的根因，避免把根因后的正常接口逐个重复计洞。
+- 证据必须包含：攻击者起始状态、是否依赖已失陷凭据、被跨越的边界、仅改变一个变量的对照请求，以及新增权限/影响。无法回答时只能保留为候选，不得用“如果先拿到 token/cookie”补齐影响。`
+}
+
 func factRecordingGuidanceBlock() string {
 	return `### 事实写入规范（审计复现 / 知识沉淀）
 
@@ -94,6 +105,8 @@ func FactRecordingBlackboardSection(coordinatorDelegate bool) string {
 	b.WriteString(" / ")
 	b.WriteString(builtin.ToolSearchProjectFacts)
 	b.WriteString(" 检索。\n\n")
+	b.WriteString(vulnerabilityIndependencePolicy())
+	b.WriteString("\n\n")
 	b.WriteString(factEdgeRecordingGuidance())
 	b.WriteString("\n\n")
 	b.WriteString(factRecordingGuidanceBlock())
@@ -118,6 +131,8 @@ func FactRecordingBlackboardSectionMarkdown(coordinatorDelegate bool) string {
 	b.WriteString("- **可交付漏洞**：使用 **`record_vulnerability`**（标题、描述、严重程度、类型、目标、证明 POC、影响、修复建议）。严重程度 critical / high / medium / low / info。\n")
 	b.WriteString("- 同一发现可能需**各记一次**（事实记可复现攻击链，漏洞记正式 findings）。误报用 **`deprecate_project_fact`** 或漏洞状态 false_positive。\n")
 	b.WriteString("- 事实多时用 **`list_project_facts`** / **`search_project_facts`** 检索。\n\n")
+	b.WriteString(vulnerabilityIndependencePolicy())
+	b.WriteString("\n\n")
 	b.WriteString(factEdgeRecordingGuidance())
 	b.WriteString("\n\n")
 	b.WriteString(factRecordingGuidanceBlock())
