@@ -16,6 +16,7 @@ import (
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/reasoning"
+	"cyberstrike-ai/internal/vision"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
@@ -50,6 +51,7 @@ func RunEinoSingleChatModelAgent(
 	if ma == nil {
 		return nil, fmt.Errorf("eino single: multi_agent 配置为空")
 	}
+	ctx = vision.WithSessionOpenAIConfig(ctx, appCfg.OpenAI)
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
 
 	einoLoc, einoSkillMW, einoFSTools, skillsRoot, einoErr := prepareEinoSkills(ctx, appCfg.SkillsDir, ma, logger)

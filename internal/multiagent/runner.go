@@ -24,6 +24,7 @@ import (
 	"cyberstrike-ai/internal/projectprompt"
 	"cyberstrike-ai/internal/reasoning"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/vision"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
@@ -79,6 +80,7 @@ func RunDeepAgent(
 	if appCfg == nil || ma == nil || ag == nil {
 		return nil, fmt.Errorf("multiagent: 配置或 Agent 为空")
 	}
+	ctx = vision.WithSessionOpenAIConfig(ctx, appCfg.OpenAI)
 
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
 

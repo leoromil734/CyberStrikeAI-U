@@ -36,7 +36,14 @@ func (c *Client) Analyze(ctx context.Context, img ImagePayload, question string)
 	if mime == "" {
 		mime = "image/jpeg"
 	}
-	oa := c.cfg.OpenAICfgEffective(c.mainOA)
+	oa, hasSessionConfig := SessionOpenAIConfigFromContext(ctx)
+	if !hasSessionConfig {
+		oa = c.cfg.OpenAICfgEffective(c.mainOA)
+	} else {
+		// Agent 会话必须完整使用本轮实际选中的地址、Key 和模型，
+		// 不允许启动时 vision 覆盖项把请求重新路由到旧渠道。
+		oa.Reasoning.Mode = "off"
+	}
 	if strings.TrimSpace(oa.APIKey) == "" {
 		return "", fmt.Errorf("vision API key is empty (set vision.api_key or openai.api_key)")
 	}

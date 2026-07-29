@@ -13,15 +13,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// RegisterAnalyzeImageTool 在 vision.enabled 且 model 已配置时注册 MCP 工具 analyze_image。
+// RegisterAnalyzeImageTool 在 vision.enabled 时注册 MCP 工具 analyze_image。
+// Agent 会话调用使用本轮选中的 AI 配置；启动配置仅供无会话上下文的直接 MCP 调用兼容使用。
 func RegisterAnalyzeImageTool(mcpServer *mcp.Server, cfg *config.Config, logger *zap.Logger) {
 	if mcpServer == nil || cfg == nil {
 		return
 	}
-	if !cfg.Vision.Ready() {
-		if cfg.Vision.Enabled && logger != nil {
-			logger.Warn("vision.enabled 但 vision.model 为空，跳过注册 analyze_image")
-		}
+	if !cfg.Vision.Enabled {
 		return
 	}
 

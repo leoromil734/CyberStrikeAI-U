@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/vision"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +46,12 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	if !ok || prep == nil {
 		return false
 	}
+	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	if err != nil {
+		sendEvent("error", err.Error(), nil)
+		sendEvent("done", "", map[string]interface{}{"conversationId": prep.ConversationID})
+		return true
+	}
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
@@ -68,6 +75,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	defer cancelWithCause(nil)
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
+	taskCtx = vision.WithSessionOpenAIConfig(taskCtx, runCfg.OpenAI)
 
 	if _, err := h.tasks.StartTask(conversationID, userMessage, cancelWithCause); err != nil {
 		var errorMsg string
@@ -94,7 +102,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		DB:                 h.db,
 		Logger:             h.logger,
 		Role:               role,
-		AppCfg:             h.config,
+		AppCfg:             runCfg,
 		Agent:              h.agent,
 		ConversationID:     conversationID,
 		ProjectID:          h.conversationProjectID(conversationID),
@@ -175,6 +183,11 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	if !ok || prep == nil {
 		return false
 	}
+	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "conversationId": prep.ConversationID})
+		return true
+	}
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
@@ -195,6 +208,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	defer cancelWithCause(nil)
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
+	taskCtx = vision.WithSessionOpenAIConfig(taskCtx, runCfg.OpenAI)
 
 	if _, err := h.tasks.StartTask(conversationID, userMessage, cancelWithCause); err != nil {
 		if errors.Is(err, ErrTaskAlreadyRunning) {
@@ -215,7 +229,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		DB:                 h.db,
 		Logger:             h.logger,
 		Role:               role,
-		AppCfg:             h.config,
+		AppCfg:             runCfg,
 		Agent:              h.agent,
 		ConversationID:     conversationID,
 		ProjectID:          h.conversationProjectID(conversationID),
