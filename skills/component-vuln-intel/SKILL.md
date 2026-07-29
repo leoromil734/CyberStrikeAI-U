@@ -1,9 +1,10 @@
 ---
 name: component-vuln-intel
 description: >-
-  联网情报收集:识别组件后必做CVE/搜索引擎/中文社区/GitHub PoC/资产引擎/即时情报/依赖扩展+受阻换路。
-  全部产出为线索/tentative,验证前禁止 record_vulnerability。Use when a framework/component/version is identified and must search before exploit.
-tags: [渗透测试, penetration-testing, 红队]
+  已识别具体框架、组件或版本后收集公告、CVE、补丁和 PoC 线索，并标记版本适用性。
+  没有目标指纹时不使用；全部输出保持 tentative，必须在目标侧验证后才能记录漏洞。
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 联网情报收集（识别组件→立即全网搜；结果=线索/tentative，验证前不是 confirmed Fact）

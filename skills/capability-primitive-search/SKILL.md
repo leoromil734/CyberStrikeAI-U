@@ -1,8 +1,10 @@
 ---
 name: capability-primitive-search
 description: >-
-  能力原语+状态空间搜索:read/write/exec/ssrf等原语凑RCE等式A-F,低危映射,正反向搜索,跨域兑现。Use when no single RCE, chaining low-severity vulns, or deriving novel attack chains.
-tags: [渗透测试, penetration-testing, 红队]
+  将多个已验证的 read/write/request/execute 等能力原语组合为候选攻击链。仅在单点问题影响不足但存在可证明连接边时使用；
+  不允许用假设补齐缺失步骤，每条连接都需单独验证。
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 能力原语 + 状态空间搜索

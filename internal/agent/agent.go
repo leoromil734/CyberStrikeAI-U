@@ -18,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/openai"
+	"cyberstrike-ai/internal/projectprompt"
 
 	"go.uber.org/zap"
 )
@@ -281,8 +282,9 @@ func (fc *FunctionCall) UnmarshalJSON(data []byte) error {
 type ProgressCallback func(eventType, message string, data interface{})
 
 // EinoSingleAgentSystemInstruction 供 Eino adk.ChatModelAgent.Instruction 使用（含 system_prompt_path）。
+// 自定义文件只覆盖角色职责，共享范围、证据和停止契约仍由代码注入。
 func (a *Agent) EinoSingleAgentSystemInstruction() string {
-	systemPrompt := DefaultSingleAgentSystemPrompt()
+	roleInstruction := defaultSingleAgentRoleInstruction
 	if a.agentConfig != nil {
 		if p := strings.TrimSpace(a.agentConfig.SystemPromptPath); p != "" {
 			path := p
@@ -295,11 +297,11 @@ func (a *Agent) EinoSingleAgentSystemInstruction() string {
 			if b, err := os.ReadFile(path); err != nil {
 				a.logger.Warn("读取单代理 system_prompt_path 失败，使用内置提示", zap.String("path", path), zap.Error(err))
 			} else if s := strings.TrimSpace(string(b)); s != "" {
-				systemPrompt = s
+				roleInstruction = s
 			}
 		}
 	}
-	return systemPrompt
+	return projectprompt.ComposeSystemPrompt(roleInstruction, projectprompt.PromptModeSingle)
 }
 
 // getAvailableTools 获取可用工具

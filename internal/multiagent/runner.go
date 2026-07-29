@@ -21,6 +21,7 @@ import (
 	"cyberstrike-ai/internal/einomcp"
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/projectprompt"
 	"cyberstrike-ai/internal/reasoning"
 	"cyberstrike-ai/internal/security"
 
@@ -198,8 +199,9 @@ func RunDeepAgent(
 			}
 			instr := strings.TrimSpace(sub.Instruction)
 			if instr == "" {
-				instr = "你是 CyberStrikeAI 中的专业子代理，在授权渗透测试场景下协助完成用户委托的子任务。优先使用可用工具获取证据，回答简洁专业。"
+				instr = "你是 CyberStrikeAI 的专业子代理。只完成协调者交付的安全测试子目标，使用可用工具获取可复核证据，并简洁返回结果。"
 			}
+			instr = projectprompt.ComposeSystemPrompt(instr, projectprompt.PromptModeSubAgent)
 
 			roleTools := sub.RoleTools
 			bind := strings.TrimSpace(sub.BindRole)

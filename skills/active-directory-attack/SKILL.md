@@ -2,7 +2,8 @@
 name: active-directory-attack
 description: >-
   内网域攻击:BloodHound,Kerberoast,ADCS ESC1/ESC8,NTLM Relay,Coerce,DACL,DCSync,Zerologon/NoPac/PrintNightmare,mitm6,LLMNR,Linux内网。Use when attacking Active Directory, ADCS, NTLM relay, or internal domain.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 内网域攻击

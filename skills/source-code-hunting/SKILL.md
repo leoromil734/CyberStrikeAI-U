@@ -1,8 +1,10 @@
 ---
 name: source-code-hunting
 description: >-
-  源码狩猎:.git泄露,危险函数grep,JS RC4解混淆,semgrep/CodeQL,trufflehog,patch diff,供应链/CI。Use when hunting source leaks, secrets, JS deobfuscation, or supply-chain issues.
-tags: [渗透测试, penetration-testing, 红队]
+  在公开源码泄露、前端 bundle、仓库历史、密钥或混淆产物中寻找安全线索。用于源码获取与静态线索发现；
+  已有完整源码并要做路由/数据流/鉴权到动态 PoC 时，改用 source-aware-whitebox。
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 源码狩猎

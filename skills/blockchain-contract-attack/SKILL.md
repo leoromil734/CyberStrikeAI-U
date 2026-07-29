@@ -2,7 +2,8 @@
 name: blockchain-contract-attack
 description: >-
   区块链/智能合约:Etherscan,slither/mythril,重入/访问控制/预言机/闪电贷,跨链桥,RPC暴露。Use when auditing smart contracts, DeFi, or blockchain attack surfaces.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 区块链 / 智能合约

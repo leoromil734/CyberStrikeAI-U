@@ -2,7 +2,8 @@
 name: binary-mobile-reversing
 description: >-
   APK/EXE/二进制:UniApp/DCloud/Flutter逆向,证书固定绕过,导出组件,内存破坏exploit链,IoT固件。Use when reversing APK/EXE, UniApp/Flutter, native .so, or memory-corruption exploits.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## APK / EXE / 二进制逆向
@@ -24,7 +25,7 @@ APK: apktool d / jadx | Manifest看exported组件/deeplink/debuggable | rg硬编
   配置: manifest.json(appId/版本/nativePlugins→wrs-httpserver=内嵌HTTP服务!) | supplierconfig.json(vivo/xiaomi/huawei/oppo appid) | dcloud_uniplugins.json(插件清单)
   ChengZi SDK(橙子建站): init3接口返回XOR单字节(key=0x96,见chengzi_decrypt.py)加密JSON→解密得APK真实下载链接(fu字段)+渠道码
   域名兜底: 静态拿不到$apiHost时→Android模拟器(Waydroid/AVD)+tcpdump/mitmproxy抓运行时DNS
-  参见: references/uniapp-apk-reverse-engineering.md, references/uniapp-apk-reversing.md, scripts/js_rc4_deobfuscate.js, scripts/chengzi_decrypt.py
+  交付: 保留解码算法、输入哈希、提取出的候选域名及运行时验证结果；不可仅凭字符串确认后端
 🚨Flutter APK快速逆向(无需脱壳): 加固(MogoSec/梆梆/360)保护DEX层,但Flutter的lib/arm64-v8a/libapp.so(Dart AOT)通常不加密
   strings -n8 libapp.so|grep 'https\?://' → 全部硬编码URL/API域名/S3地址/CDN
   strings -n8 libapp.so|grep -E '^/' → API路径矩阵(/Member/Login, /Web/VideoList, /BBS/GetSTSToken等)

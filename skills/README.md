@@ -1,24 +1,59 @@
 # Skills 目录（Agent Skills / Eino）
 
-- 每个技能为**子目录**，根上必须有 **`SKILL.md`**（YAML front matter：`name`、`description` + Markdown 正文），见 [agentskills.io](https://agentskills.io/specification.md)。
-- **目录名须与 `name` 一致**。
-- **运行时加载**：在 **Eino DeepAgent（多代理）** 会话中由 ADK **`skill` 中间件**渐进披露（系统提示中列出各 skill 的 name/description，模型再调用 **`skill`** 工具拉取 `SKILL.md` 全文）。可选开启 **`multi_agent.eino_skills.filesystem_tools`**，使用与本机相同的 `read_file` / `execute` 等访问包内脚本与资源。
-- **Web 管理**：HTTP `/api/skills/*` 仍用于列表、编辑、上传包内文件（实现为 `internal/skillpackage`，非 MCP）。
-- **运行时**：多代理（DeepAgent）会话内由 ADK **`skill`** 工具渐进加载；单代理 MCP 循环不含 Skills，需开多代理或后续单代理 Eino 路径。
+每个 Skill 是独立子目录，根文件为 `SKILL.md`，目录名必须与 front matter 的 `name` 一致。格式遵循 [Agent Skills specification](https://agentskills.io/specification.md)。
 
-## 挖洞推荐加载顺序
+允许的顶层 front matter 字段只有：`name`、`description`、`license`、`compatibility`、`metadata`、`allowed-tools`。标签放在 `metadata.tags`，不要使用顶层 `tags`。
 
-1. `pentest-agent-os`（索引与触发器）  
-2. `pentest-verification` + `pentest-blackboard`（纪律）  
-3. `attack-surface-recon`（Surface）  
-4. 组件指纹后：`component-vuln-intel`  
-5. Web 验证：`web-attack-methods`；API：`api-security-testing`；稳定浏览器/脚本边缘差分诊断：`cdn-tls-fingerprint`；深挖：`zero-day-discovery`
+## 三层渐进披露
 
-### 推荐 MCP 工具链（2025–2026 赏金向）
+```text
+系统提示：共享运行契约
+  ↓
+Skill 索引：name + description，用于路由
+  ↓ skill
+SKILL.md：短决策树与执行流程
+  ↓ read_file（仅在命中场景时）
+references/：详细矩阵、检查表和专题证据要求
+```
 
-`subfinder` →（深度根域补 `oneforall`）→ `dnsx` → `httpx` → `naabu` → `nmap` → `katana`/`gau`/`ffuf` → `nuclei`(线索) → `sqlmap`/`dalfox`/`jwt-analyzer` + `interactsh-client`(OOB)
-CDN 仅标注；标准客户端与浏览器有稳定受控差分时才加载 `cdn-tls-fingerprint`，确认 TLS 指纹后再安装 `curl_cffi`。
+Eino Skill 中间件只在配置启用时向模型披露索引；模型调用 `skill` 后才加载正文。`references` 不会自动进入上下文，入口页应明确何时读取哪个文件。
 
-编排与角色提示已要求上述路由；**skill 不会自动执行**，需模型调用 `skill` 工具加载全文。
+## 最小加载策略
 
-知识库补充目录（需启用 knowledge 并重新索引）：`SQL Injection/`、`XSS/`、`SSRF/`、`IDOR-BOLA/`、`API-Security-Top10/`、`JWT/`、`CDN-TLS-Fingerprint/`、`Prompt Injection/`。
+一次任务通常最多加载：
+
+1. 一个扫描模式：`pentest-scan-quick`、`pentest-scan-standard` 或 `pentest-scan-deep`。
+2. 一个领域 Skill：例如 `web-attack-methods`、`api-security-testing`、`source-aware-whitebox`。
+3. 一个验证 Skill：`pentest-verification`。
+
+需要黑板字段细节时再加载 `pentest-blackboard`；需要报告格式时再加载 `pentest-output-standards`。不要把所有方法 Skill 当作常驻前置。
+
+### 扫描模式不是编排模式
+
+- `quick`：时间盒初筛和高信号入口。
+- `standard`：默认深度，平衡覆盖与验证。
+- `deep`：复杂身份/状态机、源码白盒或高价值候选的深入闭合。
+
+它们描述**测试深度**，与 single、Deep、Supervisor、Plan-Execute 的**执行编排**相互独立。用户未指定测试深度时选择 `standard`。
+
+## 推荐路由
+
+- 任务起点不清楚：`pentest-agent-os` 只负责选择最小 Skill 集。
+- 资产与入口测绘：扫描模式 + `attack-surface-recon`。
+- Web 候选：`web-attack-methods`，再按入口读取单个 reference。
+- API/BOLA/JWT/GraphQL：`api-security-testing`，优先建立身份/对象差分矩阵。
+- 源码或构建配置可用：`source-aware-whitebox`，从运行版本、入口、数据流和鉴权点生成动态 PoC。
+- 组件版本情报：`component-vuln-intel`，输出保持 tentative。
+- 浏览器与标准客户端存在稳定边缘差分：先排除状态差异，再使用 `cdn-tls-fingerprint`。
+
+扫描、搜索、版本匹配和静态命中都只是 tentative 线索；只有 `pentest-verification` 定义的目标侧证据闭环完成后，才能记录 confirmed 漏洞。负结果同样需要保留测试条件和 Do-Not-Repeat。
+
+## 包内容
+
+Skill 可按需包含：
+
+- `references/`：只读的详细方法与矩阵。
+- `scripts/`：可复用脚本，由 `execute` 运行。
+- `assets/`：模板、字典或示例产物。
+
+Web 管理接口由 `internal/skillpackage` 统一校验和保存；运行时与管理端必须接受同一套 front matter。

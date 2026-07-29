@@ -2,7 +2,8 @@
 name: wireless-hardware-attack
 description: >-
   无线/硬件:WiFi PMKID/WPS/Evil Twin,BLE,Zigbee,NFC,SDR,UART/JTAG/SPI,侧信道,故障注入。Use when attacking WiFi, BLE, RFID, SDR, or hardware interfaces.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 无线 / 硬件攻击

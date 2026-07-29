@@ -3,7 +3,8 @@ name: cdn-tls-fingerprint
 description: >-
   诊断 CDN/WAF 边缘的 TLS、JA3/JA4 与 HTTP/2 客户端指纹差分，并在受控对比确认后使用 curl_cffi。仅在标准客户端被边缘拦截而同条件浏览器可达时使用；看到 CDN、cf-ray 或普通 403 时不要触发。
   Use when a controlled browser-versus-CLI comparison suggests TLS/client fingerprint blocking, not merely when a site uses a CDN.
-tags: [渗透测试, penetration-testing, CDN, Cloudflare, TLS, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, CDN, Cloudflare, TLS, 红队]
 ---
 
 # CDN / TLS 客户端指纹诊断

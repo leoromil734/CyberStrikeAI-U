@@ -2,7 +2,8 @@
 name: cloud-attack-methods
 description: >-
   云攻击:元数据API,S3/K8s,AWS/Azure/GCP身份提权,MinIO矩阵,阿里云FC,ChengZi SDK解密。Use when attacking cloud metadata, IAM, K8s, MinIO, Aliyun FC, or cloud post-ex.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 云攻击手法

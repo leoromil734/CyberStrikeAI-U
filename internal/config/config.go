@@ -1068,7 +1068,7 @@ type AgentConfig struct {
 	ShellNoOutputTimeoutSeconds int `yaml:"shell_no_output_timeout_seconds" json:"shell_no_output_timeout_seconds"`
 	// WorkspaceRootDir 会话工作目录根路径（curl/wget 下载、read_file/glob/grep 本地分析）；空=tmp/workspace，其下按 projects/{id} 或 conversations/{id} 隔离。
 	WorkspaceRootDir string `yaml:"workspace_root_dir,omitempty" json:"workspace_root_dir,omitempty"`
-	// SystemPromptPath 单代理系统提示 Markdown/文本文件路径（相对 config.yaml 所在目录，或可写绝对路径）。非空且可读时替换内置单代理提示；留空用内置。
+	// SystemPromptPath 单代理角色提示 Markdown/文本文件路径（相对 config.yaml 所在目录，或绝对路径）。非空且可读时替换内置角色职责；范围、证据、Skill 路由与停止条件等共享契约仍由代码追加。
 	SystemPromptPath string `yaml:"system_prompt_path,omitempty" json:"system_prompt_path,omitempty"`
 }
 

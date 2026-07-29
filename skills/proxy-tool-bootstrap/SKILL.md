@@ -1,9 +1,10 @@
 ---
 name: proxy-tool-bootstrap
 description: >-
-  自找代理+工具自举：区分 TLS 指纹、Cookie/JS Challenge、限流/IP 与路径策略；仅在受控差分确认后使用 curl_cffi；支持 Python 自举与 OOB。
-  Use when blocked by 403/429/WAF/CDN/Cloudflare/TLS fingerprint/timeout, missing tools, or needing OOB.
-tags: [渗透测试, penetration-testing, 红队]
+  在专用工具缺失、网络代理故障或已确认边缘层差异时选择可审计的替代执行路径。
+  普通 403/429/超时不自动触发；先归因 Cookie、JS、限流、IP、路径与客户端差异。
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 自找代理 + 工具自举（被拦换路，没工具自己写）

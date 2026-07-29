@@ -2,7 +2,8 @@
 name: ai-llm-app-attack
 description: >-
   AI/LLM应用攻击:提示注入,Agent工具滥用RCE,RAG投毒,MCP供应链,torch.load pickle RCE。Use when testing LLM apps, agents, RAG, MCP plugins, or AI model file risks.
-tags: [渗透测试, penetration-testing, 红队]
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## AI / LLM 应用攻击

@@ -1,8 +1,10 @@
 ---
 name: specialized-attack-playbooks
 description: >-
-  专题实战利用:GoEdge私钥导出,灰产CDN取证,ARP MITM,CDN→S3 STS链,宝塔+UniApp,AI IDE API反代,OCS+MinIO;含references/scripts支持文件索引。Use when applying specialized playbooks for GoEdge, CDN, ARP MITM, BT Panel, OCS, MinIO.
-tags: [渗透测试, penetration-testing, 红队]
+  GoEdge、特定 CDN、宝塔/UniApp、OCS/MinIO 等已命中特定技术栈时使用的专题索引。
+  不用于常规 Web/API 测试；仅加载与已确认产品和版本对应的 playbook。
+metadata:
+  tags: [渗透测试, penetration-testing, 红队]
 ---
 
 ## 专题实战利用（全内联）
@@ -61,7 +63,7 @@ tags: [渗透测试, penetration-testing, 红队]
     注册无验证: 无SMS/无验证码/任意手机号 → 批量注册可能
     STS过度授权: 普通用户角色获得s3:PutObject → 覆盖CDN源站文件
     S3 bucket ListBucket公开: prefix参数无效(CDN缓存), 但直连S3域名可全量枚举
-  参考: references/cdn-antiblock-s3-attack-chain.md
+  证据要求: 保留每层跳转、源站归属、STS 权限与对象写入的单变量对照
 ```
 
 ### 宝塔面板(BT Panel)渗透 + UniApp/DCloud APK逆向
