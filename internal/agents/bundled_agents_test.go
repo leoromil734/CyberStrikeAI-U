@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -56,6 +57,78 @@ func TestBundledAgentRolesStayFocusedAndWithinBudget(t *testing.T) {
 			if strings.Contains(role.Instruction, heading) {
 				t.Errorf("%s repeats shared contract heading %q", entry.Filename, heading)
 			}
+		}
+	}
+}
+
+func TestComprehensivePentestRolesCannotStopAfterRecon(t *testing.T) {
+	load, err := LoadMarkdownAgentsDir(bundledAgentsRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := make(map[string]string, len(load.FileEntries))
+	for _, entry := range load.FileEntries {
+		roles[entry.Config.ID] = entry.Config.Instruction
+	}
+
+	checks := map[string][]string{
+		"recon": {
+			"`subfinder`、`oneforall`、`dnsx`",
+			"队列为空",
+			"逐 JS 提取 API base",
+			"不能因缺少现成账号跳过",
+		},
+		"attack-surface-enumeration": {
+			"懒加载 chunk、worker 和 source map",
+			"不能批量否定 JS 中的真实接口",
+			"注册、激活、登录、找回和登出",
+		},
+		"penetration": {
+			"创建最少测试账号",
+			"两个独立测试主体",
+			"Continuation Handoff",
+			"不能生成最终总结",
+		},
+		"cyberstrike-deep": {
+			"phase_ledger",
+			"pending/active/passed/blocked",
+			"侦察交接只是阶段产物",
+		},
+		"cyberstrike-supervisor": {
+			"phase_ledger",
+			"不得把阶段摘要直接 `exit`",
+		},
+		"cyberstrike-plan-execute": {
+			"phase_ledger",
+			"不能在侦察步骤后直接安排最终报告",
+		},
+	}
+	for id, required := range checks {
+		instruction, ok := roles[id]
+		if !ok {
+			t.Errorf("missing bundled role %q", id)
+			continue
+		}
+		for _, keyword := range required {
+			if !strings.Contains(instruction, keyword) {
+				t.Errorf("role %s missing comprehensive assessment guard %q", id, keyword)
+			}
+		}
+	}
+
+	roleYAML, err := os.ReadFile(filepath.Join(bundledAgentsRoot(t), "..", "roles", "渗透测试.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"subfinder`、`oneforall`、`dnsx",
+		"phase_ledger",
+		"递归清点 HTML、manifest、动态 chunk、worker 和 source map",
+		"创建最少测试账号",
+		"存在可执行 `gap/tentative` 时只能输出进度",
+	} {
+		if !strings.Contains(string(roleYAML), required) {
+			t.Errorf("penetration role YAML missing %q", required)
 		}
 	}
 }

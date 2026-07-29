@@ -78,6 +78,27 @@ stateDiagram-v2
 - `record_vulnerability` 只保存已验证 finding，写入前查重。
 - 长会话只自动注入事实索引；需要细节时通过 `get_project_fact` 取回，禁止根据摘要补造 PoC。
 
+## 全面评估状态机
+
+“全面/完整/深度/包括品牌资产”不是提高 Top-N 数量，而是切换到有阶段门禁的评估协议：
+
+```text
+recon_sources → asset_ranking → frontend_api → auth_workflows
+              → risk_matrix   → gap_review
+```
+
+每阶段只允许 `pending`、`active`、`passed`、`blocked`。`passed` 要求覆盖对象、执行工具或请求、产出计数和证据位置；`blocked` 要求原始失败和已经尝试的替代路径。仍有 `pending/active` 或当前可执行的高价值 `gap/tentative` 时，只能输出进度更新。
+
+关键阶段的验收边界：
+
+- **侦察**：Deep 根域强制执行 `subfinder`、`oneforall`、`dnsx`，再按类别使用可用的证书透明度、历史数据、品牌证据和空间测绘来源。异构来源按 raw、去重后、增量统计；工具失败不会被解释为“无资产”。
+- **资产分级**：共享 IP 不能独立证明品牌归属；确认范围内的资产按业务、认证/管理、数据、输入、边界和暴露证据评分。Top-N 只控制顺序。
+- **JS/API**：资源按 `queued → fetched → analyzed → expanded` 递归；端点按 `discovered → extracted → baselined → risk-mapped → verified/negated/blocked` 推进。SPA shell 的统一 200 只能否定猜测路径，不能批量否定真实调用。
+- **身份态**：范围允许且不会产生付费、轰炸或真实用户影响时创建最少账号；需要对象授权差分时使用账号 A/B 与各自测试对象。需要邀请、实名、人工审批或不可控第三方动作时记录阻断，不伪造验证码或批量注册。
+- **验证**：根据真实端点能力映射认证/会话、对象/功能授权、注入、服务端处理、文件、代理边缘、业务状态机/并发和组件暴露。扫描命中只创建候选。
+
+因此，“SSH 待验证”“代理端口待验证”“JS 路由表下一步处理”这类仍可在当前范围内执行的内容只能出现在阶段交接中。若它们出现在最终草稿，协调器必须撤销收尾并继续路由；只有超出范围、身份、可达性、时间或替代路径已经用尽的项才能进入最终限制。
+
 ## Skill 路由 DSL
 
 测试深度与编排模式相互独立。最小路由可表示为：

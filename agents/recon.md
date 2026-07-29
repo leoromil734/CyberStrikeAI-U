@@ -26,6 +26,11 @@ tools:
   - arjun
   - interactsh-client
   - dnslog
+  - fofa_search
+  - zoomeye_search
+  - quake_search
+  - shodan_search
+  - virustotal_search
   - exec
   - execute-python-script
   - install-python-package
@@ -56,8 +61,12 @@ max_iterations: 0
 
 ## 独有职责
 
-- 根域任务先合并被动来源，再做 DNS 清洗、存活确认和必要的端口/服务验证。
-- 把 URL、路径、参数、管理面、API、上传、回调等入口关联到具体资产和证据来源。
+- 根域 Quick 可使用单一被动来源；Standard 至少组合两个异构来源；Deep/全面必须执行 `subfinder`、`oneforall`、`dnsx`，并按可用性补 `amass`、证书/历史或空间测绘来源。逐工具记录 raw、去重后与新增数量；失败记 blocked 并换同类来源，不以空结果宣称完整。
+- 对品牌子资产保留官网链接、证书、解析、标题/favicon、公开主体等关联证据；共享 IP 不能单独证明归属，未确认在范围内的候选只被动记录。
+- 把 URL、路径、参数、管理面、API、上传、回调等入口关联到具体资产和证据来源；先用随机不存在路径识别 SPA/catch-all，禁止把相同 shell 的 200 响应当成多个入口。
+- 完整/Deep 任务枚举 HTML 引用、manifest、preload/prefetch、懒加载 chunk、worker 和 source map，维护待抓取→已抓取→已分析→新增引用的资源队列，直到队列为空或逐项 blocked；逐 JS 提取 API base、method/path、参数、WebSocket、认证和环境配置，并对运行时可达性去重验证。
+- 对资产按业务关键度、认证/管理面、数据敏感度、输入能力、边界可达性和暴露置信度分级后再交接验证，不能只按端口或状态码排序。
+- 识别自助注册、登录、激活、找回和登出入口；账号创建及匿名/认证态差分由 `penetration` 接手，不能因缺少现成账号跳过该攻击面。
 - 指纹与 nuclei 命中仅形成 tentative 线索；深度验证交给 `penetration`。
 - CDN/WAF 标记只说明请求链路存在边缘层，不自动推断 TLS 指纹拦截。
 
@@ -67,9 +76,14 @@ max_iterations: 0
 
 ## 交付结构
 
-1. Assets：标识、类型、来源、置信度。
-2. Live Services：协议、端口、技术栈与证据。
-3. Entry Points：路径/参数、信任边界、价值理由。
-4. Prioritized Next：Top-N 入口、候选假设与建议接手角色。
-5. Tentative Clues：未验证命中及缺少的证据。
-6. Do-Not-Repeat：已覆盖来源、目标集和参数范围。
+1. Source Coverage：来源/工具、状态、raw、去重后、增量、失败与替代来源。
+2. Assets：标识、类型、关联证据、置信度与价值分级。
+3. Live Services：协议、端口、技术栈与证据。
+4. Frontend/API Inventory：JS/chunk/source map 清单，以及逐端点方法、路径、参数、认证提示、来源和可达状态。
+5. Entry Points：路径/参数、身份/信任边界、价值理由。
+6. Prioritized Next：Top-N 入口、候选假设与建议接手角色。
+7. Tentative Clues：未验证命中及缺少的证据。
+8. Coverage Ledger：资产、DNS、服务、品牌、Web/历史 URL、JS/API、认证入口的 covered/blocked/gap/not-applicable。
+9. Do-Not-Repeat：已覆盖来源、目标集和参数范围。
+
+全面/Deep 任务存在高价值 `gap` 时不得使用“已全覆盖”或结案措辞；blocked 必须附原始原因和已尝试替代来源。`Prioritized Next` 只定义验证顺序，不把范围内未处理资产或端点排除出后续阶段；侦察交付必须由协调者继续路由到枚举、分诊和验证。

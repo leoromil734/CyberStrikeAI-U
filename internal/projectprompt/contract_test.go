@@ -20,6 +20,7 @@ func TestComposeSystemPromptIncludesSharedContractOnce(t *testing.T) {
 		"## 独立安全边界",
 		"## 执行与恢复",
 		"## Skill 路由",
+		"## 全面评估门禁",
 		"## 项目黑板与漏洞记录",
 		"## 完成与交付",
 	}
@@ -59,6 +60,39 @@ func TestComposeSystemPromptModeLifecycleIsDistinct(t *testing.T) {
 		prompt := ComposeSystemPrompt("role", tt.mode)
 		if !strings.Contains(prompt, tt.want) {
 			t.Fatalf("mode %q missing lifecycle %q", tt.mode, tt.want)
+		}
+	}
+}
+
+func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
+	contract := ComprehensiveAssessmentSection()
+	for _, required := range []string{
+		"subfinder、oneforall、dnsx",
+		"phase_ledger",
+		"pending",
+		"active",
+		"passed",
+		"blocked",
+		"资源队列为空",
+		"逐端点 method/path/参数/认证提示",
+		"匿名、认证态及可行双主体",
+		"仍列出当前范围和工具能力内可执行的“下一步”",
+	} {
+		if !strings.Contains(contract, required) {
+			t.Errorf("comprehensive assessment contract missing %q", required)
+		}
+	}
+	if !strings.Contains(EvidenceLoopSection(), "不能据此跳过新资产、新身份、JS/API") {
+		t.Fatal("Do-Not-Repeat scope must not suppress unexplored surfaces")
+	}
+	completion := CompletionContractSection()
+	for _, required := range []string{
+		"它只是进度更新",
+		"不得包装成“后续建议”",
+		"最终报告不保留可执行的 high-value tentative/gap",
+	} {
+		if !strings.Contains(completion, required) {
+			t.Errorf("completion contract missing premature-exit guard %q", required)
 		}
 	}
 }

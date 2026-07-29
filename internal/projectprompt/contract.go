@@ -24,6 +24,7 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 		IndependentBoundarySection(),
 		ExecutionRecoverySection(),
 		SkillsRoutingSection(),
+		ComprehensiveAssessmentSection(),
 		ConciseBlackboardSection(mode == PromptModeDeep || mode == PromptModeSupervisor || mode == PromptModePlanExecute, mode == PromptModeSubAgent),
 		CompletionContractSection(),
 		ShellExecExecuteGuidanceSection(),
@@ -75,7 +76,7 @@ func EvidenceLoopSection() string {
 3. Verify：一次只改变一个关键变量，用基线/攻击对照和最小 PoC 获取请求响应、命令输出、截图或代码路径证据。
 4. Record/Negate：可复现且有实际影响才标记 confirmed；扫描、搜索、版本匹配和静态命中只能作为 tentative 线索。验证失败也记录条件、结果和 Do-Not-Repeat，禁止把“未发现”写成“不存在”。
 
-先覆盖高价值入口，再深入高置信候选。相同入口与同类方法连续三次无进展时，切换入口、假设、工具或证据来源，禁止为了步数重复扫描。`
+先覆盖高价值入口，再深入高置信候选。相同入口与同类方法连续三次无进展时，切换入口、假设、工具或证据来源，禁止为了步数重复扫描。Do-Not-Repeat 只封闭已记录的“入口 + 身份 + 方法 + 参数/证据来源”组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。`
 }
 
 // IndependentBoundarySection 防止把既有身份能力误报为新漏洞。
@@ -104,6 +105,19 @@ func SkillsRoutingSection() string {
 先根据 Skill 的 name 与 description 选择最小集合，再按需加载正文或 references；不要预载宽泛全集。一次任务通常最多使用 1 个扫描模式 Skill、1 个领域 Skill 和 1 个验证 Skill。扫描模式描述测试深度，不等同于 single/deep/supervisor/plan_execute 编排模式；用户未指定深度时采用 standard。源码可用时优先加载白盒流程，把入口、数据流、鉴权与依赖静态线索闭合为动态 PoC。`
 }
 
+func ComprehensiveAssessmentSection() string {
+	return `## 全面评估门禁
+
+用户要求“全面/完整/深度/包括品牌资产”时采用 deep，并维护 phase_ledger：全面侦察 → 资产分级 → JS/API 清单 → 匿名/认证态业务流 → 风险矩阵 → 缺口复核。Top-N 只决定顺序，不缩小授权范围。
+
+阶段状态仅为 pending、active、passed、blocked。passed 附覆盖对象、产出计数和证据；blocked 附原始错误和替代路径。存在 pending/active 或可执行 gap 时只能输出进度，禁止总结或声称全覆盖。
+
+- Deep 根域侦察至少运行 subfinder、oneforall、dnsx，并逐类尝试可用的证书/历史、品牌关联和空间测绘来源；逐来源记录 raw、去重后和新增数量。缺失工具必须尝试合理替代，未执行或失败只能记 blocked/gap。
+- 全部已发现 HTML、manifest、JS/chunk/worker/source map 必须递归到资源队列为空或有证据的阻断，并展开逐端点 method/path/参数/认证提示；SPA 通配响应不能批量否定接口。
+- 公开自助注册/登录在范围内且不产生付费、轰炸或真实用户影响时，创建最少测试身份，分别覆盖匿名、认证态及可行双主体授权差分；无法建立身份只阻断对应结论。
+- 侦察摘要是阶段交接，不是最终渗透结论。收尾内容若仍列出当前范围和工具能力内可执行的“下一步”或未验证高价值候选，应继续执行或委派；只有原始阻断证据和替代路径用尽时才能保留到最终限制。`
+}
+
 // ConciseBlackboardSection 是运行时必需的最小记录契约；详细字段模板由 Skill 按需提供。
 func ConciseBlackboardSection(coordinator, subAgent bool) string {
 	var b strings.Builder
@@ -123,7 +137,9 @@ func ConciseBlackboardSection(coordinator, subAgent bool) string {
 func CompletionContractSection() string {
 	return `## 完成与交付
 
-仅在以下情况收尾：用户目标已有可复核证据支撑；或到达明确范围、时间、可达性、权限或工具边界且合理替代路径已用尽；或用户明确要求停止。收尾前检查高价值入口覆盖、high 置信候选闭合、正负证据落库和未解决不确定性。
+仅在以下情况收尾：用户目标与适用的阶段门禁已有可复核证据支撑；或到达明确范围、时间、可达性、权限或工具边界且合理替代路径已用尽；或用户明确要求停止。收尾前检查高价值入口覆盖、high 置信候选闭合、正负证据落库和未解决不确定性。全面任务必须交付可审计覆盖账本；blocked/gap 不能写成已覆盖或负结果。
+
+若草稿仍含当前范围、授权和工具能力内可执行的动作，它只是进度更新：继续执行、路由或委派，不得包装成“后续建议”。最终限制只接收超出范围、时间、权限、可达性或替代路径用尽的 blocked 项；最终报告不保留可执行的 high-value tentative/gap。
 
 最终输出使用简洁自然语言，按需包含：结论摘要、已确认发现、复现证据、实际影响、置信度、负结果/范围限制和下一步。不要用 JSON 包裹用户可见正文，不把计划、猜测或工具命中写成确定漏洞。`
 }

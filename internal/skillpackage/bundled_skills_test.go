@@ -164,6 +164,61 @@ func TestSkillRouterDefinesDistinctMinimalScenarioSets(t *testing.T) {
 	}
 }
 
+func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
+	root := bundledSkillsRoot(t)
+
+	_, _, recon := readBundledSkill(t, root, "attack-surface-recon")
+	for _, required := range []string{
+		"subfinder` + `oneforall",
+		"`dnsx`",
+		"逐文件提取 API base",
+		"全面/Deep 侦察只有在以下账本",
+	} {
+		if !strings.Contains(recon, required) {
+			t.Errorf("attack-surface-recon missing deep coverage rule %q", required)
+		}
+	}
+
+	comprehensive, err := os.ReadFile(filepath.Join(root, "attack-surface-recon", "references", "comprehensive-recon.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"phase_ledger",
+		"queued → fetched → analyzed → expanded",
+		"discovered → extracted → baselined → risk-mapped",
+		"账号 A/可行账号 B",
+		"不能生成最终渗透总结",
+	} {
+		if !strings.Contains(string(comprehensive), required) {
+			t.Errorf("comprehensive recon reference missing %q", required)
+		}
+	}
+
+	_, _, deep := readBundledSkill(t, root, "pentest-scan-deep")
+	for _, required := range []string{
+		"高价值 `gap` 仍存在时不得结案",
+		"未创建可行测试身份",
+		"尚未展开 JS 路由表",
+		"“下一步建议”",
+	} {
+		if !strings.Contains(deep, required) {
+			t.Errorf("pentest-scan-deep missing exit gate %q", required)
+		}
+	}
+
+	_, _, router := readBundledSkill(t, root, "pentest-agent-os")
+	for _, required := range []string{
+		"phase_ledger",
+		"discovered → extracted → baselined → risk-mapped",
+		"只能输出进度更新",
+	} {
+		if !strings.Contains(router, required) {
+			t.Errorf("pentest-agent-os missing phase routing rule %q", required)
+		}
+	}
+}
+
 func TestProgressiveSkillEntryBudgets(t *testing.T) {
 	root := bundledSkillsRoot(t)
 	entrySkills := []string{
