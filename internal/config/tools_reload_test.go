@@ -181,6 +181,13 @@ func TestRepositoryCriticalToolContracts(t *testing.T) {
 	}
 
 	oneforall := load("oneforall")
+	domain := parameter(oneforall, "domain")
+	if !domain.Required || domain.Flag != "--target" || domain.Format != "flag" {
+		t.Fatalf("oneforall domain must be the canonical required input: %+v", domain)
+	}
+	if len(domain.Aliases) != 1 || domain.Aliases[0] != "target" {
+		t.Fatalf("oneforall domain must retain only the target compatibility alias: %+v", domain.Aliases)
+	}
 	action := parameter(oneforall, "action")
 	if action.Position == nil || *action.Position < 1 || action.Default != "run" {
 		t.Fatalf("oneforall action must follow flags as positional run: %+v", action)

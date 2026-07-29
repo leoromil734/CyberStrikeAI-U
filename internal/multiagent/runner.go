@@ -910,7 +910,7 @@ func tryEmitToolCallsOnce(
 	subAgentToolStep, mainAgentToolStep map[string]int,
 	markPending func(toolCallPendingInfo),
 ) {
-	if msg == nil || len(msg.ToolCalls) == 0 || progress == nil || seen == nil {
+	if msg == nil || len(msg.ToolCalls) == 0 || seen == nil {
 		return
 	}
 	if toolCallsSignatureFlush(msg) == "" {
@@ -931,14 +931,14 @@ func emitToolCallsFromMessage(
 	subAgentToolStep, mainAgentToolStep map[string]int,
 	markPending func(toolCallPendingInfo),
 ) {
-	if msg == nil || len(msg.ToolCalls) == 0 || progress == nil {
+	if msg == nil || len(msg.ToolCalls) == 0 {
 		return
 	}
 	if subAgentToolStep == nil {
 		subAgentToolStep = make(map[string]int)
 	}
 	isSubToolRound := agentName != "" && agentName != orchestratorName
-	if isSubToolRound {
+	if isSubToolRound && progress != nil {
 		subAgentToolStep[agentName]++
 		n := subAgentToolStep[agentName]
 		progress("iteration", "", map[string]interface{}{
@@ -949,7 +949,7 @@ func emitToolCallsFromMessage(
 			"conversationId": conversationID,
 			"source":         "eino",
 		})
-	} else if mainAgentToolStep != nil {
+	} else if mainAgentToolStep != nil && progress != nil {
 		key := einoMainIterationKey(agentName, orchestratorName)
 		mainAgentToolStep[key]++
 		n := mainAgentToolStep[key]
@@ -970,13 +970,15 @@ func emitToolCallsFromMessage(
 	if isSubToolRound {
 		role = "sub"
 	}
-	progress("tool_calls_detected", fmt.Sprintf("检测到 %d 个工具调用", len(msg.ToolCalls)), map[string]interface{}{
-		"count":          len(msg.ToolCalls),
-		"conversationId": conversationID,
-		"source":         "eino",
-		"einoAgent":      agentName,
-		"einoRole":       role,
-	})
+	if progress != nil {
+		progress("tool_calls_detected", fmt.Sprintf("检测到 %d 个工具调用", len(msg.ToolCalls)), map[string]interface{}{
+			"count":          len(msg.ToolCalls),
+			"conversationId": conversationID,
+			"source":         "eino",
+			"einoAgent":      agentName,
+			"einoRole":       role,
+		})
+	}
 	for idx, tc := range msg.ToolCalls {
 		argStr := strings.TrimSpace(tc.Function.Arguments)
 		if argStr == "" && len(tc.Extra) > 0 {
@@ -998,8 +1000,7 @@ func emitToolCallsFromMessage(
 			// with an earlier batch in the same agent run.
 			toolCallID = fmt.Sprintf("eino-stream-%d-%d", fallbackToolCallSequence.Add(1), *tc.Index)
 		}
-		// Record pending tool calls for later tool_result correlation / recovery flushing.
-		// We intentionally record even for unknown tools to avoid "running" badge getting stuck.
+		// pending 状态属于运行循环正确性，不能依赖 UI progress 回调是否存在。
 		if markPending != nil && toolCallID != "" {
 			markPending(toolCallPendingInfo{
 				ToolCallID: toolCallID,
@@ -1007,6 +1008,9 @@ func emitToolCallsFromMessage(
 				EinoAgent:  agentName,
 				EinoRole:   role,
 			})
+		}
+		if progress == nil {
+			continue
 		}
 		progress("tool_call", fmt.Sprintf("正在调用工具: %s", display), map[string]interface{}{
 			"toolName":       display,

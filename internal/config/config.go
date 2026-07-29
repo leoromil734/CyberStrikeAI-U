@@ -1340,6 +1340,7 @@ type ToolConfig struct {
 // ParameterConfig 参数配置
 type ParameterConfig struct {
 	Name          string      `yaml:"name"`                     // 参数名称
+	Aliases       []string    `yaml:"aliases,omitempty"`        // 兼容旧调用或常见同义参数名；不会作为主 schema 字段暴露
 	Type          string      `yaml:"type"`                     // 参数类型: string, int, bool, array
 	Description   string      `yaml:"description"`              // 参数描述
 	Required      bool        `yaml:"required,omitempty"`       // 是否必需

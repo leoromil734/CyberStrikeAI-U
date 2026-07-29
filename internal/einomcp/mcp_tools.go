@@ -37,17 +37,26 @@ func ToolsFromDefinitions(
 	einoAgentName string,
 ) ([]tool.BaseTool, error) {
 	out := make([]tool.BaseTool, 0, len(defs))
+	modelNames := make(map[string]string, len(defs))
 	for _, d := range defs {
 		if d.Type != "function" || d.Function.Name == "" {
 			continue
 		}
+		canonicalName := strings.TrimSpace(d.Function.Name)
+		modelName := normalizeEinoToolName(canonicalName)
+		if existing, ok := modelNames[modelName]; ok && existing != canonicalName {
+			return nil, fmt.Errorf("tool name collision after Eino normalization: %q and %q -> %q", existing, canonicalName, modelName)
+		}
+		modelNames[modelName] = canonicalName
+		d.Function.Name = modelName
 		info, err := toolInfoFromDefinition(d)
 		if err != nil {
-			return nil, fmt.Errorf("tool %q: %w", d.Function.Name, err)
+			return nil, fmt.Errorf("tool %q: %w", canonicalName, err)
 		}
 		out = append(out, &mcpBridgeTool{
 			info:          info,
-			name:          d.Function.Name,
+			name:          canonicalName,
+			modelName:     modelName,
 			agent:         ag,
 			holder:        holder,
 			record:        rec,
@@ -57,6 +66,10 @@ func ToolsFromDefinitions(
 		})
 	}
 	return out, nil
+}
+
+func normalizeEinoToolName(name string) string {
+	return strings.ReplaceAll(strings.TrimSpace(name), "-", "_")
 }
 
 func toolInfoFromDefinition(d agent.Tool) (*schema.ToolInfo, error) {
@@ -86,7 +99,8 @@ func toolInfoFromDefinition(d agent.Tool) (*schema.ToolInfo, error) {
 
 type mcpBridgeTool struct {
 	info          *schema.ToolInfo
-	name          string
+	name          string // MCP 规范名
+	modelName     string // 暴露给 Eino/模型的规范化名称
 	agent         *agent.Agent
 	holder        *ConversationHolder
 	record        ExecutionRecorder
@@ -100,6 +114,7 @@ type mcpBridgeTool struct {
 
 type execRecoveryState struct {
 	lastCommand string
+	kind        string
 	attempts    int
 }
 
@@ -129,7 +144,11 @@ func (m *mcpBridgeTool) InvokableRun(ctx context.Context, argumentsInJSON string
 			success = false
 			body = strings.TrimPrefix(out, ToolErrorPrefix)
 		}
-		m.invokeNotify.Fire(tid, m.name, m.einoAgentName, success, body, err)
+		notifyName := strings.TrimSpace(m.modelName)
+		if notifyName == "" {
+			notifyName = m.name
+		}
+		m.invokeNotify.Fire(tid, notifyName, m.einoAgentName, success, body, err)
 	}()
 	out, err = runMCPToolInvocation(ctx, m.agent, m.holder, m.name, argumentsInJSON, m.record, m.chunk)
 	out = m.decorateExecSyntaxFailure(argumentsInJSON, out, err)
@@ -150,27 +169,48 @@ func (m *mcpBridgeTool) decorateExecSyntaxFailure(argumentsInJSON, out string, i
 	}
 
 	body, isToolError := strings.CutPrefix(out, ToolErrorPrefix)
-	if !isToolError || !isRepairableExecSyntaxFailure(body) {
+	if !isToolError {
 		m.clearExecRecovery(conversationID)
 		return out
 	}
 
 	command := execCommandFromArguments(argumentsInJSON)
+	recoveryKind := ""
+	switch {
+	case isRepairableExecSyntaxFailure(body):
+		recoveryKind = "syntax"
+	case isRepairableExecHTTPParseFailure(command, body):
+		recoveryKind = "http_response_parse"
+	default:
+		m.clearExecRecovery(conversationID)
+		return out
+	}
+
 	m.recoveryMu.Lock()
 	if m.execRecoveries == nil {
 		m.execRecoveries = make(map[string]execRecoveryState)
 	}
 	state := m.execRecoveries[conversationID]
+	if state.kind != "" && state.kind != recoveryKind {
+		state = execRecoveryState{}
+	}
 	if state.attempts >= maxExecSyntaxRepairAttempts {
 		unchanged := command != "" && command == state.lastCommand
 		m.recoveryMu.Unlock()
+		if recoveryKind == "http_response_parse" {
+			return ToolErrorPrefix + body + execHTTPParseRecoveryExhaustedMessage(unchanged)
+		}
 		return ToolErrorPrefix + body + execSyntaxRepairExhaustedMessage(unchanged)
 	}
 	state.attempts++
 	state.lastCommand = command
+	state.kind = recoveryKind
 	m.execRecoveries[conversationID] = state
 	m.recoveryMu.Unlock()
 
+	if recoveryKind == "http_response_parse" {
+		return ToolErrorPrefix + body + execHTTPParseRecoveryInstruction(state.attempts)
+	}
 	return ToolErrorPrefix + body + execSyntaxRepairInstruction(state.attempts)
 }
 
@@ -208,6 +248,65 @@ func isRepairableExecSyntaxFailure(result string) bool {
 		}
 	}
 	return false
+}
+
+func isRepairableExecHTTPParseFailure(command, result string) bool {
+	command = strings.ToLower(command)
+	result = strings.ToLower(result)
+	if !strings.Contains(command, "curl") ||
+		(!strings.Contains(command, "json.load") && !strings.Contains(command, "json.loads")) {
+		return false
+	}
+	markers := []string{
+		"jsondecodeerror",
+		"expecting value: line 1 column 1",
+		"unexpected end of json input",
+		"unexpected eof",
+	}
+	for _, marker := range markers {
+		if strings.Contains(result, marker) {
+			return true
+		}
+	}
+	// stderr 被主动丢弃时，非零退出且没有诊断文本也属于同一可恢复模式。
+	return strings.Contains(command, "2>/dev/null") &&
+		strings.Contains(result, "命令执行失败") &&
+		strings.TrimSpace(result) != ""
+}
+
+func execHTTPParseRecoveryInstruction(attempt int) string {
+	return fmt.Sprintf(`
+
+[HTTP Response Parse Recovery]
+retryable: true
+repair_attempt: %d/%d
+required_action: Retry once with a diagnostic request before parsing.
+constraints:
+- Do not suppress stderr and do not pipe curl directly into a JSON parser.
+- Capture HTTP status, final URL, Content-Type, response length, and a bounded body preview first.
+- Parse JSON only when the body is non-empty and Content-Type/body shape supports JSON.
+- Prefer the dedicated http-framework-test tool; if a body file is needed, save it in the session workspace and inspect it with read_file.
+- Treat an empty/non-JSON response as target behavior for this request, then switch endpoint, method, headers, or authenticated browser flow instead of repeating the same parser.
+
+[HTTP 响应解析恢复]
+当前失败发生在“尚未确认响应就直接按 JSON 解析”。请保留 stderr，先采集状态码、最终 URL、Content-Type、响应长度和有界正文预览；仅在正文非空且确为 JSON 时解析。优先改用 http-framework-test。`, attempt, maxExecSyntaxRepairAttempts)
+}
+
+func execHTTPParseRecoveryExhaustedMessage(unchanged bool) string {
+	reason := "the diagnostic retry still attempted to parse an empty or non-JSON response"
+	if unchanged {
+		reason = "the failed HTTP parsing command was repeated unchanged"
+	}
+	return fmt.Sprintf(`
+
+[HTTP Response Parse Recovery]
+retryable: false
+repair_attempt: exhausted
+reason: %s
+required_action: Stop this parser strategy. Preserve the HTTP diagnostic evidence and switch to http-framework-test, a browser-authenticated request, or a different endpoint/method/header baseline. This blocked request does not justify ending the assessment or omitting the final report.
+
+[HTTP 响应解析恢复]
+该解析策略已耗尽。保留 HTTP 诊断证据并切换专用 HTTP 工具、浏览器认证态请求或不同入口；单个请求被阻断不等于任务完成，也不能省略最终报告。`, reason)
 }
 
 func execSyntaxRepairInstruction(attempt int) string {

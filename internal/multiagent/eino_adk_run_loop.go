@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
@@ -191,8 +192,10 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 	subAgentToolStep := make(map[string]int)
 	// mainAgentToolStep：主代理每次工具调用批次递增，供 UI 显示「第 N 轮」（单代理无子代理切换时原先会一直停在第 1 轮）。
 	mainAgentToolStep := make(map[string]int)
+	completedInvocations := newToolInvokeCompletionBuffer()
 	pendingByID := make(map[string]toolCallPendingInfo)
 	pendingQueueByAgent := make(map[string][]string)
+	terminalToolResultIDs := make(map[string]struct{})
 	var pendingMu sync.Mutex
 	markPending := func(tc toolCallPendingInfo) {
 		if tc.ToolCallID == "" {
@@ -234,8 +237,18 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			return
 		}
 		pendingMu.Lock()
-		defer pendingMu.Unlock()
 		delete(pendingByID, toolCallID)
+		pendingMu.Unlock()
+		completedInvocations.Delete(toolCallID)
+	}
+	hasPendingByID := func(toolCallID string) bool {
+		if toolCallID == "" {
+			return false
+		}
+		pendingMu.Lock()
+		defer pendingMu.Unlock()
+		_, ok := pendingByID[toolCallID]
+		return ok
 	}
 	popAnyPending := func() (toolCallPendingInfo, bool) {
 		pendingMu.Lock()
@@ -261,17 +274,26 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		pendingQueueByAgent = make(map[string][]string)
 		pendingMu.Unlock()
 
-		if progress == nil {
-			return
-		}
-		msg := ""
+		msg := "tool invocation ended without an observable result"
 		if err != nil {
 			msg = err.Error()
 		}
 		for _, tc := range pendingSnapshot {
-			toolName := tc.ToolName
-			if strings.TrimSpace(toolName) == "" {
+			toolName := strings.TrimSpace(tc.ToolName)
+			if toolName == "" {
 				toolName = "unknown"
+			}
+			// 无论是否启用进度回调，都必须补齐 agent 消息链。否则下一轮会把
+			// Assistant ToolCall 与缺失的 ToolMessage 一起发送给模型并被拒绝。
+			runAccumulatedMsgs = append(runAccumulatedMsgs, schema.ToolMessage(
+				msg,
+				tc.ToolCallID,
+				schema.WithToolName(toolName),
+			))
+			terminalToolResultIDs[tc.ToolCallID] = struct{}{}
+			completedInvocations.Delete(tc.ToolCallID)
+			if progress == nil {
+				continue
 			}
 			progress("tool_result", fmt.Sprintf("工具结果 (%s)", toolName), map[string]interface{}{
 				"toolName":       toolName,
@@ -367,6 +389,66 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if progress != nil {
 			progress("tool_result", fmt.Sprintf("工具结果 (%s)", toolName), data)
 		}
+	}
+
+	if args.ToolInvokeNotify != nil {
+		args.ToolInvokeNotify.Set(func(toolCallID, toolName, einoAgent string, success bool, content string, invokeErr error) {
+			completedInvocations.Store(toolInvokeCompletion{
+				ToolCallID: strings.TrimSpace(toolCallID),
+				ToolName:   strings.TrimSpace(toolName),
+				EinoAgent:  strings.TrimSpace(einoAgent),
+				Success:    success,
+				Content:    content,
+				InvokeErr:  invokeErr,
+			})
+		})
+		defer args.ToolInvokeNotify.Set(nil)
+	}
+
+	reconcileCompletedInvocations := func() (reconciled int, snapshotVersion uint64) {
+		completions, snapshotVersion := completedInvocations.SnapshotWithVersion()
+		for _, completion := range completions {
+			if !hasPendingByID(completion.ToolCallID) {
+				completedInvocations.Delete(completion.ToolCallID)
+				continue
+			}
+			content := einoToolResultBody(completion.Content)
+			isErr := !completion.Success || completion.InvokeErr != nil || einoToolResultIsError(completion.ToolName, completion.Content)
+			if content == "" && completion.InvokeErr != nil {
+				content = completion.InvokeErr.Error()
+			}
+			toolName := strings.TrimSpace(completion.ToolName)
+			if toolName == "" {
+				toolName = "unknown"
+			}
+			// ADK 终止事件先到时，桥回调正文就是当前唯一权威结果；补进消息链后
+			// 再清理 pending，确保 Assistant ToolCall 始终有匹配 ToolMessage。
+			runAccumulatedMsgs = append(runAccumulatedMsgs, schema.ToolMessage(
+				content,
+				completion.ToolCallID,
+				schema.WithToolName(toolName),
+			))
+			terminalToolResultIDs[completion.ToolCallID] = struct{}{}
+			tryEmitToolResultProgress(toolName, content, completion.ToolCallID, isErr, completion.EinoAgent)
+			reconciled++
+		}
+		return reconciled, snapshotVersion
+	}
+
+	const toolCompletionReconcileGrace = 750 * time.Millisecond
+	waitAndReconcileCompletedInvocations := func() int {
+		total, observedVersion := reconcileCompletedInvocations()
+		deadline := time.Now().Add(toolCompletionReconcileGrace)
+		for pendingCount() > 0 {
+			remaining := time.Until(deadline)
+			if remaining <= 0 || !completedInvocations.WaitForChange(ctx, observedVersion, remaining) {
+				break
+			}
+			reconciled, version := reconcileCompletedInvocations()
+			total += reconciled
+			observedVersion = version
+		}
+		return total
 	}
 
 	if args.EinoCallbacks != nil {
@@ -640,8 +722,14 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			return nil, runErr
 		}
 		ids := snapshotMCPIDs()
+		persistMsgs := appendTerminalToolPairsForTrace(
+			modelFacingTraceSnapshot(args),
+			runAccumulatedMsgs,
+			terminalToolResultIDs,
+			args.ToolMaxBytes,
+		)
 		return buildEinoRunResultFromAccumulated(
-			orchMode, runAccumulatedMsgs, modelFacingTraceSnapshot(args),
+			orchMode, runAccumulatedMsgs, persistMsgs,
 			lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, true,
 		), runErr
 	}
@@ -689,10 +777,18 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 				}
 				return takePartial(ctxErr)
 			}
+			if reconciled := waitAndReconcileCompletedInvocations(); reconciled > 0 && progress != nil {
+				progress("eino_pending_reconciled", "已用工具桥完成结果补齐缺失的 ADK 结果事件", map[string]interface{}{
+					"conversationId":  conversationID,
+					"source":          "eino",
+					"orchestration":   orchMode,
+					"reconciledCount": reconciled,
+				})
+			}
 			if orphanCount := pendingCount(); orphanCount > 0 {
-				flushAllPendingAsFailed(errors.New("pending tool call missing result before run completion"))
+				flushAllPendingAsFailed(errors.New("tool result state unknown: invocation completion was not observed before run completion"))
 				if progress != nil {
-					progress("eino_pending_orphaned", "pending tool calls were force-closed at run end", map[string]interface{}{
+					progress("eino_pending_orphaned", "pending tool calls had no observable completion state at run end", map[string]interface{}{
 						"conversationId": conversationID,
 						"source":         "eino",
 						"orchestration":  orchMode,
@@ -1175,7 +1271,7 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			}
 		}
 
-		if (mv.Role == schema.Tool || msg.Role == schema.Tool) && progress != nil {
+		if mv.Role == schema.Tool || msg.Role == schema.Tool {
 			toolName := msg.ToolName
 			if toolName == "" {
 				toolName = mv.ToolName
@@ -1195,8 +1291,14 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 	ids := append([]string(nil), *mcpIDs...)
 	mcpIDsMu.Unlock()
 
+	persistMsgs := appendTerminalToolPairsForTrace(
+		modelFacingTraceSnapshot(args),
+		runAccumulatedMsgs,
+		terminalToolResultIDs,
+		args.ToolMaxBytes,
+	)
 	out := buildEinoRunResultFromAccumulated(
-		orchMode, runAccumulatedMsgs, modelFacingTraceSnapshot(args),
+		orchMode, runAccumulatedMsgs, persistMsgs,
 		lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, false,
 	)
 	return out, nil

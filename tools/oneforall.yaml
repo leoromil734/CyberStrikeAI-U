@@ -36,16 +36,18 @@ description: |
   - 仅在授权范围内使用；主动爆破可能产生大量 DNS 查询
 
 parameters:
-  - name: "target"
+  - name: "domain"
+    aliases:
+      - "target"
     type: "string"
     description: |
-      目标主域名（不要带协议）。
+      目标主域名（不要带协议）。这是调用时的标准字段；旧字段 `target` 仍兼容。
 
-      **示例值：**
-      - "example.com"
+      **正确调用：**
+      - `{ "domain": "example.com" }`
 
       **注意事项：**
-      - 对应 `--target`
+      - 对应 CLI `--target`
     required: true
     flag: "--target"
     format: "flag"

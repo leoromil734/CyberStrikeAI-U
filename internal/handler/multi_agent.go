@@ -164,6 +164,11 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
+	effectiveOrchestration := config.NormalizeMultiAgentOrchestration(runCfg.MultiAgent.Orchestration)
+	if orch != "" {
+		effectiveOrchestration = config.NormalizeMultiAgentOrchestration(orch)
+	}
+	preferFinalReport := effectiveOrchestration == "supervisor"
 
 	var result *multiagent.RunResult
 	var runErr error
@@ -261,7 +266,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 
 		if runErr == nil {
 			mw := &h.config.MultiAgent.EinoMiddleware
-			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
+			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, preferFinalReport, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
 				timeoutCancel()
 				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)

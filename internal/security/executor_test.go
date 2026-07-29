@@ -306,21 +306,66 @@ func TestBuildCommandArgs_HTTPXUsesProjectDiscoveryFlags(t *testing.T) {
 	}
 }
 
-func TestBuildCommandArgs_PreservesPositionalAction(t *testing.T) {
-	position := 1
-	executor, _ := setupTestExecutor(t)
-	toolConfig := &config.ToolConfig{
-		Name:    "oneforall",
-		Command: "oneforall",
-		Parameters: []config.ParameterConfig{
-			{Name: "target", Type: "string", Required: true, Flag: "--target", Format: "flag"},
-			{Name: "action", Type: "string", Default: "run", Position: &position, Format: "positional"},
-		},
+func loadOneForAllToolConfig(t *testing.T) *config.ToolConfig {
+	t.Helper()
+	toolConfig, err := config.LoadToolFromFile(filepath.Join("..", "..", "tools", "oneforall.yaml"))
+	if err != nil {
+		t.Fatalf("load oneforall config: %v", err)
 	}
+	return toolConfig
+}
 
-	cmdArgs := executor.buildCommandArgs("oneforall", toolConfig, map[string]interface{}{"target": "example.com"})
-	if got := strings.Join(cmdArgs, " "); got != "--target example.com run" {
-		t.Fatalf("positional action was dropped or reordered: %q", got)
+func TestBuildCommandArgs_OneForAllCanonicalAndAlias(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := loadOneForAllToolConfig(t)
+
+	tests := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{name: "canonical domain", args: map[string]interface{}{"domain": "example.com"}, want: "--target example.com run"},
+		{name: "legacy target alias", args: map[string]interface{}{"target": "legacy.example"}, want: "--target legacy.example run"},
+		{name: "canonical wins conflict", args: map[string]interface{}{"domain": "canonical.example", "target": "legacy.example"}, want: "--target canonical.example run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmdArgs := executor.buildCommandArgs("oneforall", toolConfig, tt.args)
+			if got := strings.Join(cmdArgs, " "); got != tt.want {
+				t.Fatalf("arguments = %q, want %q", got, tt.want)
+			}
+			if missing := executor.missingRequiredToolParams(toolConfig, tt.args); len(missing) != 0 {
+				t.Fatalf("valid aliases must pass required validation: %v", missing)
+			}
+		})
+	}
+}
+
+func TestOneForAllSchemaPublishesOnlyCanonicalRequiredField(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	schema := executor.buildInputSchema(loadOneForAllToolConfig(t))
+
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties type = %T", schema["properties"])
+	}
+	if _, ok := properties["domain"]; !ok {
+		t.Fatal("schema missing canonical domain field")
+	}
+	if _, ok := properties["target"]; ok {
+		t.Fatal("legacy target alias must not be published as a second schema field")
+	}
+	required, ok := schema["required"].([]string)
+	if !ok || len(required) != 1 || required[0] != "domain" {
+		t.Fatalf("required = %#v, want [domain]", schema["required"])
+	}
+}
+
+func TestOneForAllMissingParameterNamesCanonicalAndAlias(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	missing := executor.missingRequiredToolParams(loadOneForAllToolConfig(t), map[string]interface{}{})
+	if len(missing) != 1 || !strings.Contains(missing[0], "domain") || !strings.Contains(missing[0], "target") {
+		t.Fatalf("missing parameter diagnostic = %#v", missing)
 	}
 }
 

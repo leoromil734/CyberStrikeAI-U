@@ -159,6 +159,22 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		return e.executeInternalTool(ctx, toolName, toolConfig.Command, args)
 	}
 
+	// 必需参数校验必须发生在别名解析之后；模型传入兼容字段时不能被误判为缺失。
+	if missing := e.missingRequiredToolParams(toolConfig, args); len(missing) > 0 {
+		return &mcp.ToolResult{
+			Content: []mcp.Content{{
+				Type: "text",
+				Text: fmt.Sprintf(
+					"错误: 工具 %s 缺少必需参数: %s。接收到的参数: %v",
+					toolName,
+					strings.Join(missing, ", "),
+					args,
+				),
+			}},
+			IsError: true,
+		}, nil
+	}
+
 	// 文件型参数在启动进程前完成校验和默认路径解析，避免工具因缺失字典输出整页帮助。
 	resolvedArgs, validationErr := e.resolveToolFileArgs(toolConfig, args)
 	if validationErr != nil {
@@ -793,11 +809,49 @@ func (e *Executor) parseAdditionalArgs(argsStr string) []string {
 	return result
 }
 
-// getParamValue 获取参数值，支持默认值
+// missingRequiredToolParams 返回缺失的规范参数契约；兼容别名只用于解析，不进入 schema required。
+func (e *Executor) missingRequiredToolParams(toolConfig *config.ToolConfig, args map[string]interface{}) []string {
+	if toolConfig == nil {
+		return nil
+	}
+	missing := make([]string, 0)
+	for _, param := range toolConfig.Parameters {
+		if !param.Required {
+			continue
+		}
+		value := e.getParamValue(args, param)
+		if value != nil && strings.TrimSpace(fmt.Sprintf("%v", value)) != "" {
+			continue
+		}
+		name := strings.TrimSpace(param.Name)
+		aliases := make([]string, 0, len(param.Aliases))
+		for _, alias := range param.Aliases {
+			alias = strings.TrimSpace(alias)
+			if alias != "" && alias != name {
+				aliases = append(aliases, alias)
+			}
+		}
+		if len(aliases) > 0 {
+			name = fmt.Sprintf("%s（兼容别名: %s）", name, strings.Join(aliases, ", "))
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
+// getParamValue 获取参数值，支持兼容别名和默认值。
 func (e *Executor) getParamValue(args map[string]interface{}, param config.ParameterConfig) interface{} {
-	// 从参数中获取值
 	if value, ok := args[param.Name]; ok && value != nil {
 		return value
+	}
+	for _, alias := range param.Aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if value, ok := args[alias]; ok && value != nil {
+			return value
+		}
 	}
 
 	// 如果参数是必需的但没有提供，返回 nil（让上层处理错误）
@@ -805,7 +859,6 @@ func (e *Executor) getParamValue(args map[string]interface{}, param config.Param
 		return nil
 	}
 
-	// 返回默认值
 	return param.Default
 }
 

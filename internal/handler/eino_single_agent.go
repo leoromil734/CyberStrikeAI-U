@@ -252,7 +252,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 
 		if runErr == nil {
 			mw := &h.config.MultiAgent.EinoMiddleware
-			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
+			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, false, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
 				timeoutCancel()
 				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)

@@ -3,9 +3,11 @@ package multiagent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
 // modelFacingTraceHolder 保存「即将送入 ChatModel」的消息快照（已走 summarization / reduction / orphan 修剪等），
@@ -56,6 +58,99 @@ func cloneADKMessagesForTrace(msgs []adk.Message) []adk.Message {
 		return nil
 	}
 	return out
+}
+
+// appendTerminalToolPairsForTrace merges only complete tool pairs synthesized by
+// terminal handling after the last model call. These are either bridge completion
+// results or explicit failure markers; the full event accumulation remains excluded.
+func appendTerminalToolPairsForTrace(
+	modelFacing []adk.Message,
+	accumulated []adk.Message,
+	terminalIDs map[string]struct{},
+	toolMaxBytes int,
+) []adk.Message {
+	if len(terminalIDs) == 0 {
+		return modelFacing
+	}
+	if toolMaxBytes <= 0 {
+		toolMaxBytes = 12000
+	}
+
+	trace := cloneADKMessagesForTrace(modelFacing)
+	knownCalls := make(map[string]struct{}, len(terminalIDs))
+	knownResults := make(map[string]struct{}, len(terminalIDs))
+	for _, msg := range trace {
+		if msg == nil {
+			continue
+		}
+		for _, tc := range msg.ToolCalls {
+			if id := strings.TrimSpace(tc.ID); id != "" {
+				knownCalls[id] = struct{}{}
+			}
+		}
+		if msg.Role == schema.Tool {
+			if id := strings.TrimSpace(msg.ToolCallID); id != "" {
+				knownResults[id] = struct{}{}
+			}
+		}
+	}
+
+	results := make(map[string]adk.Message, len(terminalIDs))
+	for i := len(accumulated) - 1; i >= 0; i-- {
+		msg := accumulated[i]
+		if msg == nil || msg.Role != schema.Tool {
+			continue
+		}
+		id := strings.TrimSpace(msg.ToolCallID)
+		if _, terminal := terminalIDs[id]; !terminal {
+			continue
+		}
+		if _, exists := results[id]; exists {
+			continue
+		}
+		results[id] = truncateMessageToolContent(msg, toolMaxBytes, "")
+	}
+
+	for _, msg := range accumulated {
+		if msg == nil || msg.Role != schema.Assistant || len(msg.ToolCalls) == 0 {
+			continue
+		}
+		missingCalls := make([]schema.ToolCall, 0, len(msg.ToolCalls))
+		for _, tc := range msg.ToolCalls {
+			id := strings.TrimSpace(tc.ID)
+			if _, terminal := terminalIDs[id]; !terminal {
+				continue
+			}
+			if _, hasResult := results[id]; !hasResult {
+				continue
+			}
+			if _, known := knownCalls[id]; known {
+				continue
+			}
+			missingCalls = append(missingCalls, tc)
+			knownCalls[id] = struct{}{}
+		}
+		if len(missingCalls) > 0 {
+			trace = append(trace, schema.AssistantMessage("", missingCalls))
+		}
+		for _, tc := range msg.ToolCalls {
+			id := strings.TrimSpace(tc.ID)
+			if _, terminal := terminalIDs[id]; !terminal {
+				continue
+			}
+			if _, hasCall := knownCalls[id]; !hasCall {
+				continue
+			}
+			if _, known := knownResults[id]; known {
+				continue
+			}
+			if result, ok := results[id]; ok {
+				trace = append(trace, result)
+				knownResults[id] = struct{}{}
+			}
+		}
+	}
+	return trace
 }
 
 // modelFacingTraceMiddleware 必须在 Handlers 链中处于 **BeforeModel 最后**（telemetry 之后），
