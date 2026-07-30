@@ -44,14 +44,15 @@ flowchart LR
 组合顺序是稳定接口：
 
 ```text
-角色职责
+（可选）GPT 破甲指令 gptinstruct v42   ← 仅模型名 gpt-*/chatgpt-* 且 agent.gpt_instruct.enabled
+→ 角色职责
 → 当前运行模式生命周期
 → 共享安全契约
 → 项目黑板索引与请求级上下文
 → 动态工具/Skill 索引
 ```
 
-自定义单代理提示或 Markdown 主代理只能替换“角色职责”，不能替换共享契约。Deep、Supervisor、Plan-Execute 只注入各自的委派、转派或重规划差异；子代理统一追加单目标和禁止再次委派的生命周期。
+`gpt_instruct` 由 `internal/gptinstruct` 在 Eino 单/多代理 Instruction 组装末段**前置**注入，判定只看 `OpenAI.Model` 字符串，不看 provider。自定义单代理提示或 Markdown 主代理只能替换“角色职责”，不能替换共享契约。Deep、Supervisor、Plan-Execute 只注入各自的委派、转派或重规划差异；子代理统一追加单目标和禁止再次委派的生命周期。
 
 ## 证据状态机
 

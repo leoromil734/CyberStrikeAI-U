@@ -13,6 +13,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/einomcp"
+	"cyberstrike-ai/internal/gptinstruct"
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/reasoning"
@@ -185,6 +186,7 @@ func RunEinoSingleChatModelAgent(
 		EmitInternalEvents: true,
 	}
 	ins := project.AppendSystemPromptBlock(ag.EinoSingleAgentSystemInstruction(), systemPromptExtra)
+	ins = gptinstruct.MaybePrepend(ins, appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))
 	ins = project.AppendVisionImageAnalysisIfReady(ins, appCfg.Vision.Ready())
 	ins = injectToolNamesOnlyInstruction(ctx, ins, mainTools, singleToolSearchActive)
 	if logger != nil {
@@ -195,6 +197,8 @@ func RunEinoSingleChatModelAgent(
 			zap.Int("tool_names", len(names)),
 			zap.Int("mounted_tool_names", len(mountedNames)),
 			zap.Bool("tool_search_middleware", singleToolSearchActive),
+			zap.Bool("gpt_instruct", gptinstruct.Applied(appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))),
+			zap.String("model", appCfg.OpenAI.Model),
 		)
 	}
 

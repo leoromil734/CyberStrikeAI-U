@@ -90,6 +90,9 @@ agent:
   shell_no_output_timeout_seconds: 1200
   workspace_root_dir: ""
   system_prompt_path: ""
+  gpt_instruct:
+    enabled: true
+    # prompt_path: prompts/gpt-5.6-sol-unrestricted-v42.md
 ```
 
 - `max_iterations`：单代理、多代理主执行器和子代理的默认迭代上限。
@@ -97,6 +100,11 @@ agent:
 - `shell_no_output_timeout_seconds`：Shell 长时间无输出时终止。
 - `workspace_root_dir`：会话工作区根目录，建议不要设置到系统 `/tmp`。
 - `system_prompt_path`：单代理系统提示词覆盖文件。
+- `gpt_instruct`：移植自 [gpt-5.6-instruct v42](https://github.com/MDX-Tom/gpt-5.6-instruct) 的破甲提示词。
+  - **仅按模型名**匹配 `gpt-*` / `chatgpt-*`（含路径前缀与 `ft:` 微调名）；不看 `provider` 或 OpenAI 协议。
+  - `enabled: true` 时，对 GPT 系列通道把破甲指令前置到系统提示（单代理 / Deep / Supervisor / Plan-Execute / 子代理）。
+  - `prompt_path` 为空使用内嵌 v42；可指向 `prompts/` 下自定义 Markdown。
+  - qwen / deepseek / claude / o1 等模型名不会注入。
 
 ## HITL
 

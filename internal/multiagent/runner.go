@@ -19,6 +19,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/einomcp"
+	"cyberstrike-ai/internal/gptinstruct"
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/projectprompt"
@@ -204,6 +205,7 @@ func RunDeepAgent(
 				instr = "你是 CyberStrikeAI 的专业子代理。只完成协调者交付的安全测试子目标，使用可用工具获取可复核证据，并简洁返回结果。"
 			}
 			instr = projectprompt.ComposeSystemPrompt(instr, projectprompt.PromptModeSubAgent)
+			instr = gptinstruct.MaybePrepend(instr, appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))
 
 			roleTools := sub.RoleTools
 			bind := strings.TrimSpace(sub.BindRole)
@@ -355,6 +357,7 @@ func RunDeepAgent(
 	}
 
 	orchInstruction = project.AppendSystemPromptBlock(orchInstruction, systemPromptExtra)
+	orchInstruction = gptinstruct.MaybePrepend(orchInstruction, appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))
 	orchInstruction = project.AppendVisionImageAnalysisIfReady(orchInstruction, appCfg.Vision.Ready())
 	orchInstruction = injectToolNamesOnlyInstruction(ctx, orchInstruction, mainTools, mainToolSearchActive)
 	if logger != nil {
@@ -366,6 +369,8 @@ func RunDeepAgent(
 			zap.Int("tool_names", len(mainNames)),
 			zap.Int("mounted_tool_names", len(mountedNames)),
 			zap.Bool("tool_search_middleware", mainToolSearchActive),
+			zap.Bool("gpt_instruct", gptinstruct.Applied(appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))),
+			zap.String("model", appCfg.OpenAI.Model),
 		)
 	}
 

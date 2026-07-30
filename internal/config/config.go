@@ -45,6 +45,8 @@ type Config struct {
 	MultiAgent  MultiAgentConfig      `yaml:"multi_agent,omitempty" json:"multi_agent,omitempty"`
 	Project     ProjectConfig         `yaml:"project,omitempty" json:"project,omitempty"`
 	Vision      VisionConfig          `yaml:"vision,omitempty" json:"vision,omitempty"`
+	// ConfigDir 由 Load 填充：config.yaml 所在目录（绝对路径），不读写 yaml。
+	ConfigDir string `yaml:"-" json:"-"`
 }
 
 type EnsureLocalConfigResult struct {
@@ -1070,6 +1072,16 @@ type AgentConfig struct {
 	WorkspaceRootDir string `yaml:"workspace_root_dir,omitempty" json:"workspace_root_dir,omitempty"`
 	// SystemPromptPath 单代理角色提示 Markdown/文本文件路径（相对 config.yaml 所在目录，或绝对路径）。非空且可读时替换内置角色职责；范围、证据、Skill 路由与停止条件等共享契约仍由代码追加。
 	SystemPromptPath string `yaml:"system_prompt_path,omitempty" json:"system_prompt_path,omitempty"`
+	// GPTInstruct 将 gpt-5.6-instruct v42 破甲提示词前置注入系统提示；仅按模型名匹配 GPT 系列（gpt-*/chatgpt-*），与 provider/协议无关。
+	GPTInstruct GPTInstructConfig `yaml:"gpt_instruct,omitempty" json:"gpt_instruct,omitempty"`
+}
+
+// GPTInstructConfig 控制 GPT 系列模型的破甲提示词注入（上游：MDX-Tom/gpt-5.6-instruct v42）。
+type GPTInstructConfig struct {
+	// Enabled 为 true 时，对模型名匹配 GPT 系列的通道前置注入破甲指令。
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// PromptPath 自定义提示词文件（相对 ConfigDir 或绝对路径）；空则使用内嵌 v42。
+	PromptPath string `yaml:"prompt_path,omitempty" json:"prompt_path,omitempty"`
 }
 
 // HitlConfig 人机协同全局选项；与会话侧栏/API 中的白名单合并为并集后参与判定。
@@ -1364,6 +1376,14 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	if dir := filepath.Dir(path); dir != "" {
+		if abs, absErr := filepath.Abs(dir); absErr == nil {
+			cfg.ConfigDir = abs
+		} else {
+			cfg.ConfigDir = dir
+		}
 	}
 
 	if cfg.Auth.SessionDurationHours <= 0 {
