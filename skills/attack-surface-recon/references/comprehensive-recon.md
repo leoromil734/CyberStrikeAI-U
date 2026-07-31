@@ -36,9 +36,9 @@ value = business_criticality + auth_or_admin + data_sensitivity
 
 1. 从入口 HTML、manifest、preload/prefetch、动态 import、worker/service worker 收集所有脚本，维护 `queued → fetched → analyzed → references-expanded` 状态；递归跟进新增 chunk，直到队列为空或每个失败项有原始 blocked 证据。
 2. 保存 URL、hash、来源页面、抓取状态；探测同名 `.map`，解析 source map/sourceRoot/sourcesContent，但不把未下载文件写成已审计。
-3. 逐文件提取 API base URL、HTTP method/path、query/body/header 字段、WebSocket、GraphQL、上传、下载、回调、认证/刷新、feature flag 和环境名；对共享客户端或路由前缀展开每个调用点，不能只保留 `MainClient/*` 等模块名。
+3. 优先 `jsluice urls`（或等价）提取 URL/路径，再人工补 WebSocket、GraphQL、上传、下载、回调、认证/刷新、feature flag 和环境名；对共享客户端或路由前缀展开每个调用点，不能只保留 `MainClient/*` 等模块名。
 4. 解混淆只服务于恢复路由与数据流；保留变换方法和输入 hash。字符串只是 tentative，必须对目标侧可达性做去重验证。
-5. 端点表至少包含 `host, method, path, params, auth_hint, source_js, runtime_status, value_reason`。不要只报告“发现 MainClient 路由表”而不展开每个方法和参数。
+5. 端点表至少包含 `host, method, path, params, auth_hint, source_js, runtime_status, value_reason`，并 upsert 为 `recon/endpoint/*`（字段见 `recon-fact-schema.md`）。不要只报告“发现 MainClient 路由表”而不展开每个方法和参数。
 
 ## 5. 认证态与业务流入口
 

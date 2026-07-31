@@ -75,13 +75,17 @@ func TestComprehensivePentestRolesCannotStopAfterRecon(t *testing.T) {
 		"recon": {
 			"`subfinder`、`oneforall`、`dnsx`",
 			"队列为空",
-			"逐 JS 提取 API base",
+			"jsluice",
+			"recon/source/",
+			"不得** `record_vulnerability`",
 			"不能因缺少现成账号跳过",
 		},
 		"attack-surface-enumeration": {
 			"懒加载 chunk、worker 和 source map",
 			"不能批量否定 JS 中的真实接口",
 			"注册、激活、登录、找回和登出",
+			"jsluice",
+			"recon/endpoint/",
 		},
 		"penetration": {
 			"创建最少测试账号",
@@ -93,6 +97,7 @@ func TestComprehensivePentestRolesCannotStopAfterRecon(t *testing.T) {
 			"phase_ledger",
 			"pending/active/passed/blocked",
 			"侦察交接只是阶段产物",
+			"recon/source/",
 		},
 		"cyberstrike-supervisor": {
 			"phase_ledger",

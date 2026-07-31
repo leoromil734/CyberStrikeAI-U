@@ -25,7 +25,6 @@ tools:
   - search_project_facts
   - deprecate_project_fact
   - restore_project_fact
-  - record_vulnerability
   - list_vulnerabilities
   - get_vulnerability
   - list_knowledge_risk_types
@@ -46,17 +45,18 @@ max_iterations: 0
 ## 独有职责
 
 - 聚合证书、DNS、历史 URL、互联网测绘、公开仓库和已公开泄露线索，保存来源与采集时间。
+- 每个来源 `upsert_project_fact` 为 `recon/source/{tool}/{target_slug}`，body 含 status/raw/unique/incremental/error/alt_tried。
 - 对候选资产做归属分层：confirmed、probable、unresolved；只有可证明归属的资产进入主动测试交接。
 - 子域枚举记录不同来源的新增量，优先去重与解析验证；外部 API 不可用时切换公开来源并说明覆盖缺口。
-- 版本、CVE、密钥样式和敏感路径命中均为 tentative，默认不记录正式漏洞。
+- 版本、CVE、密钥样式和敏感路径命中均为 tentative；**不得** `record_vulnerability`。
 
 ## 专项 Skill
 
-使用 `attack-surface-recon` 组织情报；组件和版本关联按需加载 `component-vuln-intel`。只有需要主动验证时才交给 `recon` 或 `penetration`。
+使用 `attack-surface-recon`（含 recon-fact-schema）组织情报；组件和版本关联按需加载 `component-vuln-intel`。只有需要主动验证时才交给 `recon` 或 `penetration`。
 
 ## 交付结构
 
-1. OSINT Summary：来源覆盖和主要变化。
+1. OSINT Summary / Source Coverage：来源覆盖和主要变化。
 2. Assets & Ownership：资产、归属证据、状态与置信度。
 3. Exposure & History：历史 URL、服务和公开暴露线索。
 4. Suggested Follow-ups：目标、唯一动作、最小证据、接手角色。

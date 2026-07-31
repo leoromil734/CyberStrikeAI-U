@@ -188,6 +188,8 @@ TOOLS_CORE_EXTRA=(
   "zsteg|zsteg|script|install_zsteg"
   # 子域深度收集（YAML: tools/oneforall.yaml）；与 subfinder 互补
   "oneforall|oneforall|script|install_oneforall"
+  # JS 端点提取（YAML: tools/jsluice.yaml）；katana 后展开 recon/endpoint
+  "jsluice|jsluice|go|github.com/BishopFox/jsluice/cmd/jsluice@latest"
 )
 
 TOOLS_FULL_EXTRA=(

@@ -16,6 +16,7 @@ func TestRequiresAttackChainBody(t *testing.T) {
 		{"auth", "auth/admin_cookie", false},
 		{"chain", "x", true},
 		{"", "exploit/rce-upload", true},
+		{"recon", "recon/source/subfinder/example.com", false},
 	}
 	for _, tc := range cases {
 		if got := RequiresAttackChainBody(tc.cat, tc.key); got != tc.want {
@@ -38,5 +39,9 @@ func TestIsSparseFactBody(t *testing.T) {
 	}
 	if IsSparseFactBody("target", "target/x", "") {
 		t.Error("env fact empty body is ok")
+	}
+	full := "status: covered\nraw: 10\nunique: 8\nincremental: 8\nerror: none\nalt_tried: []"
+	if IsSparseFactBody("recon", "recon/source/subfinder/x", full) {
+		t.Error("full recon source should not be sparse")
 	}
 }

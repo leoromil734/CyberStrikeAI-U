@@ -18,6 +18,7 @@ const (
 	FactCategoryExploit  = "exploit"
 	FactCategoryPOC      = "poc"
 	FactCategoryNote     = "note"
+	FactCategoryRecon    = "recon"
 )
 
 // RequiresAttackChainBody 判断该事实是否应携带可复现的攻击链 / exploit 详情（写在 body，非仅 summary）。
@@ -36,8 +37,25 @@ func RequiresAttackChainBody(category, factKey string) bool {
 	return false
 }
 
-// IsSparseFactBody 攻击链类事实 body 过短或缺少关键段落时返回 true（软校验，不阻断写入）。
+// IsReconFact 判断是否为侦察账本类事实。
+func IsReconFact(category, factKey string) bool {
+	c := strings.ToLower(strings.TrimSpace(category))
+	if c == FactCategoryRecon {
+		return true
+	}
+	return projectprompt.IsReconFactKey(factKey)
+}
+
+// IsSparseReconFactBody 侦察类事实 body 缺少门禁字段时返回 true（软校验，不阻断写入）。
+func IsSparseReconFactBody(category, factKey, body string) bool {
+	return projectprompt.IsSparseReconFactBody(category, factKey, body)
+}
+
+// IsSparseFactBody 攻击链类或侦察类事实 body 不足时返回 true（软校验，不阻断写入）。
 func IsSparseFactBody(category, factKey, body string) bool {
+	if IsSparseReconFactBody(category, factKey, body) {
+		return true
+	}
 	if !RequiresAttackChainBody(category, factKey) {
 		return false
 	}
@@ -46,18 +64,19 @@ func IsSparseFactBody(category, factKey, body string) bool {
 		return true
 	}
 	lower := strings.ToLower(body)
-	// 至少应包含可复现线索：步骤/请求/命令/代码块 之一
 	hasSteps := strings.Contains(lower, "攻击链") || strings.Contains(lower, "## 攻击") ||
 		strings.Contains(lower, "## exploit") || strings.Contains(lower, "## poc")
 	hasHTTP := strings.Contains(lower, "```http") || strings.Contains(lower, "```bash") ||
 		strings.Contains(lower, "curl ") || strings.Contains(lower, "get ") || strings.Contains(lower, "post ")
 	hasReq := strings.Contains(lower, "请求") || strings.Contains(lower, "响应") || strings.Contains(lower, "payload")
-	// 无攻击链/POC/请求等结构线索，视为仅结论性描述（不论长短）
 	return !(hasSteps || hasHTTP || hasReq)
 }
 
 // FactBodyTemplate 按 category 返回建议的 body Markdown 骨架（供 Agent 填入真实内容）。
 func FactBodyTemplate(category, factKey string) string {
+	if IsReconFact(category, factKey) {
+		return projectprompt.ReconFactBodyTemplate(factKey)
+	}
 	if RequiresAttackChainBody(category, factKey) {
 		return attackChainFactBodyTemplate
 	}
@@ -115,9 +134,15 @@ func FactRecordingGuidanceBlock() string {
 	return projectprompt.FactRecordingGuidanceBlock()
 }
 
-// SparseBodyWarning 攻击链类事实 body 不足时的工具返回提示（不阻断保存）。
+// SparseBodyWarning 事实 body 不足时的工具返回提示（不阻断保存）。
 func SparseBodyWarning(category, factKey string) string {
-	if !IsSparseFactBody(category, factKey, "") {
+	if IsReconFact(category, factKey) {
+		return fmt.Sprintf(
+			"\n\n⚠ 提示：category=%q / fact_key=%q 属于侦察账本事实，但 body 缺少门禁字段。请按 recon-fact-schema 补全。\n建议 body 骨架：\n%s",
+			category, factKey, FactBodyTemplate(category, factKey),
+		)
+	}
+	if !RequiresAttackChainBody(category, factKey) {
 		return ""
 	}
 	return fmt.Sprintf(

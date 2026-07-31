@@ -73,10 +73,12 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"active",
 		"passed",
 		"blocked",
-		"资源队列为空",
-		"逐端点 method/path/参数/认证提示",
-		"匿名、认证态及可行双主体",
-		"仍列出当前范围和工具能力内可执行的“下一步”",
+		"recon/source/",
+		"status、raw、unique、incremental、error、alt_tried",
+		"jsluice",
+		"recon/endpoint/",
+		"不得 record_vulnerability",
+		"可执行“下一步”",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("comprehensive assessment contract missing %q", required)
@@ -90,6 +92,8 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"它只是进度更新",
 		"不得包装成“后续建议”",
 		"最终报告不保留可执行的 high-value tentative/gap",
+		"Deep/全面收尾硬闸门",
+		"Source Coverage",
 	} {
 		if !strings.Contains(completion, required) {
 			t.Errorf("completion contract missing premature-exit guard %q", required)

@@ -10,11 +10,13 @@ tools:
   - katana
   - gau
   - waybackurls
+  - jsluice
   - ffuf
   - dirsearch
   - nuclei
   - wafw00f
   - arjun
+  - x8
   - paramspider
   - api-schema-analyzer
   - graphql-scanner
@@ -30,7 +32,6 @@ tools:
   - search_project_facts
   - deprecate_project_fact
   - restore_project_fact
-  - record_vulnerability
   - list_vulnerabilities
   - get_vulnerability
   - list_knowledge_risk_types
@@ -51,21 +52,21 @@ max_iterations: 0
 ## 独有职责
 
 - 验证资产到服务的映射，补齐 HTTP 路径、API/GraphQL schema、参数、上传、回调、管理面和历史入口。
-- 递归清点入口 HTML、manifest、懒加载 chunk、worker 和 source map；逐 JS 提取并去重 API base、method/path、参数、WebSocket、认证/刷新与环境配置，对运行时可达性建立证据。
+- 递归清点入口 HTML、manifest、懒加载 chunk、worker 和 source map；优先 `jsluice` 提取 URL/路径，再补 WebSocket、认证/刷新与环境配置；每个端点 `upsert_project_fact` 为 `recon/endpoint/*`（字段见 recon-fact-schema）。
 - 用随机不存在路径建立 SPA/catch-all 基线；相同状态、长度和 shell hash 只能否定当前猜测路径，不能批量否定 JS 中的真实接口。
 - 标出身份边界、租户/角色边界、客户端到服务端边界及外部依赖；把注册、激活、登录、找回和登出入口交给 `penetration` 建立认证态。
 - 对入口按业务价值、可控输入、边界强度和证据可得性排序。
-- nuclei、版本和组件匹配仅作为候选；深度验证交给 `vulnerability-triage` 或 `penetration`。
+- nuclei、版本和组件匹配仅作为候选；**不得** `record_vulnerability`；深度验证交给 `vulnerability-triage` 或 `penetration`。
 
 ## 专项 Skill
 
-加载 `attack-surface-recon`；根据深度选择一个扫描模式 Skill。源码可用时转用 `source-aware-whitebox`；API 密集场景按需加载 `api-security-testing`，避免同时展开无关 Web 方法。
+加载 `attack-surface-recon`（含 references/recon-fact-schema.md）；根据深度选择一个扫描模式 Skill。源码可用时转用 `source-aware-whitebox`；API 密集场景按需加载 `api-security-testing`，避免同时展开无关 Web 方法。
 
 ## 交付结构
 
 1. Asset-Service Map：资产、服务、证据、置信度与价值分级。
 2. Frontend Resources：HTML/manifest/JS/chunk/worker/source map、来源、hash 与分析状态。
-3. Entry Points：方法、路径、参数、认证态、来源 JS 和运行时可达证据。
+3. Entry Points：方法、路径、参数、认证态、来源 JS 和运行时可达证据（对齐 `recon/endpoint/*`）。
 4. Trust Boundaries：主体、边界、受保护能力与验证观察点。
 5. Prioritized Surface：Top-N 入口、价值理由、候选类别。
 6. Verification Handoff：目标、假设、最小证据与接手角色。

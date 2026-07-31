@@ -1,0 +1,62 @@
+name: "jsluice"
+command: "jsluice"
+enabled: true
+
+short_description: "从 JS 提取 URL、路径、密钥样式与 XHR 端点；recon 端点表首选"
+
+description: |
+  BishopFox jsluice：静态分析 JavaScript，提取 URL、相对路径、密钥样式字符串与 fetch/XHR 调用点。
+
+  **主要功能：**
+  - `urls`：从 JS 提取绝对/相对 URL 与路径
+  - `secrets`：提取疑似密钥、token、API key 样式（一律 tentative）
+  - 管道友好，可对本地文件或 stdin 批量分析
+
+  **使用场景（信息收集 / Deep）：**
+  - katana/gau 得到 JS 列表后，对每个已下载的 `.js`/chunk 跑 jsluice，展开 method/path 候选
+  - 禁止只报告「发现 MainClient 路由表」；必须产出逐端点行
+  - 字符串提取仅为 tentative；须对目标侧做可达性去重验证后再写入 `recon/endpoint/*` fact
+
+  **推荐链路：**
+  - katana/gau → 下载 JS → **jsluice urls** → 去重 → httpx/手工基线 → upsert `recon/endpoint/*`
+
+  **CLI 形态：**
+  - `jsluice urls app.js`
+  - `jsluice secrets app.js`
+  - `cat bundle.js | jsluice urls`
+
+  **注意事项：**
+  - 未安装时用 `exec` 执行等价解析脚本，并在 Source Coverage 记 `blocked` + 替代路径
+  - 仅在授权范围内分析已获取的前端资源；密钥命中不得直接 `record_vulnerability`
+  - 输出写入 fact 时保留 source_js、hash 与提取命令
+
+parameters:
+  - name: "mode"
+    type: "string"
+    description: |
+      子命令：`urls`（端点/URL）或 `secrets`（密钥样式，tentative）。
+      默认 urls。
+    required: false
+    default: "urls"
+    position: 0
+    format: "positional"
+    options:
+      - "urls"
+      - "secrets"
+
+  - name: "file"
+    type: "string"
+    description: |
+      本地 JS 文件路径（已下载的 chunk/bundle）。
+      示例：`/tmp/recon/app.chunk.js`
+    required: true
+    position: 1
+    format: "positional"
+
+  - name: "additional_args"
+    type: "string"
+    description: |
+      额外 jsluice 参数，追加到命令末尾。
+      示例：`-p`（pretty JSON，若版本支持）
+    required: false
+    format: "positional"

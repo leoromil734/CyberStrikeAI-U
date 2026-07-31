@@ -171,7 +171,8 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 	for _, required := range []string{
 		"subfinder` + `oneforall",
 		"`dnsx`",
-		"逐文件提取 API base",
+		"jsluice",
+		"recon-fact-schema.md",
 		"全面/Deep 侦察只有在以下账本",
 	} {
 		if !strings.Contains(recon, required) {
@@ -189,9 +190,29 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 		"discovered → extracted → baselined → risk-mapped",
 		"账号 A/可行账号 B",
 		"不能生成最终渗透总结",
+		"jsluice",
+		"recon/endpoint/*",
 	} {
 		if !strings.Contains(string(comprehensive), required) {
 			t.Errorf("comprehensive recon reference missing %q", required)
+		}
+	}
+
+	schema, err := os.ReadFile(filepath.Join(root, "attack-surface-recon", "references", "recon-fact-schema.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"recon/source/",
+		"raw",
+		"unique",
+		"incremental",
+		"alt_tried",
+		"recon/endpoint/",
+		"runtime_status",
+	} {
+		if !strings.Contains(string(schema), required) {
+			t.Errorf("recon-fact-schema missing %q", required)
 		}
 	}
 
@@ -201,6 +222,8 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 		"未创建可行测试身份",
 		"尚未展开 JS 路由表",
 		"“下一步建议”",
+		"recon/source/subfinder/*",
+		"jsluice",
 	} {
 		if !strings.Contains(deep, required) {
 			t.Errorf("pentest-scan-deep missing exit gate %q", required)

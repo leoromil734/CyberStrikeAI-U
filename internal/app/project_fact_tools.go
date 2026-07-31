@@ -50,21 +50,22 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		Name: builtin.ToolUpsertProjectFact,
 		Description: "写入或更新项目黑板事实，用于跨会话沉淀可复现上下文（非正式漏洞条目；可交付漏洞另用 record_vulnerability）。" +
 			"边渗透边记录：每确认新认知（端口/入口/凭据/可利用点）后立即调用，同 fact_key 覆盖更新，勿等会话结束。" +
-			"禁止仅写结论：summary 须含什么+在哪+如何验证；body 须含攻击链/请求响应/命令等复现细节。" +
-			"发现类建议 fact_key 为 finding|chain|exploit|poc/<slug>，category 对应 finding|chain|exploit|poc，body 按攻击链模板填写。" +
-			"环境类用 target|auth|infra|business/<slug>。同 fact_key 覆盖更新。需当前对话已绑定项目。",
-		ShortDescription: "写入/更新项目事实（含攻击链 body）",
+			"禁止仅写结论：summary 须含什么+在哪+如何验证；body 须含复现或账本字段。" +
+			"发现类 fact_key 为 finding|chain|exploit|poc/<slug>；环境类 target|auth|infra|business/<slug>；" +
+			"侦察账本 recon/source|endpoint|phase|asset|js/<slug>（category=recon），source body 须含 status/raw/unique/incremental/error/alt_tried。" +
+			"同 fact_key 覆盖更新。需当前对话已绑定项目。",
+		ShortDescription: "写入/更新项目事实（含 recon 账本）",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"fact_key": map[string]interface{}{
 					"type":        "string",
-					"description": "项目内唯一 key：target/primary_domain、finding/sqli-login、exploit/upload-rce 等",
+					"description": "项目内唯一 key：target/primary_domain、recon/source/subfinder/example.com、recon/endpoint/...、finding/sqli-login 等",
 				},
 				"category": map[string]interface{}{
 					"type":        "string",
-					"description": "target | auth | infra | business | finding | chain | exploit | poc | note",
-					"enum":        []string{"target", "auth", "infra", "business", "finding", "chain", "exploit", "poc", "note"},
+					"description": "target | auth | infra | business | recon | finding | chain | exploit | poc | note",
+					"enum":        []string{"target", "auth", "infra", "business", "recon", "finding", "chain", "exploit", "poc", "note"},
 				},
 				"summary": map[string]interface{}{
 					"type":        "string",
@@ -72,8 +73,8 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				},
 				"body": map[string]interface{}{
 					"type": "string",
-					"description": "完整可复现详情（仅 get_project_fact 返回）：须含攻击链步骤、原始 HTTP/命令、响应现象、证据与关联。" +
-						"发现/利用类首次写入必填；环境类建议含来源证据。攻击链类可参考模板章节：结论、目标与入口、攻击链、Exploit/POC、关键证据、关联、备注。" +
+					"description": "完整详情（仅 get_project_fact 返回）。发现/利用类须含攻击链与请求响应；" +
+						"recon/source 须含 status/raw/unique/incremental/error/alt_tried；recon/endpoint 须含 host/method/path/runtime_status 等。" +
 						"更新已有 fact_key 时若省略或留空 body，将保留库中已有 body（可只改 summary）。",
 				},
 				"confidence": map[string]interface{}{
