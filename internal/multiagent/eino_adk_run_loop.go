@@ -1599,15 +1599,30 @@ func einoParseExitFinalResultArguments(arguments string) string {
 	if err := json.Unmarshal(wrap.FinalResult, &s); err == nil {
 		return strings.TrimSpace(s)
 	}
+	// 修复：如果 final_result 是对象或其他类型，尝试序列化为格式化的 JSON 字符串
 	var anyVal interface{}
 	if err := json.Unmarshal(wrap.FinalResult, &anyVal); err != nil {
 		return ""
 	}
-	b, err := json.Marshal(anyVal)
+	// 如果是字符串类型，直接返回
+	if strVal, ok := anyVal.(string); ok {
+		return strings.TrimSpace(strVal)
+	}
+	// 否则格式化为可读的 JSON（缩进2空格）
+	b, err := json.MarshalIndent(anyVal, "", "  ")
 	if err != nil {
+		// 降级：尝试不缩进的 JSON
+		b, err = json.Marshal(anyVal)
+		if err != nil {
+			return ""
+		}
+	}
+	result := strings.TrimSpace(string(b))
+	// 确保返回的内容不为空 JSON 对象/数组
+	if result == "{}" || result == "[]" || result == "null" {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	return result
 }
 
 func buildEinoCheckpointID(orchMode string) string {

@@ -7,9 +7,33 @@ metadata:
   tags: [渗透测试, penetration-testing, recon]
 ---
 
-# 攻击面测绘
+# 攻击面测绘（增强版）
 
 输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游已有结果时只补缺口。完整矩阵、资产评分与 JS/API 提取读取 `references/comprehensive-recon.md`。**来源/端点 fact 字段与退出门禁**读取 `references/recon-fact-schema.md`（Deep 必读）。
+
+## 增强的信息收集策略
+
+### 多维度资产发现
+1. **被动信息收集**（优先级最高，无告警风险）：
+   - 搜索引擎：Google dorks、Bing、Baidu（用于中文站点）
+   - 证书透明度：crt.sh、Censys、Facebook CT
+   - DNS 历史：SecurityTrails、DNSdumpster
+   - 代码托管：GitHub、GitLab（搜索域名、API密钥、配置文件）
+   - 网络空间测绘：FOFA、Shodan、ZoomEye、Quake（获取历史快照、关联资产）
+   - Web 归档：Wayback Machine、Archive.today
+   - 社交媒体：LinkedIn（技术栈）、Twitter（公告）
+
+2. **主动探测**（在被动收集基础上进行）：
+   - 子域名爆破：仅对高价值目标，使用分层字典
+   - 端口扫描：先 top-ports，高价值资产再全端口
+   - 服务指纹：banner 抓取、协议探测
+
+3. **深度关联分析**：
+   - IP 反查域名（批量 PTR 记录）
+   - ASN 枚举（同组织 IP 段）
+   - WHOIS 关联（注册邮箱、注册商）
+   - SSL/TLS 证书链分析（找同证书域名）
+   - DNS 记录完整枚举（A、AAAA、CNAME、MX、TXT、NS、SOA）
 
 ## 按目标类型裁剪
 
