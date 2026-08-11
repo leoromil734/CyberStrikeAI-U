@@ -1,12 +1,34 @@
 ---
 name: active-directory-attack
 description: >-
-  内网域攻击:BloodHound,Kerberoast,ADCS ESC1/ESC8,NTLM Relay,Coerce,DACL,DCSync,Zerologon/NoPac/PrintNightmare,mitm6,LLMNR,Linux内网。Use when attacking Active Directory, ADCS, NTLM relay, or internal domain.
+  内网域 / Active Directory / BloodHound / Kerberoast / ADCS / NTLM Relay /
+  DCSync / 横向域管 / IAM / PAM / responder / impacket / netexec / enum4linux /
+  smbmap / rpcclient。用户说「打域」「AD」「域渗透」「Kerberos」「证书服务」
+  「NTLM」「DCSync」「BloodHound」时加载。
+allowed-tools: bloodhound impacket netexec responder enum4linux-ng smbmap rpcclient nmap hydra hashcat john exec metasploit record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
-  tags: [渗透测试, penetration-testing, 红队]
+  tags: [渗透测试, penetration-testing, 红队, ad]
+  source_augment: Hi-FullHouse/CyberSecurity-Skills
 ---
 
 ## 内网域攻击
+
+### CSS IAM / AD 手册（按需 `references/csskills-iam/`）
+
+优先：`AD域安全与攻击路径分析-ADSecurityAttackPathAnalysis.md`、`PAM特权账号管理-PrivilegedAccessManagement.md`。
+
+### 系统工具补全（场景 → MCP）
+
+| 场景 | 优先工具 | 备选 | 备注 |
+| --- | --- | --- | --- |
+| 攻击路径图 | `bloodhound` | — | SharpHound 收集后分析 |
+| Kerberos/票据/同步 | `impacket` | `netexec` | AS-REP/Kerberoast/DCSync 等 |
+| 喷洒/SMB/WinRM | `netexec` | `hydra`、`smbmap` | 授权与锁账户 |
+| LLMNR/NBT 投毒 | `responder` | — | 仅授权内网 |
+| 主机/服务枚举 | `enum4linux-ng` / `rpcclient` | `nmap` | 域成员与共享 |
+| Hash 破解 | `hashcat` / `john` | — | 离线 |
+| 利用框架 | `metasploit` | `exec` | 域 CVE 验证 |
+| 落库 | `record_vulnerability` | `upsert_project_fact` | 路径证据+边界 |
 
 ```
 === 内网域(2023+真实主战场) ===

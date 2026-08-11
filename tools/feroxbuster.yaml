@@ -1,9 +1,11 @@
 name: "feroxbuster"
 command: "feroxbuster"
-enabled: false
+enabled: true
 short_description: "递归内容发现工具"
 description: |
   Feroxbuster是一个快速、简单的递归内容发现工具。
+
+  **安装：** `install-tools-ubuntu24.sh`（core/full）从 GitHub release 安装。目录爆破主用仍是 `ffuf`，本工具为递归补强。
 
   **主要功能：**
   - 递归目录发现

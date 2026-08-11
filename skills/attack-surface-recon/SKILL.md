@@ -1,73 +1,77 @@
 ---
 name: attack-surface-recon
 description: >-
-  明确范围内的资产、服务、URL、参数与技术指纹测绘流程。用于 recon/Surface 阶段并输出增量与覆盖缺口；
-  不用于深度漏洞验证，测试深度由 pentest-scan-quick/standard/deep 单独选择。
+  攻击面测绘 / 信息收集 / 侦察 / recon / OSINT / 子域名枚举 / DNS / 端口存活 / httpx /
+  资产发现 / JS API 提取 / 目录参数 / 证书透明度 / FOFA Shodan ZoomEye Quake /
+  wayback / katana / jsluice / arjun / x8 / ffuf / 覆盖账本 / recon fact /
+  退出门禁 / Deep 硬闸门。用于 Surface、摸底、打点前资产清单、阶段 ledger；
+  用户说「信息收集」「收集信息」「侦察」「找资产」「扫子域」「全面侦察」
+  「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
+  不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
+allowed-tools: subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
 metadata:
-  tags: [渗透测试, penetration-testing, recon]
+  tags: [渗透测试, penetration-testing, recon, osint, information-gathering]
+  source_augment: Hi-FullHouse/CyberSecurity-Skills
 ---
 
 # 攻击面测绘（增强版）
 
-输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游已有结果时只补缺口。完整矩阵、资产评分与 JS/API 提取读取 `references/comprehensive-recon.md`。**来源/端点 fact 字段与退出门禁**读取 `references/recon-fact-schema.md`（Deep 必读）。
+输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游已有结果时只补缺口。
 
-## 增强的信息收集策略
+- 完整矩阵、资产评分与 JS/API：`references/comprehensive-recon.md`
+- 来源/端点 fact 与退出门禁：`references/recon-fact-schema.md`（Deep 必读）
+- **命令级 OSINT 清单**：优先 `skill recon-osint-playbook`，或 `references/csskills-recon/`
+- **扫描器自动化线索**（仍 tentative）：`references/csskills-scan/`
 
-### 多维度资产发现
-1. **被动信息收集**（优先级最高，无告警风险）：
-   - 搜索引擎：Google dorks、Bing、Baidu（用于中文站点）
-   - 证书透明度：crt.sh、Censys、Facebook CT
-   - DNS 历史：SecurityTrails、DNSdumpster
-   - 代码托管：GitHub、GitLab（搜索域名、API密钥、配置文件）
-   - 网络空间测绘：FOFA、Shodan、ZoomEye、Quake（获取历史快照、关联资产）
-   - Web 归档：Wayback Machine、Archive.today
-   - 社交媒体：LinkedIn（技术栈）、Twitter（公告）
+## 工具流水线（MCP 名 = 实际调用名）
 
-2. **主动探测**（在被动收集基础上进行）：
-   - 子域名爆破：仅对高价值目标，使用分层字典
-   - 端口扫描：先 top-ports，高价值资产再全端口
-   - 服务指纹：banner 抓取、协议探测
+1. 根域：Quick=`subfinder`+CT；Standard=`subfinder`+异构来源+`dnsx`；Deep=`subfinder` + `oneforall` + 补 amass/CT/历史/空间测绘，逐项记 raw/增量。
+2. `dnsx` 清洗与通配基线；品牌关联先记证据再主动测。
+3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。空间引擎：`fofa_search`/`shodan_search`/`zoomeye_search`/`quake_search`（有 key 才调）。
+4. Web：`katana`/`gau`/`waybackurls` + JS/`jsluice` → `recon/endpoint/*`。
+5. 参数/路径：`arjun`/`x8`/`ffuf`（可补 `gobuster`/`dirsearch`/`feroxbuster`），先建 SPA catch-all 基线。
+6. `nuclei` 仅 tentative，禁止直接 `record_vulnerability`。
 
-3. **深度关联分析**：
-   - IP 反查域名（批量 PTR 记录）
-   - ASN 枚举（同组织 IP 段）
-   - WHOIS 关联（注册邮箱、注册商）
-   - SSL/TLS 证书链分析（找同证书域名）
-   - DNS 记录完整枚举（A、AAAA、CNAME、MX、TXT、NS、SOA）
+### 系统工具补全速查
+
+| 阶段 | 优先 MCP | 备选 |
+| --- | --- | --- |
+| 子域 | `subfinder`、`oneforall` | `amass` |
+| DNS | `dnsx` | `dnsenum`/`fierce` |
+| HTTP/端口 | `httpx`、`naabu` | `nmap`/`masscan`/`fscan` |
+| 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsluice` | — |
+| 参数 | `arjun`、`x8`、`ffuf` | 目录爆破工具 |
+| 落库 | `upsert_project_fact` | `list_project_facts`/`search_project_facts` |
+
+### 触发衔接
+
+- 纯命令/语法/OSINT 百科 → `skill recon-osint-playbook`。
+- 进入验证 → `web-attack-methods` / `api-security-testing` + `pentest-verification`。
+- 每步成功或 blocked → 立即 fact；结案前核对缺口。
 
 ## 按目标类型裁剪
 
 ```text
-root_domain → 子域增量 → DNS 清洗 → HTTP/重点端口
+root_domain → 被动 OSINT → 子域增量 → DNS 清洗 → HTTP/重点端口
 single_url  → 当前站点爬取 → 历史 URL → 路径/参数
 ip_or_cidr  → 端口/服务 → 证书与反向解析关联
 host_list   → 去重 → DNS/HTTP 批处理
 ```
 
-## 工具流水线
+## CSS 知识库索引（按需 read_file）
 
-1. 根域：
-   - Quick 可只用 `subfinder` 首轮。
-   - Standard 至少组合 `subfinder` 与一个异构来源，再用 `dnsx` 验证。
-   - Deep/全面必须运行 `subfinder` + `oneforall`，并按可用性补 `amass`、证书透明度、历史/搜索引擎或空间测绘；逐项记录 raw、去重后数量与增量。某工具失败时保留错误并切换同类别来源，不能直接宣称子域完整。
-2. `dnsx` 去除不可解析主机并保留 A/AAAA/CNAME、解析链和通配 DNS 基线；品牌关联资产先记录关联证据，确认 in-scope 后再主动测试。
-3. `httpx` 收集 status/title/tech/server/content-length/CDN；`naabu` 找重点端口，仅对高价值主机用 `nmap -sCV`。Deep 对高价值 IP/主机补长尾端口策略，不能用 top-ports 结果表述“全端口覆盖”。
-4. Web 入口由 `katana`、`gau`、`waybackurls` 互补；下载 HTML 引用、懒加载 chunk、worker 和 source map；优先 `jsluice` 抽 URL/路径，再补 WebSocket、上传/回调、认证与环境配置；每端点写 `recon/endpoint/*`，再对目标侧可达性去重验证。
-5. `arjun`/`x8` 补参数，`ffuf`/`dirsearch` 补路径；先建立随机不存在路径和 SPA shell 的 hash/title/length 基线，通配 200 不计为命中。
-6. `nuclei` 只在存活去重目标上按技术栈裁剪运行，输出全部视为 tentative，**不得**直接 `record_vulnerability`。
-
-Quick 省略全量子域、全端口、深爬和大字典；Standard 覆盖主要服务与入口；Deep 扩展异构来源、品牌关联、前端静态资源、长尾端口和复杂身份/业务入口。
-
-## 差分与失败恢复
-
-- 路径扫描前请求随机不存在路径，识别 catch-all 的状态和大小。
-- CDN/WAF 标记不自动触发 curl_cffi；浏览器与标准客户端稳定差分时再加载 `cdn-tls-fingerprint`。
-- 单工具失败切换异构来源；同参数连续无新增时停止重跑并记录覆盖缺口。
+| 主题 | 路径 |
+| --- | --- |
+| 被动 OSINT | `references/csskills-recon/被动信息搜集-PassiveRecon.md` |
+| 主动侦察 | `references/csskills-recon/主动信息搜集-ActiveRecon.md` |
+| DNS | `references/csskills-recon/DNS枚举-DNSEnumeration.md` |
+| 子域 | `references/csskills-recon/子域名探测-SubdomainDiscovery.md` |
+| 空间引擎 | `references/csskills-recon/网络空间搜索引擎-OSINT-SearchEngine.md` |
+| 社工情报 | `references/csskills-recon/社会工程学信息-SocialEngineeringInfo.md` |
+| 技术栈 | `references/csskills-recon/目标技术栈识别-TechStackFingerprint.md` |
 
 ## 交付与退出门禁
 
-输出 **Source Coverage**（对齐 `recon/source/*`）、Assets、Live Services、Entry Points、Prioritized Verification Top-N、Tool Incremental Yield、Do-Not-Repeat 和 Remaining Gaps。每项保留来源与置信度；侦察默认不记录正式漏洞。
+输出 Source Coverage、Assets、Live Services、Entry Points、Top-N、增量、Do-Not-Repeat、Gaps。
 
-- 全面/Deep 侦察只有在以下账本均有 `covered` 或带原因的 `blocked` 记录后才能交接：独立资产来源、DNS/通配清洗、HTTP 与非 HTTP 服务、品牌关联证据、Web/历史 URL、全部已发现 JS/chunk/source map、API/参数清单、认证入口和资产价值分级。`blocked` 必须包含失败证据和已尝试替代来源；任何未处理项保持 `gap`，禁止使用“主域及子域已全覆盖”。
-- Deep 根域结案前黑板须有 `recon/source/subfinder/*`、`recon/source/oneforall/*`（或等价异构子域来源的 blocked）、`recon/source/dnsx/*`；缺一只能输出进度。
-- Recon 的 Top-N 只定义后续处理顺序。协调者必须继续推进枚举、认证态和风险验证；范围内可执行候选不能停留在最终“下一步建议”。
+**全面/Deep 侦察只有在以下账本**满足 `recon-fact-schema` 硬闸门时才可结案；高价值 gap 存在时不得结案。

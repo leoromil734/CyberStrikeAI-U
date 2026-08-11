@@ -72,8 +72,12 @@ CyberStrikeAI Ubuntu 24.04 工具安装脚本
 
 套件说明:
   minimal  扫描基础：nmap masscan sqlmap hydra nikto ffuf nuclei subfinder httpx
-  core     渗透测试常用（默认，推荐；含 dalfox/trivy/oneforall 等）
-  full     core + 云安全/容器/取证/二进制分析等（体积大、耗时长）
+  core     渗透测试常用（默认，推荐；含 dalfox/trivy/oneforall/jsluice/spectral/graphqlmap 等）
+  full     core + 云安全(pacu/prowler)/AD(responder)/容器/取证/二进制等（体积大、耗时长）
+
+说明:
+  tools/*.yaml 只注册 MCP 描述；本脚本负责把真实命令装进 PATH。
+  skill 里提到的工具若本机没有，优先重跑本脚本对应 profile，而不是改 skill。
 EOF
 }
 
@@ -190,6 +194,9 @@ TOOLS_CORE_EXTRA=(
   "oneforall|oneforall|script|install_oneforall"
   # JS 端点提取（YAML: tools/jsluice.yaml）；katana 后展开 recon/endpoint
   "jsluice|jsluice|go|github.com/BishopFox/jsluice/cmd/jsluice@latest"
+  # API skill 常用：OpenAPI lint + GraphQL 扫描（YAML: api-schema-analyzer / graphql-scanner）
+  "api-schema-analyzer|spectral|script|install_spectral"
+  "graphql-scanner|graphqlmap|script|install_graphqlmap"
 )
 
 TOOLS_FULL_EXTRA=(
@@ -207,6 +214,10 @@ TOOLS_FULL_EXTRA=(
   "terrascan|terrascan|script|install_terrascan"
   "hashpump|hashpump|apt|hashpump"
   "linpeas|linpeas.sh|script|install_linpeas"
+  # AD / 后渗透 skill 常用：LLMNR/NBT 投毒（YAML: tools/responder.yaml）
+  "responder|responder|script|install_responder"
+  # 可选多云补充（主用 prowler）
+  "scout-suite|scout|pip|scoutsuite"
   # 体积大 / 已弃用 / 需额外仓库
   "metasploit|msfconsole|skip|请手动安装 Metasploit（含 msfvenom）"
   "ghidra|analyzeHeadless|skip|请手动安装 Ghidra (需要 JDK)"
@@ -215,13 +226,9 @@ TOOLS_FULL_EXTRA=(
   "gobuster|gobuster|skip|已弃用，请用 ffuf"
   "jaeles|jaeles|skip|已弃用，请用 nuclei"
   "xsser|xsser|skip|已弃用，请用 dalfox"
-  "scout-suite|scout|skip|次选，主用 prowler；需要时: pipx install scoutsuite"
   "falco|falco|skip|需官方仓库，见 https://falco.org/docs/install-operate/installation/"
-  "cloudmapper|cloudmapper|skip|见 duo-labs/cloudmapper 文档"
-  "responder|Responder.py|skip|git clone https://github.com/lgandx/Responder"
-  "dotdotpwn|dotdotpwn|skip|git clone https://github.com/wireghoul/dotdotpwn"
-  "graphql-scanner|graphqlmap|skip|git clone https://github.com/swisskyrepo/GraphQLmap"
-  "api-schema-analyzer|spectral|skip|npm i -g @stoplight/spectral-cli"
+  "cloudmapper|cloudmapper|script|install_cloudmapper"
+  "dotdotpwn|dotdotpwn|script|install_dotdotpwn"
 )
 
 build_tool_list() {
@@ -900,6 +907,239 @@ install_zsteg() {
   fi
 }
 
+# Spectral CLI：OpenAPI/Swagger lint（YAML command: spectral；tools/api-schema-analyzer.yaml）
+# https://github.com/stoplightio/spectral — npm i -g @stoplight/spectral-cli
+install_spectral() {
+  local name="api-schema-analyzer" check="spectral"
+  if already_ok "$check"; then mark_skip "$name"; return 0; fi
+  info "安装 @stoplight/spectral-cli (spectral)..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    run_cmd apt-get install -y --no-install-recommends nodejs npm || true
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    mark_fail "$name" "缺少 npm/nodejs，无法安装 spectral"
+    return 0
+  fi
+
+  if run_cmd npm install -g @stoplight/spectral-cli; then
+    if already_ok "$check"; then
+      mark_ok "$name (spectral)"
+    else
+      # 部分环境 npm 全局前缀不在 PATH
+      local npm_bin
+      npm_bin=$(npm root -g 2>/dev/null | sed 's|/node_modules$||')
+      if [[ -n "$npm_bin" && -x "${npm_bin}/bin/spectral" ]]; then
+        ln -sf "${npm_bin}/bin/spectral" "${TOOLS_BIN_DIR}/spectral"
+      fi
+      if already_ok "$check" || [[ -x "${TOOLS_BIN_DIR}/spectral" ]]; then
+        mark_ok "$name (spectral)"
+      else
+        mark_fail "$name" "npm 安装成功但未找到 spectral 命令"
+      fi
+    fi
+  else
+    mark_fail "$name" "npm install -g @stoplight/spectral-cli 失败"
+  fi
+}
+
+# GraphQLmap：GraphQL 安全探测（YAML command: graphqlmap；tools/graphql-scanner.yaml）
+# https://github.com/swisskyrepo/GraphQLmap
+install_graphqlmap() {
+  local name="graphql-scanner" check="graphqlmap"
+  if already_ok "$check"; then mark_skip "$name"; return 0; fi
+  info "安装 GraphQLmap → /opt/GraphQLmap ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  local dest="/opt/GraphQLmap"
+  if [[ ! -d "$dest/.git" ]]; then
+    rm -rf "$dest"
+    if ! git clone --depth 1 https://github.com/swisskyrepo/GraphQLmap.git "$dest"; then
+      mark_fail "$name" "git clone 失败"
+      return 0
+    fi
+  else
+    git -C "$dest" pull --ff-only 2>/dev/null || true
+  fi
+
+  if [[ -f "$dest/requirements.txt" ]]; then
+    python3 -m pip install --break-system-packages -i "$PIP_INDEX_URL" -r "$dest/requirements.txt" \
+      || python3 -m pip install --break-system-packages -r "$dest/requirements.txt" \
+      || warn "GraphQLmap 部分依赖安装失败"
+  fi
+
+  local entry=""
+  if [[ -f "$dest/graphqlmap.py" ]]; then
+    entry="$dest/graphqlmap.py"
+  elif [[ -f "$dest/GraphQLmap.py" ]]; then
+    entry="$dest/GraphQLmap.py"
+  else
+    entry=$(find "$dest" -maxdepth 2 -iname 'graphqlmap*.py' | head -n1)
+  fi
+  if [[ -z "$entry" ]]; then
+    mark_fail "$name" "未找到 GraphQLmap 入口脚本"
+    return 0
+  fi
+
+  cat >"${TOOLS_BIN_DIR}/graphqlmap" <<EOF
+#!/usr/bin/env bash
+# CyberStrikeAI wrapper for GraphQLmap
+export PYTHONPATH="${dest}:\${PYTHONPATH:-}"
+cd "${dest}" || exit 1
+exec python3 "${entry}" "\$@"
+EOF
+  chmod +x "${TOOLS_BIN_DIR}/graphqlmap"
+
+  if already_ok "$check" || [[ -x "${TOOLS_BIN_DIR}/graphqlmap" ]]; then
+    mark_ok "$name → ${TOOLS_BIN_DIR}/graphqlmap"
+  else
+    mark_fail "$name" "包装脚本写入失败"
+  fi
+}
+
+# Responder：LLMNR/NBT-NS 投毒（YAML: tools/responder.yaml，命令 responder）
+# https://github.com/lgandx/Responder
+install_responder() {
+  local name="responder" check="responder"
+  if already_ok "$check"; then mark_skip "$name"; return 0; fi
+  info "安装 Responder → /opt/Responder ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  local dest="/opt/Responder"
+  if [[ ! -d "$dest/.git" ]]; then
+    rm -rf "$dest"
+    if ! git clone --depth 1 https://github.com/lgandx/Responder.git "$dest"; then
+      mark_fail "$name" "git clone 失败"
+      return 0
+    fi
+  else
+    git -C "$dest" pull --ff-only 2>/dev/null || true
+  fi
+
+  local entry=""
+  if [[ -f "$dest/Responder.py" ]]; then
+    entry="$dest/Responder.py"
+  else
+    entry=$(find "$dest" -maxdepth 2 -name 'Responder.py' | head -n1)
+  fi
+  if [[ -z "$entry" ]]; then
+    mark_fail "$name" "未找到 Responder.py"
+    return 0
+  fi
+
+  cat >"${TOOLS_BIN_DIR}/responder" <<EOF
+#!/usr/bin/env bash
+# CyberStrikeAI wrapper for Responder
+export PYTHONPATH="${dest}:\${PYTHONPATH:-}"
+cd "${dest}" || exit 1
+exec python3 "${entry}" "\$@"
+EOF
+  chmod +x "${TOOLS_BIN_DIR}/responder"
+
+  if already_ok "$check" || [[ -x "${TOOLS_BIN_DIR}/responder" ]]; then
+    mark_ok "$name → ${TOOLS_BIN_DIR}/responder"
+  else
+    mark_fail "$name" "包装脚本写入失败"
+  fi
+}
+
+# CloudMapper：AWS 资产可视化（YAML: tools/cloudmapper.yaml）
+# https://github.com/duo-labs/cloudmapper — 克隆到 /opt 并包装
+install_cloudmapper() {
+  local name="cloudmapper" check="cloudmapper"
+  if already_ok "$check"; then mark_skip "$name"; return 0; fi
+  info "安装 CloudMapper → /opt/cloudmapper ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  local dest="/opt/cloudmapper"
+  if [[ ! -d "$dest/.git" ]]; then
+    rm -rf "$dest"
+    if ! git clone --depth 1 https://github.com/duo-labs/cloudmapper.git "$dest"; then
+      mark_fail "$name" "git clone 失败"
+      return 0
+    fi
+  else
+    git -C "$dest" pull --ff-only 2>/dev/null || true
+  fi
+
+  if [[ -f "$dest/requirements.txt" ]]; then
+    python3 -m pip install --break-system-packages -i "$PIP_INDEX_URL" -r "$dest/requirements.txt" \
+      || python3 -m pip install --break-system-packages -r "$dest/requirements.txt" \
+      || warn "CloudMapper 部分依赖安装失败"
+  fi
+
+  local entry=""
+  if [[ -f "$dest/cloudmapper.py" ]]; then
+    entry="$dest/cloudmapper.py"
+  else
+    entry=$(find "$dest" -maxdepth 2 -name 'cloudmapper.py' | head -n1)
+  fi
+  if [[ -z "$entry" ]]; then
+    mark_fail "$name" "未找到 cloudmapper.py"
+    return 0
+  fi
+
+  cat >"${TOOLS_BIN_DIR}/cloudmapper" <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="${dest}:\${PYTHONPATH:-}"
+cd "${dest}" || exit 1
+exec python3 "${entry}" "\$@"
+EOF
+  chmod +x "${TOOLS_BIN_DIR}/cloudmapper"
+  if already_ok "$check" || [[ -x "${TOOLS_BIN_DIR}/cloudmapper" ]]; then
+    mark_ok "$name → ${TOOLS_BIN_DIR}/cloudmapper"
+  else
+    mark_fail "$name" "包装脚本写入失败"
+  fi
+}
+
+# DotDotPwn：目录遍历 fuzz（YAML: tools/dotdotpwn.yaml）
+# https://github.com/wireghoul/dotdotpwn
+install_dotdotpwn() {
+  local name="dotdotpwn" check="dotdotpwn"
+  if already_ok "$check"; then mark_skip "$name"; return 0; fi
+  info "安装 DotDotPwn → /opt/dotdotpwn ..."
+  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name (dry-run)"; return 0; fi
+
+  run_cmd apt-get install -y --no-install-recommends perl libwww-perl libnet-ssleay-perl || true
+
+  local dest="/opt/dotdotpwn"
+  if [[ ! -d "$dest/.git" ]]; then
+    rm -rf "$dest"
+    if ! git clone --depth 1 https://github.com/wireghoul/dotdotpwn.git "$dest"; then
+      mark_fail "$name" "git clone 失败"
+      return 0
+    fi
+  else
+    git -C "$dest" pull --ff-only 2>/dev/null || true
+  fi
+
+  local entry=""
+  if [[ -f "$dest/dotdotpwn.pl" ]]; then
+    entry="$dest/dotdotpwn.pl"
+  else
+    entry=$(find "$dest" -maxdepth 2 -name 'dotdotpwn.pl' | head -n1)
+  fi
+  if [[ -z "$entry" ]]; then
+    mark_fail "$name" "未找到 dotdotpwn.pl"
+    return 0
+  fi
+  chmod +x "$entry" 2>/dev/null || true
+
+  cat >"${TOOLS_BIN_DIR}/dotdotpwn" <<EOF
+#!/usr/bin/env bash
+cd "$(dirname "${entry}")" || exit 1
+exec perl "${entry}" "\$@"
+EOF
+  chmod +x "${TOOLS_BIN_DIR}/dotdotpwn"
+  if already_ok "$check" || [[ -x "${TOOLS_BIN_DIR}/dotdotpwn" ]]; then
+    mark_ok "$name → ${TOOLS_BIN_DIR}/dotdotpwn"
+  else
+    mark_fail "$name" "包装脚本写入失败"
+  fi
+}
+
 # OneForAll：子域收集框架（https://github.com/shmilylty/OneForAll）
 # 可装；与 subfinder 互补。依赖多、首次慢，装到 /opt 并用包装脚本暴露 oneforall 命令。
 install_oneforall() {
@@ -1009,12 +1249,16 @@ print_summary() {
   echo "  command -v nmap nuclei subfinder ffuf httpx-pd sqlmap dirsearch oneforall dalfox trivy prowler"
   echo ""
   info "主用工具映射（已弃用项默认不装/YAML disabled）："
-  echo "  容器: trivy（非 clair） | XSS: dalfox（非 xsser） | 目录: ffuf（非 gobuster）"
-  echo "  模板扫描: nuclei（非 jaeles） | 云审计: prowler（非 scout）"
+  echo "  容器: trivy（非 clair） | XSS: dalfox（非 xsser） | 目录: ffuf（非 gobuster；feroxbuster 可选）"
+  echo "  模板扫描: nuclei（非 jaeles） | 云审计: prowler（scout 在 full）"
   echo "  子域: subfinder + oneforall + amass | 探活: MCP httpx → httpx-pd"
+  echo "  API: spectral(api-schema-analyzer) + graphqlmap(graphql-scanner) 在 core"
+  echo "  AD/后渗透: responder / netexec / impacket / bloodhound（full 含 responder）"
+  echo "  内网综合: fscan（core 安装；YAML 已启用）"
   echo ""
-  info "说明: tools/*.yaml 无需修改；命令在 PATH 中即可被 CyberStrikeAI 调用。"
+  info "说明: tools/*.yaml 描述 MCP 工具；命令在 PATH 中即可被 CyberStrikeAI 调用。"
   echo "      未安装的工具执行时会跳过或报 command not found，不影响平台本身。"
+  echo "      空间引擎 fofa/shodan/zoomeye/quake 需 API Key，YAML 默认 disabled。"
 }
 
 # ---------- main ----------

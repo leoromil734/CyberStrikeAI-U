@@ -5,6 +5,9 @@ enabled: true
 short_description: "API模式分析工具，识别潜在安全问题"
 description: |
   调用 `spectral lint` 对 OpenAPI/Swagger/GraphQL 模式进行静态分析，可结合自定义规则集或输出格式。
+
+  **安装：** `install-tools-ubuntu24.sh`（core/full）会安装 `@stoplight/spectral-cli`，命令名 `spectral`。
+  也可手动：`npm i -g @stoplight/spectral-cli`。
 parameters:
   - name: "schema_url"
     type: "string"

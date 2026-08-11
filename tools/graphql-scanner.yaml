@@ -3,7 +3,10 @@ command: "graphqlmap"
 enabled: true
 short_description: "GraphQL安全扫描和自省工具"
 description: |
-  高级GraphQL安全扫描和自省工具，用于检测GraphQL API中的安全问题。
+  封装 swisskyrepo/GraphQLmap，用于 GraphQL 自省与基础安全探测。
+
+  **安装：** `install-tools-ubuntu24.sh`（core/full）克隆到 `/opt/GraphQLmap` 并包装 `graphqlmap` 命令。
+  手动：`git clone https://github.com/swisskyrepo/GraphQLmap.git && python3 graphqlmap.py -u <endpoint>`。
 
   **主要功能：**
   - GraphQL自省

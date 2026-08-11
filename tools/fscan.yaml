@@ -1,11 +1,13 @@
 name: "fscan"
 command: "fscan"
-enabled: false
+enabled: true
 short_description: "内网综合扫描工具，支持存活探测、端口扫描、服务识别、爆破、POC检测"
 description: |
   Fscan是一款内网综合扫描工具，支持主机发现、端口扫描、服务识别、
 
   密码爆破、Web指纹识别和漏洞POC检测。
+
+  **安装：** `install-tools-ubuntu24.sh`（core/full）会从 GitHub release 安装 `fscan` 到 PATH。
 
   **主要功能：**
   - 主机存活探测（ICMP/TCP/Ping）

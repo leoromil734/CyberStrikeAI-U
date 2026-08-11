@@ -1,9 +1,12 @@
 name: "pacu"
 command: "pacu"
-enabled: false
+enabled: true
 short_description: "AWS渗透测试框架"
 description: |
   Pacu是一个AWS渗透测试框架，用于测试AWS环境的安全性。
+
+  **安装：** `sudo ./install-tools-ubuntu24.sh --profile full` 会 `pipx/pip install pacu`。
+  需要有效 AWS 凭据；仅在授权云账户上使用。
 
   **主要功能：**
   - AWS渗透测试

@@ -502,3 +502,24 @@ parameters:
 - 工具列表: 查看 `tools/` 目录下的所有工具配置文件
 - API文档: 查看主 README 中的 API 接口说明
 
+## 与安装脚本的关系
+
+`tools/*.yaml` **不会**安装二进制，只描述 MCP 如何调用命令。
+
+真实安装请用仓库根目录：
+
+```bash
+sudo ./install-tools-ubuntu24.sh                 # core（默认，推荐）
+sudo ./install-tools-ubuntu24.sh --profile full  # 含 pacu/responder/cloudmapper 等
+sudo ./install-tools-ubuntu24.sh --list          # 查看本 profile 会装什么
+```
+
+| Profile | 覆盖（与 skill 常用工具对齐） |
+| --- | --- |
+| minimal | nmap/masscan/sqlmap/ffuf/nuclei/subfinder/httpx-pd 等基线 |
+| core | + amass/oneforall/jsluice/dnsx/naabu/katana/dalfox/arjun/netexec/impacket/**spectral**/ **graphqlmap**/fscan/feroxbuster/trivy… |
+| full | + prowler/pacu/kube-*/ **responder**/scoutsuite/cloudmapper/dotdotpwn/linpeas… |
+
+需 API Key 的空间引擎（fofa/shodan/zoomeye/quake）YAML 默认 `enabled: false`，配好密钥后再开。
+clair/gobuster/jaeles/xsser 等已弃用项默认关闭，请用 trivy/ffuf/nuclei/dalfox。
+

@@ -40,6 +40,9 @@ enabled: true
 short_description: "LLMNR/NBT-NS/MDNS投毒和凭据收集工具"
 description: |
   封装 Responder，支持自动在指定持续时间后停止进程，避免占用网络。
+
+  **安装：** `sudo ./install-tools-ubuntu24.sh --profile full` 会克隆 lgandx/Responder 到 `/opt/Responder`
+  并包装 PATH 中的 `responder` 命令。仅授权内网使用。
 parameters:
   - name: "interface"
     type: "string"
