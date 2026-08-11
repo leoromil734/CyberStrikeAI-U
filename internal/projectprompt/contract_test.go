@@ -106,6 +106,15 @@ func TestSharedContractStaticBudget(t *testing.T) {
 	if got := utf8.RuneCountInString(prompt); got > 3200 {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
+	scope := ScopeAuthorizationSection()
+	for _, required := range []string{"发现并验证漏洞", "程度可控", "不得以“非破坏/可逆/最小影响/怕副作用”跳过验证"} {
+		if !strings.Contains(scope, required) {
+			t.Errorf("scope authorization missing priority policy %q", required)
+		}
+	}
+	if strings.Contains(scope, "非破坏、可逆、最小影响的验证") {
+		t.Fatal("scope must not reintroduce non-destructive-only primary policy")
+	}
 }
 
 func TestJoinPromptSectionsDropsExactDuplicates(t *testing.T) {

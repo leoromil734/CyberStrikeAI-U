@@ -35,8 +35,9 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 func ScopeAuthorizationSection() string {
 	return `## 范围与执行边界
 
-- 平台已完成授权判定；直接在给定目标、资产、路径、账号和方法范围内推进，不重复索取授权。
-- 采用非破坏、可逆、最小影响的验证，不扩大资产或使用范围外凭据。涉及数据修改、持久化、高流量或可用性风险时降低影响并记录约束。`
+- 平台已完成授权判定；在目标/资产/账号/方法内推进，不重复索取授权，不扩范围外。
+- 第一目标是发现并验证漏洞：合理候选必须做目标侧验证并拿可复核证据；不得以“非破坏/可逆/最小影响/怕副作用”跳过验证，或把未测写成已排除。
+- 程度可控：强度以能复现为度，证明后停加码并记副作用与回滚。硬禁仅限范围外目标，以及无证据的大规模不可逆毁灭与任务无关破坏。`
 }
 
 func modeLifecycleSection(mode PromptMode) string {
@@ -101,7 +102,7 @@ func ComprehensiveAssessmentSection() string {
 
 - Deep 根域至少跑 subfinder、oneforall、dnsx，并尝试证书/历史、品牌与测绘来源。每来源 upsert recon/source/{tool}/{target}，body 含 status、raw、unique、incremental、error、alt_tried；缺任一类 source fact 时 recon_sources 不得 passed。
 - HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；优先 jsluice 写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
-- 范围内自助注册/登录且无付费/轰炸/真实用户影响时建最少身份，覆盖匿名、认证态及可行双主体；无法建身份只阻断对应结论。
+- 范围内自助注册/登录时创建最少测试账号，覆盖匿名、认证态及可行双主体；为验证相关缺陷可按复现所需力度推进。无法建身份只阻断对应结论，未建号≠已覆盖。
 - 侦察/信息收集不得 record_vulnerability；扫描命中仅 tentative。侦察摘要是阶段交接。收尾若仍列范围内可执行“下一步”或未验证高价值候选，须继续执行或委派。`
 }
 
