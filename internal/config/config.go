@@ -1027,6 +1027,25 @@ type SpaceSearchConfig struct {
 	BaseURL string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 }
 
+const fofaSearchToolName = "fofa_search"
+
+// EnableConfiguredCredentialTools makes credential-backed tools discoverable
+// when their server-side credentials are configured. Credentials remain outside
+// the tool schema and command arguments; the executor injects them at process start.
+func EnableConfiguredCredentialTools(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("FOFA_API_KEY")) == "" && strings.TrimSpace(cfg.FOFA.APIKey) == "" {
+		return
+	}
+	for i := range cfg.Security.Tools {
+		if strings.EqualFold(strings.TrimSpace(cfg.Security.Tools[i].Name), fofaSearchToolName) {
+			cfg.Security.Tools[i].Enabled = true
+		}
+	}
+}
+
 type SecurityConfig struct {
 	Tools               []ToolConfig `yaml:"tools,omitempty"`                 // 向后兼容：支持在主配置文件中定义工具
 	ToolsDir            string       `yaml:"tools_dir,omitempty"`             // 工具配置文件目录（新方式）
@@ -1406,6 +1425,7 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Security.Tools = merged
 	}
+	EnableConfiguredCredentialTools(&cfg)
 
 	// 外部 MCP：迁移 + 环境变量展开
 	if cfg.ExternalMCP.Servers != nil {
@@ -1716,6 +1736,7 @@ func ReloadSecurityToolsFromDir(cfg *Config, configPath string) error {
 		return fmt.Errorf("从工具目录加载工具配置失败: %w", err)
 	}
 	cfg.Security.Tools = merged
+	EnableConfiguredCredentialTools(cfg)
 	return nil
 }
 

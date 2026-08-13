@@ -16,8 +16,8 @@ args:
     FOFA_API_KEY = ""  # 请填写您的FOFA API密钥
     # ==================================================
 
-    # FOFA API基础URL
-    base_url = "https://fofa.info/api/v1/search/all"
+    # FOFA API基础URL（系统设置通过环境变量注入，可覆盖默认地址）
+    base_url = os.getenv('FOFA_BASE_URL', '').strip() or "https://fofa.info/api/v1/search/all"
 
     # 解析参数（从JSON字符串或命令行参数）
     def parse_args():

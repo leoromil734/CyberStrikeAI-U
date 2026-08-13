@@ -31,6 +31,7 @@ func main() {
 
 	// 创建安全工具执行器
 	executor := security.NewExecutor(&cfg.Security, mcpServer, log.Logger)
+	executor.SetCredentialConfig(cfg)
 
 	// 注册工具
 	executor.RegisterTools(mcpServer)

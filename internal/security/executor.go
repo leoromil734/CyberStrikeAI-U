@@ -35,6 +35,7 @@ var ToolOutputCallbackCtxKey = toolOutputCallbackCtxKey{}
 // Executor 安全工具执行器
 type Executor struct {
 	config                  *config.SecurityConfig
+	credentialConfig        *config.Config
 	toolIndex               map[string]*config.ToolConfig // 工具索引，用于 O(1) 查找
 	mcpServer               *mcp.Server
 	logger                  *zap.Logger
@@ -54,6 +55,15 @@ func NewExecutor(cfg *config.SecurityConfig, mcpServer *mcp.Server, logger *zap.
 	// 构建工具索引
 	executor.buildToolIndex()
 	return executor
+}
+
+// SetCredentialConfig supplies server-side credentials for credential-backed
+// tools without exposing secrets in their schemas, arguments, or logs.
+func (e *Executor) SetCredentialConfig(cfg *config.Config) {
+	if e == nil {
+		return
+	}
+	e.credentialConfig = cfg
 }
 
 // SetShellNoOutputTimeoutSeconds 配置 exec 工具无输出空闲终止（与 agent.shell_no_output_timeout_seconds 一致）。
@@ -214,6 +224,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	// 执行命令
 	cmd := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 	applyDefaultTerminalEnv(cmd)
+	e.applyToolCredentialEnv(cmd, toolName)
 	e.attachToolStdin(cmd, toolConfig, args)
 	_ = prepareShellCmdSession(cmd)
 
@@ -235,6 +246,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			e.applyToolCredentialEnv(cmd2, toolName)
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, cb, e.toolOutputMaxBytes, spill)
@@ -248,6 +260,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			e.applyToolCredentialEnv(cmd2, toolName)
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, nil, e.toolOutputMaxBytes, spill)
@@ -1511,6 +1524,38 @@ chunksLoop:
 	// 等待命令结束，返回最终退出状态
 	waitErr := session.Wait()
 	return finalizeBoundedOutput(outBuilder, maxBytes, tee), waitErr
+}
+
+// applyToolCredentialEnv injects credentials only into the selected child process.
+// Environment variables already carrying a non-empty value take precedence over config.yaml.
+func (e *Executor) applyToolCredentialEnv(cmd *exec.Cmd, toolName string) {
+	if e == nil || cmd == nil || e.credentialConfig == nil {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "fofa_search":
+		setCommandEnvFallback(cmd, "FOFA_API_KEY", e.credentialConfig.FOFA.APIKey)
+		setCommandEnvFallback(cmd, "FOFA_BASE_URL", e.credentialConfig.FOFA.BaseURL)
+	}
+}
+
+func setCommandEnvFallback(cmd *exec.Cmd, key, fallback string) {
+	fallback = strings.TrimSpace(fallback)
+	if cmd == nil || key == "" || fallback == "" {
+		return
+	}
+	prefix := key + "="
+	for i, entry := range cmd.Env {
+		if !strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		if strings.TrimSpace(strings.TrimPrefix(entry, prefix)) != "" {
+			return
+		}
+		cmd.Env[i] = prefix + fallback
+		return
+	}
+	cmd.Env = append(cmd.Env, prefix+fallback)
 }
 
 // applyDefaultTerminalEnv 为外部工具补齐常见的终端环境变量。

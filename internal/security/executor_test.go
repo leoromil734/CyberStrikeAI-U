@@ -30,6 +30,91 @@ func setupTestExecutor(t *testing.T) (*Executor, *mcp.Server) {
 	return executor, mcpServer
 }
 
+func TestConfiguredFOFAToolIsRegistered(t *testing.T) {
+	logger := zap.NewNop()
+	server := mcp.NewServer(logger)
+	appConfig := &config.Config{
+		FOFA: config.FofaConfig{APIKey: "configured-key"},
+		Security: config.SecurityConfig{Tools: []config.ToolConfig{{
+			Name:        "fofa_search",
+			Command:     "python3",
+			Enabled:     false,
+			Description: "FOFA search",
+			Parameters: []config.ParameterConfig{{
+				Name:     "query",
+				Type:     "string",
+				Required: true,
+			}},
+		}}},
+	}
+	config.EnableConfiguredCredentialTools(appConfig)
+	executor := NewExecutor(&appConfig.Security, server, logger)
+	executor.SetCredentialConfig(appConfig)
+	executor.RegisterTools(server)
+
+	result, _, err := server.CallTool(context.Background(), "fofa_search", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("fofa_search was not registered: %v", err)
+	}
+	if result == nil || !result.IsError || !strings.Contains(result.Content[0].Text, "query") {
+		t.Fatalf("registered tool should validate the required query argument, got %+v", result)
+	}
+}
+
+func TestExecutorInjectsConfiguredFOFACredential(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	executor.SetCredentialConfig(&config.Config{
+		FOFA: config.FofaConfig{
+			APIKey:  "configured-key",
+			BaseURL: "https://fofa.example/api/search",
+		},
+	})
+	cmd := &exec.Cmd{Env: []string{"PATH=test", "FOFA_API_KEY="}}
+
+	executor.applyToolCredentialEnv(cmd, "fofa_search")
+
+	if got := commandEnvValue(cmd.Env, "FOFA_API_KEY"); got != "configured-key" {
+		t.Fatalf("FOFA_API_KEY = %q, want configured-key", got)
+	}
+	if got := commandEnvValue(cmd.Env, "FOFA_BASE_URL"); got != "https://fofa.example/api/search" {
+		t.Fatalf("FOFA_BASE_URL = %q, want configured base URL", got)
+	}
+}
+
+func TestExecutorKeepsFOFAEnvironmentCredentialPrecedence(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	executor.SetCredentialConfig(&config.Config{FOFA: config.FofaConfig{APIKey: "configured-key"}})
+	cmd := &exec.Cmd{Env: []string{"FOFA_API_KEY=environment-key"}}
+
+	executor.applyToolCredentialEnv(cmd, "fofa_search")
+
+	if got := commandEnvValue(cmd.Env, "FOFA_API_KEY"); got != "environment-key" {
+		t.Fatalf("FOFA_API_KEY = %q, want environment-key", got)
+	}
+}
+
+func TestExecutorDoesNotInjectFOFACredentialIntoOtherTools(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	executor.SetCredentialConfig(&config.Config{FOFA: config.FofaConfig{APIKey: "configured-key"}})
+	cmd := &exec.Cmd{Env: []string{"PATH=test"}}
+
+	executor.applyToolCredentialEnv(cmd, "nmap")
+
+	if got := commandEnvValue(cmd.Env, "FOFA_API_KEY"); got != "" {
+		t.Fatalf("FOFA_API_KEY unexpectedly injected into another tool: %q", got)
+	}
+}
+
+func commandEnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
 func TestExecutor_ExecuteInternalTool_UnknownTool(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
 

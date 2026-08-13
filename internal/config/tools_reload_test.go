@@ -7,6 +7,48 @@ import (
 	"testing"
 )
 
+func TestConfiguredFOFACredentialEnablesSearchTool(t *testing.T) {
+	t.Setenv("FOFA_API_KEY", "")
+	cfg := &Config{
+		FOFA: FofaConfig{APIKey: "configured-key"},
+		Security: SecurityConfig{Tools: []ToolConfig{
+			{Name: "fofa_search", Enabled: false},
+			{Name: "other", Enabled: false},
+		}},
+	}
+
+	EnableConfiguredCredentialTools(cfg)
+
+	if !cfg.Security.Tools[0].Enabled {
+		t.Fatal("fofa_search should be enabled when fofa.api_key is configured")
+	}
+	if cfg.Security.Tools[1].Enabled {
+		t.Fatal("unrelated tools must not be enabled")
+	}
+}
+
+func TestFOFAEnvironmentCredentialEnablesSearchTool(t *testing.T) {
+	t.Setenv("FOFA_API_KEY", "environment-key")
+	cfg := &Config{Security: SecurityConfig{Tools: []ToolConfig{{Name: "fofa_search"}}}}
+
+	EnableConfiguredCredentialTools(cfg)
+
+	if !cfg.Security.Tools[0].Enabled {
+		t.Fatal("fofa_search should be enabled when FOFA_API_KEY is configured")
+	}
+}
+
+func TestMissingFOFACredentialKeepsSearchToolDisabled(t *testing.T) {
+	t.Setenv("FOFA_API_KEY", "")
+	cfg := &Config{Security: SecurityConfig{Tools: []ToolConfig{{Name: "fofa_search"}}}}
+
+	EnableConfiguredCredentialTools(cfg)
+
+	if cfg.Security.Tools[0].Enabled {
+		t.Fatal("fofa_search should stay disabled without a credential")
+	}
+}
+
 func TestReloadSecurityToolsFromDir(t *testing.T) {
 	root := t.TempDir()
 	toolsDir := filepath.Join(root, "tools")
