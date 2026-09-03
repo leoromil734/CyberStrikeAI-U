@@ -5,7 +5,9 @@ description: >-
   批量赋值 / 影子 API / OpenAPI / Swagger / OWASP API Top10 / graphql-scanner /
   api-schema-analyzer / jwt-analyzer。用于接口库存、双身份授权差分、Token 校验、
   业务流与 SSRF；用户说「测 API」「接口越权」「JWT」「GraphQL」「对象级授权」
-  「BOLA」「BFLA」「Swagger」时加载。不是通用 Web 注入清单；缺少可达基线时不得宣称接口安全。
+  「BOLA」「BFLA」「Swagger」时加载。出现 SRC、漏洞赏金、挖集团/品牌、白帽或中文
+  SRC 报告上下文时优先 `src-hunting`，本 skill 主动让路；不是通用 Web 注入清单；
+  缺少可达基线时不得宣称接口安全。
 allowed-tools: httpx http-framework-test api-schema-analyzer graphql-scanner jwt-analyzer arjun x8 ffuf katana jsluice interactsh dnslog nuclei sqlmap exec record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags:

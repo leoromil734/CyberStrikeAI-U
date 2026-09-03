@@ -11,6 +11,7 @@ This directory contains **standalone MCP (Model Context Protocol) servers**. The
 | Server | Description |
 |--------|-------------|
 | [reverse_shell](reverse_shell/) | Reverse shell listener: start/stop listener, send commands to connected targets, full interactive workflow. |
+| [fofa_MCP](fofa_MCP/) | FOFA asset search with primary/backup/backup2 rotation on rate limits. |
 
 ## How to use
 

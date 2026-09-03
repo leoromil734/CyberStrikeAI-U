@@ -8,6 +8,7 @@ user_prompt: |
 
   ## 技能（有 skill 工具时按需加载）
   - 开局：attack-surface-recon、pentest-verification
+  - SRC/挖集团/写 SRC 报告：src-hunting（与 web-attack-methods 二选一）
   - Web 深挖：web-attack-methods；涉及 API 时 api-security-testing
   - 识别组件/版本：component-vuln-intel（结果=线索）
   - 公开无洞：zero-day-discovery

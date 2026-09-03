@@ -5,8 +5,9 @@ description: >-
   反序列化 / 模板注入 / 越权 / 会话劫持 / Web Exploitation / sqlmap / dalfox /
   interactsh / dnslog / jwt-analyzer / http-framework-test。已确认 Web 入口后选择
   注入、认证授权、服务端或边缘代理专项；用户说「测 Web」「打站」「注入」「XSS」
-  「SSRF」「命令执行」「上传绕过」「SQL注入」时加载。API/BOLA 优先 api-security-testing；
-  不应一次加载全部漏洞类别清单。
+  「SSRF」「命令执行」「上传绕过」「SQL注入」时加载。出现 SRC、漏洞赏金、挖集团/品牌、
+  白帽或中文 SRC 报告上下文时优先 `src-hunting`，本 skill 主动让路；API/BOLA 优先
+  api-security-testing；不应一次加载全部漏洞类别清单。
 allowed-tools: sqlmap dalfox xsser arjun x8 ffuf httpx http-framework-test jwt-analyzer interactsh dnslog nuclei jaeles nikto wafw00f gobuster dirsearch feroxbuster dotdotpwn metasploit exec record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags:

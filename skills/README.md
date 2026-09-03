@@ -51,6 +51,7 @@ Eino Skill 中间件只在配置启用时向模型披露索引；模型调用 `s
 - 任务起点不清楚：`pentest-agent-os` 只负责选择最小 Skill 集。
 - **信息收集 / OSINT / 子域 / FOFA 等（高触发）**：扫描模式 + `recon-osint-playbook`；需要覆盖账本/门禁时再加 `attack-surface-recon`。
 - 资产与入口测绘：扫描模式 + `attack-surface-recon`（含 `references/csskills-recon|scan`）。
+- **SRC / 挖集团 / 写中文 SRC 报告**：扫描模式 + `src-hunting` + `pentest-verification`；与 `web-attack-methods` 二选一，不要叠成两个领域。集成说明见 `SRC_HUNTING_INTEGRATION.md`。
 - Web 候选：`web-attack-methods`（含 `references/csskills-exploit`），再按入口读单个 reference。
 - API/BOLA/JWT/GraphQL：`api-security-testing`（含 `references/csskills-api`）。
 - 源码或构建配置可用：`source-aware-whitebox`。

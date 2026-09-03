@@ -12,7 +12,7 @@ user_prompt: |
   - 每条候选记录：入口、假设、正负证据、工具
   - 负结果必须落库，避免重复扫
   - Cloudflare/CDN：先对齐请求状态并排除 Cookie/JS/限流/IP；只有受控差分确认 TLS 指纹后，B 阶段才用 curl_cffi 复测；CDN 标记本身不是触发条件
-  - 技能：pentest-verification、component-vuln-intel、web-attack-methods、cdn-tls-fingerprint、attack-surface-recon
+  - 技能：已有 SRC、漏洞赏金或挖集团/品牌上下文时优先 src-hunting + pentest-verification，并按 `references/routing-index.md` 选专题；否则使用 pentest-verification、component-vuln-intel、web-attack-methods、cdn-tls-fingerprint、attack-surface-recon
 
   ## 覆盖建议
   Web 入口、常见 CVE 面、中间件指纹、危险方法/路径；云/容器目标再加 trivy/prowler/kube 工具（若目标匹配）。

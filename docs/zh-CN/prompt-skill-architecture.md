@@ -129,6 +129,7 @@ references        => 只有入口决策命中专题时读取一个相关文件
 | 快速连通性或 CI 冒烟 | `pentest-scan-quick` + `attack-surface-recon` + `pentest-verification` |
 | 源码或部署配置可用 | `pentest-scan-standard` + `source-aware-whitebox` + `pentest-verification` |
 | API/BOLA | `pentest-scan-standard` + `api-security-testing` + `pentest-verification` |
+| SRC / 挖集团 / 中文 SRC 报告 | `pentest-scan-standard` + `src-hunting` + `pentest-verification` |
 | 浏览器与 CLI 存在受控边缘差分 | `pentest-scan-standard` + `cdn-tls-fingerprint` + `pentest-verification` |
 
 用户明确指定深度时替换扫描模式，不叠加第二个扫描模式。多领域任务先按当前证据选择主攻击面，闭合或换路后再加载另一个领域 Skill，禁止一次加载宽泛全集。

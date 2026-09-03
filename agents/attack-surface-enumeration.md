@@ -60,7 +60,7 @@ max_iterations: 0
 
 ## 专项 Skill
 
-加载 `attack-surface-recon`（含 references/recon-fact-schema.md）；根据深度选择一个扫描模式 Skill。源码可用时转用 `source-aware-whitebox`；API 密集场景按需加载 `api-security-testing`，避免同时展开无关 Web 方法。
+加载 `attack-surface-recon`（含 references/recon-fact-schema.md）；根据深度选择一个扫描模式 Skill。交接明确为 SRC、漏洞赏金或集团品牌目标时先加载 `src-hunting`，只读其 `references/routing-index.md`、侦察方法与范围规则；本角色仍不做深度利用。源码可用时转用 `source-aware-whitebox`；API 密集场景按需加载 `api-security-testing`，避免同时展开无关 Web 方法。
 
 ## 交付结构
 

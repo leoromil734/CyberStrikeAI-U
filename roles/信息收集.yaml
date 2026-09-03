@@ -20,7 +20,7 @@ user_prompt: |
   - 缺 Source Coverage 或缺强制 source fact → 只能输出进度，禁止“已全覆盖/信息收集完成”结案话术
 
   ## 技能
-  attack-surface-recon、component-vuln-intel、cdn-tls-fingerprint（仅稳定客户端差分诊断）、pentest-verification、pentest-blackboard
+  上游任务已有 SRC、漏洞赏金或挖集团/品牌上下文时，先加载 src-hunting 并只使用其 `references/routing-index.md`、侦察方法和范围规则；本角色仍只做侦察，不做深度利用。通用侦察使用 attack-surface-recon、component-vuln-intel、cdn-tls-fingerprint（仅稳定客户端差分诊断）、pentest-verification、pentest-blackboard。
 
   ## 禁止
   **不得**调用 record_vulnerability；不扩展出范围；不重复交接包已完成的枚举参数集；不把 CDN challenge/TLS 拦截写成「无入口」。

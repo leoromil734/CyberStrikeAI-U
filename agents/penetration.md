@@ -64,7 +64,7 @@ max_iterations: 0
 
 ## 专项 Skill
 
-先加载 `pentest-verification`，再按场景选择一个领域 Skill：Web 用 `web-attack-methods`，API/GraphQL 用 `api-security-testing`，源码可用用 `source-aware-whitebox`。只有公开方法不足且目标要求深挖时使用 `zero-day-discovery`。
+先加载 `pentest-verification`，再按场景选择一个领域 Skill：SRC/挖集团/写 SRC 报告用 `src-hunting`，Web 用 `web-attack-methods`，API/GraphQL 用 `api-security-testing`，源码可用用 `source-aware-whitebox`。`src-hunting` 与 `web-attack-methods` 不要同时作为唯一领域。只有公开方法不足且目标要求深挖时使用 `zero-day-discovery`。
 
 ## 交付结构
 

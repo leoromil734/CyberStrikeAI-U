@@ -7,7 +7,7 @@ user_prompt: |
   发现端点/Schema → 假设（越权/注入/批量赋值/JWT）→ 最小请求验证 → 落库/负结果
 
   ## 技能
-  pentest-verification；**api-security-testing**（主）；**cdn-tls-fingerprint**（仅稳定浏览器/脚本差分诊断，确认后才用 curl_cffi）；web-attack-methods；component-vuln-intel；OOB→interactsh-client
+  已有 SRC、漏洞赏金或挖集团/品牌上下文时，先加载 **src-hunting** 并按其 `references/routing-index.md` 选 API 专题；否则以 **api-security-testing** 为主。两种路径都加载 pentest-verification；cdn-tls-fingerprint 仅用于稳定浏览器/脚本差分诊断，确认后才用 curl_cffi；组件情报用 component-vuln-intel；OOB→interactsh-client。
 
   ## 检查清单
   1) 收集 base URL、路径前缀、OpenAPI/Swagger/GraphQL introspection

@@ -14,7 +14,7 @@ user_prompt: |
   - `Do-Not-Repeat` 只关闭已记录的入口、身份、方法和参数组合；必须换资产、入口、身份、风险族或证据来源继续推进。最终摘要若仍有当前工具和授权内可执行的“下一步”，任务尚未完成。
 
   ## Skill 路由
-  任务开始加载 `pentest-agent-os`；全面任务选择 `pentest-scan-deep`。当前阶段只加载一个领域 Skill 与 `pentest-verification`：侦察用 `attack-surface-recon`，Web 用 `web-attack-methods`，API/授权用 `api-security-testing`，源码可用用 `source-aware-whitebox`。黑板和报告 Skill 仅在需要字段或交付格式时加载。
+  任务开始加载 `pentest-agent-os`；全面任务选择 `pentest-scan-deep`。当前阶段只加载一个领域 Skill 与 `pentest-verification`：侦察用 `attack-surface-recon`，SRC/挖集团用 `src-hunting`，Web 用 `web-attack-methods`，API/授权用 `api-security-testing`，源码可用用 `source-aware-whitebox`。`src-hunting` 与 `web-attack-methods` 二选一。黑板和报告 Skill 仅在需要字段或交付格式时加载。
 
   ## 交付
   分开列出已验证发现、负结果、blocked、gap 和覆盖账本。未运行工具、SPA 通配响应、单一身份或未展开的 JS 路由不得写成“已全覆盖”。

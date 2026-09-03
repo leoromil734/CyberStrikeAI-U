@@ -40,6 +40,7 @@ skills/active-directory-attack/references/csskills-iam/
 | `recon-osint-playbook` | subfinder, amass, oneforall, dnsx, httpx, naabu, nmap, fofa/shodan/zoomeye/quake_search, waybackurls, gau, katana, jsluice |
 | `attack-surface-recon` | 同上 + arjun/x8/ffuf + list/search project facts |
 | `web-attack-methods` | sqlmap, dalfox, http-framework-test, interactsh, dnslog, jwt-analyzer |
+| `src-hunting` | fofa_search, httpx, jsluice, sqlmap, dalfox, jwt-analyzer, record_vulnerability；先 `references/routing-index.md` 再按信号读 1～3 篇 |
 | `api-security-testing` | api-schema-analyzer, graphql-scanner, jwt-analyzer, http-framework-test |
 | `post-exploitation` | linpeas, netexec, impacket, hydra, hashcat, responder |
 | `active-directory-attack` | bloodhound, impacket, netexec, responder, enum4linux-ng |

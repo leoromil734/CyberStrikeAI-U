@@ -8,7 +8,9 @@ description: >-
   wayback / gau / katana。当用户或任务涉及「信息收集」「收集信息」「侦察」
   「recon」「osint」「找子域」「资产测绘」「打点」「扫端口前先摸底」「目标摸清」
   「全面侦察」「外网资产」「空间引擎」时必须优先 skill 加载本包。
-  提供可执行 MCP 工具顺序与多源交叉验证；覆盖账本/退出门禁叠加 attack-surface-recon。
+  已有 SRC、漏洞赏金、挖集团/品牌上下文时优先 `src-hunting`，再按其路由索引读取
+  侦察方法；本包只用于独立 OSINT 阶段。提供可执行 MCP 工具顺序与多源交叉验证；
+  覆盖账本/退出门禁叠加 attack-surface-recon。
 allowed-tools: subfinder amass oneforall dnsx dnsenum fierce httpx naabu nmap masscan rustscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice nuclei fscan exec upsert_project_fact
 metadata:
   tags:

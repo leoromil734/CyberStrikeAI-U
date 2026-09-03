@@ -3,6 +3,8 @@ name: source-aware-whitebox
 description: >-
   源码感知白盒安全流程。仅在源码、构建产物、路由或部署配置可用时使用，
   将入口、数据流、鉴权和依赖线索映射为目标侧动态 PoC；不把静态命中直接当漏洞。
+  用户明确说 SRC、漏洞赏金、挖洞、0day 或中文 SRC 报告时先加载 `src-hunting`，
+  需要纯源码到动态 PoC 的阶段再切换到本 skill。
 metadata:
   tags:
     - penetration-testing

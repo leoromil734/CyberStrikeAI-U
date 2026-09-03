@@ -7,7 +7,8 @@ description: >-
   退出门禁 / Deep 硬闸门。用于 Surface、摸底、打点前资产清单、阶段 ledger；
   用户说「信息收集」「收集信息」「侦察」「找资产」「扫子域」「全面侦察」
   「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
-  不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
+  已有 SRC、漏洞赏金、挖集团/品牌上下文时以 `src-hunting` 为领域入口，本 skill 仅在
+  独立侦察/覆盖账本阶段加载；不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
 allowed-tools: subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
 metadata:
   tags: [渗透测试, penetration-testing, recon, osint, information-gathering]

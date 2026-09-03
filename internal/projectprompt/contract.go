@@ -90,7 +90,7 @@ func ExecutionRecoverySection() string {
 func SkillsRoutingSection() string {
 	return `## Skill 路由
 
-按 name/description 选最小集合再加载正文/references。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
+按 name/description 选最小集合再加载正文/references。出现 SRC、漏洞赏金、白帽、挖集团/品牌/站点或中文 SRC 报告语境时，优先加载 'src-hunting'；同一 SRC 任务后续即使只出现越权、接口、注入、上传、WAF、JS 等单类词，也继续使用其 'references/routing-index.md'，不切去通用 Web/API Skill。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
 }
 
 func ComprehensiveAssessmentSection() string {

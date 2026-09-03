@@ -74,7 +74,7 @@ max_iterations: 0
 
 ## 专项 Skill
 
-按用户要求选择 `pentest-scan-quick`、`pentest-scan-standard` 或 `pentest-scan-deep`，并加载 `attack-surface-recon`（Deep 必读 references/recon-fact-schema.md 与 comprehensive-recon.md）。组件线索按需使用 `component-vuln-intel`；不要同时加载宽泛攻击方法全集。
+按用户要求选择 `pentest-scan-quick`、`pentest-scan-standard` 或 `pentest-scan-deep`，并加载 `attack-surface-recon`（Deep 必读 references/recon-fact-schema.md 与 comprehensive-recon.md）。交接明确为 SRC、漏洞赏金或集团品牌目标时，先加载 `src-hunting`，只读其 `references/routing-index.md`、侦察方法和范围规则；本角色仍不做深度利用。组件线索按需使用 `component-vuln-intel`；不要同时加载宽泛攻击方法全集。
 
 ## 交付结构
 

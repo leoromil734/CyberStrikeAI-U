@@ -108,6 +108,7 @@ func TestSkillDescriptionsDiscriminateRoutingScenarios(t *testing.T) {
 		{"source-aware-whitebox", []string{"源码", "动态 PoC", "不把静态命中直接当漏洞"}},
 		{"api-security-testing", []string{"API", "BOLA", "缺少可达基线"}},
 		{"web-attack-methods", []string{"Web", "API/BOLA", "不应"}},
+		{"src-hunting", []string{"SRC", "漏洞赏金", "挖某集团", "帮我测这个站", "JS 逆向找接口", "0day", "routing-index", "web-attack-methods"}},
 		{"cdn-tls-fingerprint", []string{"浏览器", "CDN", "不要触发"}},
 	}
 	for _, tt := range tests {
@@ -116,6 +117,23 @@ func TestSkillDescriptionsDiscriminateRoutingScenarios(t *testing.T) {
 			if !strings.Contains(manifest.Description, keyword) {
 				t.Errorf("%s description missing routing keyword %q", tt.name, keyword)
 			}
+		}
+	}
+}
+
+func TestCompetingSkillDescriptionsDeferExplicitSrcContext(t *testing.T) {
+	root := bundledSkillsRoot(t)
+	for _, name := range []string{
+		"web-attack-methods",
+		"api-security-testing",
+		"source-aware-whitebox",
+		"attack-surface-recon",
+		"recon-osint-playbook",
+		"pentest-output-standards",
+	} {
+		_, manifest, _ := readBundledSkill(t, root, name)
+		if !strings.Contains(manifest.Description, "src-hunting") {
+			t.Errorf("%s description must defer explicit SRC context to src-hunting", name)
 		}
 	}
 }
@@ -144,6 +162,7 @@ func TestSkillRouterDefinesDistinctMinimalScenarioSets(t *testing.T) {
 		"quick-baseline": {"pentest-scan-quick", "attack-surface-recon", "pentest-verification"},
 		"whitebox-code":  {"pentest-scan-standard", "source-aware-whitebox", "pentest-verification"},
 		"api-bola":       {"pentest-scan-standard", "api-security-testing", "pentest-verification"},
+		"src-hunt":       {"pentest-scan-standard", "src-hunting", "pentest-verification"},
 		"edge-cdn":       {"pentest-scan-standard", "cdn-tls-fingerprint", "pentest-verification"},
 	}
 	seenSets := make(map[string]string, len(want))
@@ -249,6 +268,7 @@ func TestProgressiveSkillEntryBudgets(t *testing.T) {
 		"attack-surface-recon",
 		"web-attack-methods",
 		"api-security-testing",
+		"src-hunting",
 		"pentest-verification",
 		"pentest-blackboard",
 	}
@@ -263,6 +283,35 @@ func TestProgressiveSkillEntryBudgets(t *testing.T) {
 	for _, expected := range []string{"一个扫描模式", "一个领域 Skill", "一个验证 Skill", "pentest-scan-standard"} {
 		if !strings.Contains(router, expected) {
 			t.Errorf("pentest-agent-os missing minimal routing rule %q", expected)
+		}
+	}
+}
+
+func TestSrcHuntingSkillWiresRulesAndKnowledge(t *testing.T) {
+	root := bundledSkillsRoot(t)
+	_, _, body := readBundledSkill(t, root, "src-hunting")
+	for _, required := range []string{
+		"references/routing-index.md",
+		"references/打穿短表.md",
+		"references/rules/dig-scope-workflow.md",
+		"references/rules/src-value-hunting.md",
+		"references/rules/vuln-report-format.md",
+		"fofa_search",
+		"CORS",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("src-hunting missing %q", required)
+		}
+	}
+	for _, rel := range []string{
+		filepath.Join("src-hunting", "references", "routing-index.md"),
+		filepath.Join("src-hunting", "references", "打穿短表.md"),
+		filepath.Join("src-hunting", "references", "idor-test.md"),
+		filepath.Join("src-hunting", "references", "rules", "vuln-report-format.md"),
+		filepath.Join("src-hunting", "references", "rules", "dig-scope-workflow.md"),
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("missing %s: %v", rel, err)
 		}
 	}
 }
