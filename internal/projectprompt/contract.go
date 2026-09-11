@@ -111,7 +111,7 @@ func ConciseBlackboardSection(coordinator, subAgent bool) string {
 	var b strings.Builder
 	b.WriteString(`## 项目黑板与漏洞记录
 
-绑定项目时只注入 fact_key 与 summary；细节用 get_project_fact，禁止凭摘要补造。确认资产/入口/服务/身份或负结果后立即 upsert_project_fact，同 key 覆盖。侦察：recon/source/{tool}/{target}（status/raw/unique/incremental/error/alt_tried）、recon/endpoint/*、recon/phase/*。可复现且跨越独立安全边界才 record_vulnerability（起始状态、单变量对照、证据、影响、修复），记前查重。事实存上下文，漏洞存正式 finding。`)
+绑定项目时只注入 fact_key 与 summary；细节用 get_project_fact，禁止凭摘要补造。确认资产/入口/服务/身份或负结果后立即 upsert_project_fact，同 key 覆盖。侦察：recon/source/{tool}/{target}（status/raw/unique/incremental/error/alt_tried）、recon/endpoint/*、recon/phase/*。可复现且跨越独立安全边界才 record_vulnerability（起始状态、单变量对照、完整POC脚本+输出、影响、修复），记前查重。受控写入禁止文件名/省略号，须贴完整SQL与回查。事实存上下文，漏洞存正式 finding。`)
 	if coordinator {
 		b.WriteString("\n\n委派结果中的新事实、负结果与漏洞由协调者校验并及时落库，不假定子代理已经记录。")
 	}

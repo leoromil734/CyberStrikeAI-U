@@ -211,6 +211,14 @@ func (db *DB) migrateRBACOwnershipColumns() error {
 	}
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_owner ON tool_executions(owner_user_id)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_conversation ON tool_executions(conversation_id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner_user_id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_webshell ON conversations(webshell_connection_id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at, id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_process_details_message_created ON process_details(message_id, created_at, id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_process_details_conversation_created ON process_details(conversation_id, created_at, id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_status_start_time ON tool_executions(status, start_time)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name_start_time ON tool_executions(tool_name, start_time)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_stats_total_calls ON tool_stats(total_calls, tool_name)`)
 	return nil
 }
 

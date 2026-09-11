@@ -291,45 +291,50 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// 获取工具列表（包含内部和外部工具）
-	// 首先从配置文件获取工具
-	configToolMap := make(map[string]bool)
-	tools := make([]ToolConfigInfo, 0, len(h.config.Security.Tools))
-
-	for _, tool := range h.config.Security.Tools {
-		configToolMap[tool.Name] = true
-		info := ToolConfigInfo{
-			Name:        tool.Name,
-			Description: h.pickToolDescription(tool.ShortDescription, tool.Description),
-			Enabled:     tool.Enabled,
-			IsExternal:  false,
-		}
-		tools = append(tools, info)
+	includeTools := false
+	switch strings.TrimSpace(strings.ToLower(c.Query("include_tools"))) {
+	case "1", "true", "yes":
+		includeTools = true
 	}
 
-	// 从MCP服务器获取所有已注册的工具（包括直接注册的工具，如知识检索工具）
-	if h.mcpServer != nil {
-		mcpTools := h.mcpServer.GetAllTools()
-		for _, mcpTool := range mcpTools {
-			if configToolMap[mcpTool.Name] {
-				continue
-			}
-			description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
-			tools = append(tools, ToolConfigInfo{
-				Name:        mcpTool.Name,
-				Description: description,
-				Enabled:     true,
+	tools := []ToolConfigInfo{}
+	if includeTools {
+		configToolMap := make(map[string]bool)
+		tools = make([]ToolConfigInfo, 0, len(h.config.Security.Tools))
+
+		for _, tool := range h.config.Security.Tools {
+			configToolMap[tool.Name] = true
+			info := ToolConfigInfo{
+				Name:        tool.Name,
+				Description: h.pickToolDescription(tool.ShortDescription, tool.Description),
+				Enabled:     tool.Enabled,
 				IsExternal:  false,
-			})
+			}
+			tools = append(tools, info)
 		}
-	}
 
-	// 获取外部MCP工具（走缓存，持锁期间通常不阻塞）
-	if h.externalMCPMgr != nil {
-		ctx := context.Background()
-		externalTools := h.getExternalMCPTools(ctx)
-		for _, toolInfo := range externalTools {
-			tools = append(tools, toolInfo)
+		if h.mcpServer != nil {
+			mcpTools := h.mcpServer.GetAllTools()
+			for _, mcpTool := range mcpTools {
+				if configToolMap[mcpTool.Name] {
+					continue
+				}
+				description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
+				tools = append(tools, ToolConfigInfo{
+					Name:        mcpTool.Name,
+					Description: description,
+					Enabled:     true,
+					IsExternal:  false,
+				})
+			}
+		}
+
+		if h.externalMCPMgr != nil {
+			ctx := context.Background()
+			externalTools := h.getExternalMCPTools(ctx)
+			for _, toolInfo := range externalTools {
+				tools = append(tools, toolInfo)
+			}
 		}
 	}
 

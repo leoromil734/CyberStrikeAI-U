@@ -990,7 +990,7 @@ func (db *DB) UpdateAssistantMessageFinalize(messageID, content string, mcpExecu
 // GetMessages 获取对话的所有消息
 func (db *DB) GetMessages(conversationID string) ([]Message, error) {
 	rows, err := db.Query(
-		"SELECT id, conversation_id, role, content, reasoning_content, mcp_execution_ids, created_at, updated_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
+		"SELECT id, conversation_id, role, content, reasoning_content, mcp_execution_ids, created_at, updated_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
 		conversationID,
 	)
 	if err != nil {
@@ -1053,7 +1053,7 @@ func (db *DB) GetMessages(conversationID string) ([]Message, error) {
 // GetMessagesLite 获取对话消息（不含 reasoning_content），用于历史会话快速切换。
 func (db *DB) GetMessagesLite(conversationID string) ([]Message, error) {
 	rows, err := db.Query(
-		"SELECT id, conversation_id, role, content, mcp_execution_ids, created_at, updated_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
+		"SELECT id, conversation_id, role, content, mcp_execution_ids, created_at, updated_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
 		conversationID,
 	)
 	if err != nil {
@@ -1225,7 +1225,7 @@ func (db *DB) GetTurnUserMessage(conversationID, anchorMessageID string) (string
 SELECT m.content FROM messages m
 WHERE m.conversation_id = ? AND m.role = 'user'
   AND m.created_at <= COALESCE((SELECT created_at FROM messages WHERE id = ? AND conversation_id = ?), m.created_at)
-ORDER BY m.created_at DESC, m.rowid DESC
+ORDER BY m.created_at DESC, m.id DESC
 LIMIT 1`, conversationID, anchorMessageID, conversationID).Scan(&content)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1252,7 +1252,7 @@ func (db *DB) GetAssistantCognitionTexts(assistantMessageID string) (AssistantCo
 	rows, err := db.Query(`
 SELECT event_type, message FROM process_details
 WHERE message_id = ? AND event_type IN ('thinking', 'reasoning_chain', 'planning')
-ORDER BY created_at ASC, rowid ASC`, assistantMessageID)
+ORDER BY created_at ASC, id ASC`, assistantMessageID)
 	if err != nil {
 		return AssistantCognitionTexts{}, fmt.Errorf("query assistant cognition: %w", err)
 	}
@@ -1318,7 +1318,7 @@ func (db *DB) AddProcessDetailWithID(messageID, conversationID, eventType, messa
 // GetProcessDetails 获取消息的过程详情
 func (db *DB) GetProcessDetails(messageID string) ([]ProcessDetail, error) {
 	rows, err := db.Query(
-		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE message_id = ? ORDER BY created_at ASC, rowid ASC",
+		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE message_id = ? ORDER BY created_at ASC, id ASC",
 		messageID,
 	)
 	if err != nil {
@@ -1415,7 +1415,7 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 	}
 
 	execRows, err := db.Query(
-		"SELECT id, event_type, data FROM process_details WHERE message_id = ? AND event_type IN ('tool_call', 'tool_result') ORDER BY created_at ASC, rowid ASC",
+		"SELECT id, event_type, data FROM process_details WHERE message_id = ? AND event_type IN ('tool_call', 'tool_result') ORDER BY created_at ASC, id ASC",
 		messageID,
 	)
 	if err != nil {
@@ -1546,7 +1546,7 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 	execRows.Close()
 
 	rows, err := db.Query(
-		"SELECT data FROM process_details WHERE message_id = ? AND event_type = 'iteration' ORDER BY created_at ASC, rowid ASC",
+		"SELECT data FROM process_details WHERE message_id = ? AND event_type = 'iteration' ORDER BY created_at ASC, id ASC",
 		messageID,
 	)
 	if err != nil {
@@ -1656,7 +1656,7 @@ func (db *DB) GetProcessDetailOffset(messageID, detailID string) (int, error) {
 // GetProcessDetailsByConversation 获取对话的所有过程详情（按消息分组）
 func (db *DB) GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error) {
 	rows, err := db.Query(
-		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
+		"SELECT id, message_id, conversation_id, event_type, message, data, created_at FROM process_details WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
 		conversationID,
 	)
 	if err != nil {

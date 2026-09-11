@@ -103,7 +103,7 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 
 func TestSharedContractStaticBudget(t *testing.T) {
 	prompt := ComposeSystemPrompt("", PromptModeSingle)
-	if got := utf8.RuneCountInString(prompt); got > 3200 {
+	if got := utf8.RuneCountInString(prompt); got > 3450 {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
 	scope := ScopeAuthorizationSection()
@@ -114,6 +114,18 @@ func TestSharedContractStaticBudget(t *testing.T) {
 	}
 	if strings.Contains(scope, "非破坏、可逆、最小影响的验证") {
 		t.Fatal("scope must not reintroduce non-destructive-only primary policy")
+	}
+}
+
+func TestConciseBlackboardRequiresRunnablePOC(t *testing.T) {
+	section := ConciseBlackboardSection(false, false)
+	for _, required := range []string{
+		"完整POC脚本+输出",
+		"受控写入禁止文件名/省略号",
+	} {
+		if !strings.Contains(section, required) {
+			t.Errorf("blackboard contract missing %q", required)
+		}
 	}
 }
 

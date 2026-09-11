@@ -296,6 +296,7 @@ func (h *SkillsHandler) PutSkillPackageFile(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	skillpackage.InvalidateSkillSummaryCache()
 	c.JSON(http.StatusOK, gin.H{"message": "saved", "path": req.Path})
 }
 
@@ -372,6 +373,7 @@ func (h *SkillsHandler) CreateSkill(c *gin.Context) {
 	}
 
 	h.logger.Info("创建skill成功", zap.String("skill", req.Name))
+	skillpackage.InvalidateSkillSummaryCache()
 	if h.audit != nil {
 		h.audit.RecordOK(c, "skill", "create", "创建 Skill", "skill", req.Name, nil)
 	}
@@ -435,6 +437,7 @@ func (h *SkillsHandler) UpdateSkill(c *gin.Context) {
 	}
 
 	h.logger.Info("更新skill成功", zap.String("skill", skillName))
+	skillpackage.InvalidateSkillSummaryCache()
 	if h.audit != nil {
 		h.audit.RecordOK(c, "skill", "update", "更新 Skill", "skill", skillName, nil)
 	}
@@ -472,6 +475,7 @@ func (h *SkillsHandler) DeleteSkill(c *gin.Context) {
 	}
 
 	h.logger.Info("删除skill成功", zap.String("skill", skillName))
+	skillpackage.InvalidateSkillSummaryCache()
 	if h.audit != nil {
 		h.audit.RecordOK(c, "skill", "delete", "删除 Skill", "skill", skillName, map[string]interface{}{
 			"affected_roles": affectedRoles,

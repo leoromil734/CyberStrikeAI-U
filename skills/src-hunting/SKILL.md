@@ -36,7 +36,7 @@ metadata:
 - 越权：先读/列表差分；写越权先添加再删自己刚加的，不改删别人已有对象；禁批量、禁真资损。
 - 禁止调用登出/注销/吊销令牌。
 - CORS **不挖**，勿开 `references/cors-test.md`。
-- 可复现且跨独立安全边界才 `record_vulnerability`；扫描/nuclei 仅 tentative。
+- 可复现且跨独立安全边界才 `record_vulnerability`（evidence 须含完整可运行 POC 脚本+实际输出；受控写入禁止只写文件名或省略 SQL）；扫描/nuclei 仅 tentative。
 
 ## 范围节奏
 

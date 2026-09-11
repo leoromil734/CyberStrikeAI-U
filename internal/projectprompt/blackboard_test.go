@@ -18,6 +18,9 @@ func TestBlackboardPromptsIncludeIndependentBoundaryPolicy(t *testing.T) {
 				"已失陷凭据不是免费前提",
 				"MFA seed",
 				"不得用“如果先拿到 token/cookie”补齐影响",
+				"POC 脚本优先",
+				"禁止省略关键写入",
+				"r3_insert_redhouse_out.txt",
 			} {
 				if !strings.Contains(prompt, expected) {
 					t.Fatalf("prompt missing %q", expected)

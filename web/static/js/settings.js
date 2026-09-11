@@ -723,7 +723,7 @@ window.onclick = function(event) {
 async function loadConfig(loadTools = true, options = {}) {
     const silent = options && options.silent === true;
     try {
-        const response = await apiFetch('/api/config');
+        const response = await apiFetch('/api/config?include_tools=1');
         if (!response.ok) {
             if (typeof readApiError === 'function') {
                 throw new Error(await readApiError(response, '获取配置失败'));
@@ -3671,7 +3671,7 @@ async function saveToolsConfig() {
         saveCurrentPageToolStates();
         
         // 获取当前配置（只获取工具部分）
-        const response = await apiFetch('/api/config');
+        const response = await apiFetch('/api/config?include_tools=1');
         if (!response.ok) {
             throw new Error('获取配置失败');
         }

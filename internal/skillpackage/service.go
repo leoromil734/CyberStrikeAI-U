@@ -5,10 +5,58 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
+
+type skillSummaryCacheEntry struct {
+	summaries []SkillSummary
+	expiresAt time.Time
+}
+
+const skillSummaryCacheTTL = 30 * time.Second
+
+var (
+	skillSummaryCacheMu sync.Mutex
+	skillSummaryCache   = map[string]skillSummaryCacheEntry{}
+)
+
+// InvalidateSkillSummaryCache drops cached admin skill listings.
+func InvalidateSkillSummaryCache() {
+	skillSummaryCacheMu.Lock()
+	defer skillSummaryCacheMu.Unlock()
+	skillSummaryCache = map[string]skillSummaryCacheEntry{}
+}
+
+func cloneSkillSummaries(in []SkillSummary) []SkillSummary {
+	out := make([]SkillSummary, len(in))
+	copy(out, in)
+	for i := range out {
+		if len(out[i].Tags) > 0 {
+			tags := make([]string, len(out[i].Tags))
+			copy(tags, out[i].Tags)
+			out[i].Tags = tags
+		}
+		if len(out[i].Triggers) > 0 {
+			tr := make([]string, len(out[i].Triggers))
+			copy(tr, out[i].Triggers)
+			out[i].Triggers = tr
+		}
+	}
+	return out
+}
 
 // ListSkillSummaries scans skillsRoot and returns index rows for the admin API.
 func ListSkillSummaries(skillsRoot string) ([]SkillSummary, error) {
+	now := time.Now()
+	skillSummaryCacheMu.Lock()
+	if entry, ok := skillSummaryCache[skillsRoot]; ok && now.Before(entry.expiresAt) {
+		cloned := cloneSkillSummaries(entry.summaries)
+		skillSummaryCacheMu.Unlock()
+		return cloned, nil
+	}
+	skillSummaryCacheMu.Unlock()
+
 	names, err := ListSkillDirNames(skillsRoot)
 	if err != nil {
 		return nil, err
@@ -22,6 +70,13 @@ func ListSkillSummaries(skillsRoot string) ([]SkillSummary, error) {
 		}
 		out = append(out, su)
 	}
+
+	skillSummaryCacheMu.Lock()
+	skillSummaryCache[skillsRoot] = skillSummaryCacheEntry{
+		summaries: cloneSkillSummaries(out),
+		expiresAt: now.Add(skillSummaryCacheTTL),
+	}
+	skillSummaryCacheMu.Unlock()
 	return out, nil
 }
 

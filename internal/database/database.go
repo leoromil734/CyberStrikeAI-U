@@ -691,6 +691,12 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name ON tool_executions(tool_name);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_start_time ON tool_executions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status);
+	CREATE INDEX IF NOT EXISTS idx_tool_executions_status_start_time ON tool_executions(status, start_time);
+	CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name_start_time ON tool_executions(tool_name, start_time);
+	CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at, id);
+	CREATE INDEX IF NOT EXISTS idx_process_details_message_created ON process_details(message_id, created_at, id);
+	CREATE INDEX IF NOT EXISTS idx_process_details_conversation_created ON process_details(conversation_id, created_at, id);
+	CREATE INDEX IF NOT EXISTS idx_tool_stats_total_calls ON tool_stats(total_calls, tool_name);
 	CREATE INDEX IF NOT EXISTS idx_chain_nodes_conversation ON attack_chain_nodes(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_conversation ON attack_chain_edges(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_source ON attack_chain_edges(source_node_id);

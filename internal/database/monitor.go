@@ -290,6 +290,7 @@ type ToolStatsSummaryResult struct {
 
 // LoadToolStatsSummary 聚合统计信息，仅返回汇总与 Top N 工具（避免全量 map 传输）。
 // 监控页的失败口径只包含真实失败/异常终止；用户主动取消的 cancelled 保留在总调用中，不计入失败。
+// 全局范围走 tool_stats 增量汇总，避免每次对 tool_executions 做全表扫描。
 func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 	if topN <= 0 {
 		topN = 6
@@ -303,12 +304,12 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 	}
 
 	summaryQuery := `
-		SELECT COUNT(*),
-			COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END), 0),
-			MAX(start_time),
-			COUNT(DISTINCT tool_name)
-		FROM tool_executions
+		SELECT COALESCE(SUM(total_calls), 0),
+			COALESCE(SUM(success_calls), 0),
+			COALESCE(SUM(failed_calls), 0),
+			MAX(last_call_time),
+			COUNT(*)
+		FROM tool_stats
 	`
 	var lastCallRaw sql.NullString
 	err := db.QueryRow(summaryQuery).Scan(
@@ -322,23 +323,13 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 		return nil, err
 	}
 	if lastCallRaw.Valid && strings.TrimSpace(lastCallRaw.String) != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, lastCallRaw.String); parseErr == nil {
-			result.Summary.LastCallTime = &t
-		} else if t, parseErr := time.Parse("2006-01-02 15:04:05.999999999-07:00", lastCallRaw.String); parseErr == nil {
-			result.Summary.LastCallTime = &t
-		} else if t, parseErr := time.Parse("2006-01-02 15:04:05", lastCallRaw.String); parseErr == nil {
-			result.Summary.LastCallTime = &t
-		}
+		parsed := parseDBTime(lastCallRaw.String)
+		result.Summary.LastCallTime = &parsed
 	}
 
 	topQuery := `
-		SELECT tool_name,
-			COUNT(*) AS total_calls,
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS success_calls,
-			SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END) AS failed_calls,
-			MAX(start_time) AS last_call_time
-		FROM tool_executions
-		GROUP BY tool_name
+		SELECT tool_name, total_calls, success_calls, failed_calls, last_call_time
+		FROM tool_stats
 		ORDER BY total_calls DESC, tool_name ASC
 		LIMIT ?
 	`

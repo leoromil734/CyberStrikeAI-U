@@ -3406,7 +3406,7 @@
     "reproductionSteps": "Reproduction steps",
     "reproductionStepsPlaceholder": "Number the steps and include entry point, parameter, payload, command, and observation point.",
     "evidence": "Evidence / POC",
-    "evidencePlaceholder": "Raw request/response, curl/tool command, screenshot notes, logs, DNSLog/callback records, database results, file paths, timestamps, etc.",
+    "evidencePlaceholder": "Complete runnable POC script (Python/curl) plus this run's output; raw HTTP; for controlled writes paste the full INSERT/UPDATE, inserted_rows, and follow-up SELECT — do not cite a filename or truncate with ....",
     "impact": "Impact",
     "impactPlaceholder": "Describe the verified real-world impact, such as which data can be read or changed.",
     "recommendation": "Recommendation",

@@ -94,6 +94,9 @@ func TestLoadToolStatsSummaryDoesNotCountCancelledAsFailed(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now()
+	if err := db.UpdateToolStats("exec", 3, 1, 1, &now); err != nil {
+		t.Fatalf("UpdateToolStats: %v", err)
+	}
 	for i, status := range []string{"completed", "cancelled", "failed"} {
 		exec := &mcp.ToolExecution{
 			ID:        fmt.Sprintf("exec-%d", i),

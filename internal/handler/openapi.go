@@ -592,7 +592,7 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 						},
 						"preconditions":      map[string]interface{}{"type": "string", "description": "前置条件"},
 						"reproduction_steps": map[string]interface{}{"type": "string", "description": "复现步骤"},
-						"evidence":           map[string]interface{}{"type": "string", "description": "证据/POC，包含请求响应、命令输出、截图说明、日志等"},
+						"evidence":           map[string]interface{}{"type": "string", "description": "证据/POC：完整可运行脚本（Python/curl）+实际输出；HTTP 原文；受控写入须含完整 SQL 与回查，禁止只写文件名或省略号"},
 						"impact": map[string]interface{}{
 							"type":        "string",
 							"description": "影响",
@@ -635,7 +635,7 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 						},
 						"preconditions":      map[string]interface{}{"type": "string", "description": "前置条件"},
 						"reproduction_steps": map[string]interface{}{"type": "string", "description": "复现步骤"},
-						"evidence":           map[string]interface{}{"type": "string", "description": "证据/POC，包含请求响应、命令输出、截图说明、日志等"},
+						"evidence":           map[string]interface{}{"type": "string", "description": "证据/POC：完整可运行脚本（Python/curl）+实际输出；HTTP 原文；受控写入须含完整 SQL 与回查，禁止只写文件名或省略号"},
 						"impact": map[string]interface{}{
 							"type":        "string",
 							"description": "影响",

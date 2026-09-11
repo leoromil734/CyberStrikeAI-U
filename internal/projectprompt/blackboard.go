@@ -62,7 +62,9 @@ func vulnerabilityIndependencePolicy() string {
 - **已失陷凭据不是免费前提**：若攻击链预设已拿到有效 Cookie、Session、JWT、密码、API Key 或管理员凭据，则使用该身份正常权限内的接口/数据只是既有会话能力，不得再报告为“认证绕过、MFA 绕过、账号接管”或独立漏洞。
 - 典型反例：先假设已取得用户有效 session，再读取**该用户自己的** MFA seed、资料或正常业务数据；这最多是纵深防御/需重新认证的加固建议，不能证明独立漏洞。应改记 tentative/info fact 或负结果，不进入正式漏洞列表。
 - **可报告的例外**：同一请求在匿名/低权限/其他主体基线下仍成功；访问其他用户/角色/租户数据；服务端忽略 scope/audience/撤销状态；或前置漏洞本身已被独立证明。此时只报告实际跨越边界的根因，避免把根因后的正常接口逐个重复计洞。
-- 证据必须包含：攻击者起始状态、是否依赖已失陷凭据、被跨越的边界、仅改变一个变量的对照请求，以及新增权限/影响。无法回答时只能保留为候选，不得用“如果先拿到 token/cookie”补齐影响。`
+- 证据必须包含：攻击者起始状态、是否依赖已失陷凭据、被跨越的边界、仅改变一个变量的对照请求，以及新增权限/影响。无法回答时只能保留为候选，不得用“如果先拿到 token/cookie”补齐影响。
+- **POC 脚本优先**：能用脚本复现时，evidence 必须给出完整可运行脚本（优先 Python；HTTP 可用完整 curl），含目标、入口、参数、payload 和认证头，禁止用 ... 省略关键语句。脚本后必须紧贴本次实际执行输出原文。
+- **禁止省略关键写入**：受控写入（如 r3_insert_redhouse_out.txt）不得只写文件名。必须粘贴完整 INSERT/UPDATE（列名和 VALUES 写全）、inserted_rows/new_id，以及回查结果（如 user_login、capabilities）。禁止 INSERT INTO t(...) VALUES('x',...);`
 }
 
 func factRecordingGuidanceBlock() string {
@@ -110,7 +112,7 @@ func FactRecordingBlackboardSection(coordinatorDelegate bool) string {
 	b.WriteString(factEdgeRecordingGuidance())
 	b.WriteString("\n\n")
 	b.WriteString(factRecordingGuidanceBlock())
-	b.WriteString("\n\n严重程度：critical / high / medium / low / info。证明须含足够证据（请求响应、截图、命令输出等）。")
+	b.WriteString("\n\n严重程度：critical / high / medium / low / info。证据/POC 能脚本化时必须给出完整可运行脚本（Python 或 curl）并贴实际输出；受控写入禁止只写文件名或 INSERT (...) / VALUES('x',...)，须含完整 SQL、inserted_rows/new_id 和回查行。")
 	return b.String()
 }
 
@@ -136,7 +138,7 @@ func FactRecordingBlackboardSectionMarkdown(coordinatorDelegate bool) string {
 	b.WriteString(factEdgeRecordingGuidance())
 	b.WriteString("\n\n")
 	b.WriteString(factRecordingGuidanceBlock())
-	b.WriteString("\n\n严重程度：critical / high / medium / low / info。证明须含足够证据（请求响应、截图、命令输出等）。")
+	b.WriteString("\n\n严重程度：critical / high / medium / low / info。证据/POC 能脚本化时必须给出完整可运行脚本（Python 或 curl）并贴实际输出；受控写入禁止只写文件名或 INSERT (...) / VALUES('x',...)，须含完整 SQL、inserted_rows/new_id 和回查行。")
 	return b.String()
 }
 
