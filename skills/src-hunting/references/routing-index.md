@@ -24,7 +24,7 @@
 | 新站开场、常见业务形态、经验命中 | `打穿短表.md` |
 | FOFA、子域、证书、端口、目录、历史 URL、Swagger、Actuator、中间件 | `recon-methodology.md`；泄露面再读 `info-leak-test.md` |
 | JS、chunk、source map、Webpack/Vite、隐藏路由、baseURL、加密/签名、盐、硬编码 token、演示号 | `js-reverse-guide.md` + `info-leak-test.md` |
-| 用户体系、登录、注册、验证码、找回、重置密码、改绑、换票、MFA、SSO | `authbypass-test.md`；出现对象 ID/角色再读 `idor-test.md` |
+| 用户体系、登录、注册、验证码、找回、重置密码、改绑、换票、MFA、SSO、撞库、手机号登录 | `authbypass-test.md` + `credential-stuffing.md`；出现对象 ID/角色再读 `idor-test.md` |
 | userId/orderId/tenantId/projectId/fileId、他人对象、角色接口、管理接口、BOLA/BFLA、水平/垂直越权 | `idor-test.md` |
 | 搜索、筛选、排序、分页、query/filter/where/order、SQL/NoSQL/LDAP/XPath/SSTI/表达式/命令参数 | `injection-test.md` |
 | URL、callback、webhook、fetch、proxy、preview、import、头像抓取、PDF/截图、云元数据 | `ssrf-test.md` |

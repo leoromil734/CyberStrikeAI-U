@@ -21,7 +21,7 @@ user_prompt: |
   2) httpx 指纹（含 cdn）+ katana/gau/waybackurls 扩入口 + ffuf/dirsearch 补路径
   3) CDN 只标注；标准客户端持续停在边缘且同条件浏览器到业务层时，先排除 Cookie/JS/限流/IP，再做 curl_cffi 单请求诊断；确认后才替换受影响接口请求
   4) nuclei 限域线索（非结案）；arjun/paramspider 补参数
-  5) 按入口验证：SQLi→sqlmap；XSS→dalfox；SSRF/盲洞→interactsh-client+手测；越权/上传→手测+脚本（默认标准客户端，确认 TLS 指纹后才用 curl_cffi）
+  5) 按入口验证高影响问题：SQLi→sqlmap；能打到他人会话的 XSS→dalfox；SSRF/盲洞→interactsh-client+手测；越权出手机号/证件/正文、上传能读敏感文件或执行→手测。打不到他人会话的 XSS、只有标题摘要的越权、无密钥敏感路径、无危害上传不测
   6) 正证据→record_vulnerability；负证据→负结果 fact；禁止空转同一参数集 3 次
 
   ## 成功标准

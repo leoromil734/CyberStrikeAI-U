@@ -24,6 +24,7 @@ type BatchTaskQueueRow struct {
 	LastRunError          sql.NullString
 	ProjectID             sql.NullString
 	Concurrency           sql.NullInt64
+	ModelRetryMax         sql.NullInt64
 	Status                string
 	CreatedAt             time.Time
 	StartedAt             sql.NullTime
@@ -42,6 +43,8 @@ type BatchTaskRow struct {
 	CompletedAt    sql.NullTime
 	Error          sql.NullString
 	Result         sql.NullString
+	AIChannelID    sql.NullString
+	RetryCount     sql.NullInt64
 }
 
 // CreateBatchQueue 创建批量任务队列
@@ -55,6 +58,7 @@ func (db *DB) CreateBatchQueue(
 	nextRunAt *time.Time,
 	projectID string,
 	concurrency int,
+	modelRetryMax int,
 	tasks []map[string]interface{},
 ) error {
 	tx, err := db.Begin()
@@ -74,8 +78,8 @@ func (db *DB) CreateBatchQueue(
 		projectIDVal = strings.TrimSpace(projectID)
 	}
 	_, err = tx.Exec(
-		"INSERT INTO batch_task_queues (id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, project_id, concurrency, status, created_at, current_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		queueID, title, role, agentMode, scheduleMode, cronExpr, nextRunAtValue, 1, projectIDVal, concurrency, "pending", now, 0,
+		"INSERT INTO batch_task_queues (id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, project_id, concurrency, model_retry_max, status, created_at, current_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		queueID, title, role, agentMode, scheduleMode, cronExpr, nextRunAtValue, 1, projectIDVal, concurrency, modelRetryMax, "pending", now, 0,
 	)
 	if err != nil {
 		return fmt.Errorf("创建批量任务队列失败: %w", err)
@@ -92,9 +96,10 @@ func (db *DB) CreateBatchQueue(
 			continue
 		}
 
+		aiChannelID, _ := task["aiChannelId"].(string)
 		_, err = tx.Exec(
-			"INSERT INTO batch_tasks (id, queue_id, message, status) VALUES (?, ?, ?, ?)",
-			taskID, queueID, message, "pending",
+			"INSERT INTO batch_tasks (id, queue_id, message, ai_channel_id, retry_count, status) VALUES (?, ?, ?, ?, ?, ?)",
+			taskID, queueID, message, strings.TrimSpace(aiChannelID), 0, "pending",
 		)
 		if err != nil {
 			return fmt.Errorf("创建批量任务失败: %w", err)
@@ -104,7 +109,7 @@ func (db *DB) CreateBatchQueue(
 	return tx.Commit()
 }
 
-const batchQueueSelectColumns = `id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, last_schedule_trigger_at, last_schedule_error, last_run_error, project_id, concurrency, status, created_at, started_at, completed_at, current_index`
+const batchQueueSelectColumns = `id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, last_schedule_trigger_at, last_schedule_error, last_run_error, project_id, concurrency, model_retry_max, status, created_at, started_at, completed_at, current_index`
 
 // GetBatchQueue 获取批量任务队列
 func (db *DB) GetBatchQueue(queueID string) (*BatchTaskQueueRow, error) {
@@ -113,7 +118,7 @@ func (db *DB) GetBatchQueue(queueID string) (*BatchTaskQueueRow, error) {
 	err := db.QueryRow(
 		"SELECT "+batchQueueSelectColumns+" FROM batch_task_queues WHERE id = ?",
 		queueID,
-	).Scan(&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.Status, &createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex)
+	).Scan(batchQueueScanDest(&row, &createdAt)...)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -148,7 +153,7 @@ func (db *DB) GetAllBatchQueues() ([]*BatchTaskQueueRow, error) {
 	for rows.Next() {
 		var row BatchTaskQueueRow
 		var createdAt string
-		if err := rows.Scan(&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.Status, &createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex); err != nil {
+		if err := rows.Scan(batchQueueScanDest(&row, &createdAt)...); err != nil {
 			return nil, fmt.Errorf("扫描批量任务队列失败: %w", err)
 		}
 		parsedTime, parseErr := time.Parse("2006-01-02 15:04:05", createdAt)
@@ -220,7 +225,7 @@ func (db *DB) ListBatchQueuesForAccess(limit, offset int, status, keyword, userI
 	for rows.Next() {
 		var row BatchTaskQueueRow
 		var createdAt string
-		if err := rows.Scan(&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.Status, &createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex); err != nil {
+		if err := rows.Scan(batchQueueScanDest(&row, &createdAt)...); err != nil {
 			return nil, fmt.Errorf("扫描批量任务队列失败: %w", err)
 		}
 		parsedTime, parseErr := time.Parse("2006-01-02 15:04:05", createdAt)
@@ -288,10 +293,16 @@ func (db *DB) CountBatchQueuesForAccess(status, keyword, userID, scope string) (
 	return count, nil
 }
 
+func batchQueueScanDest(row *BatchTaskQueueRow, createdAt *string) []interface{} {
+	return []interface{}{
+		&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.ModelRetryMax, &row.Status, createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex,
+	}
+}
+
 // GetBatchTasks 获取批量任务队列的所有任务
 func (db *DB) GetBatchTasks(queueID string) ([]*BatchTaskRow, error) {
 	rows, err := db.Query(
-		"SELECT id, queue_id, message, conversation_id, status, started_at, completed_at, error, result FROM batch_tasks WHERE queue_id = ? ORDER BY rowid ASC",
+		"SELECT id, queue_id, message, conversation_id, status, started_at, completed_at, error, result, ai_channel_id, retry_count FROM batch_tasks WHERE queue_id = ? ORDER BY rowid ASC",
 		queueID,
 	)
 	if err != nil {
@@ -305,6 +316,7 @@ func (db *DB) GetBatchTasks(queueID string) ([]*BatchTaskRow, error) {
 		if err := rows.Scan(
 			&task.ID, &task.QueueID, &task.Message, &task.ConversationID,
 			&task.Status, &task.StartedAt, &task.CompletedAt, &task.Error, &task.Result,
+			&task.AIChannelID, &task.RetryCount,
 		); err != nil {
 			return nil, fmt.Errorf("扫描批量任务失败: %w", err)
 		}
@@ -364,7 +376,9 @@ func (db *DB) UpdateBatchTaskStatus(queueID, taskID, status string, conversation
 		args = append(args, result)
 	}
 
-	if errorMsg != "" {
+	if status == "completed" {
+		updates = append(updates, "error = NULL")
+	} else if errorMsg != "" {
 		updates = append(updates, "error = ?")
 		args = append(args, errorMsg)
 	}
@@ -513,7 +527,7 @@ func (db *DB) ResetBatchQueueForRerun(queueID string) error {
 	}
 
 	_, err = tx.Exec(
-		"UPDATE batch_tasks SET status = ?, conversation_id = NULL, started_at = NULL, completed_at = NULL, error = NULL, result = NULL WHERE queue_id = ?",
+		"UPDATE batch_tasks SET status = ?, conversation_id = NULL, started_at = NULL, completed_at = NULL, error = NULL, result = NULL, retry_count = 0 WHERE queue_id = ?",
 		"pending", queueID,
 	)
 	if err != nil {
@@ -536,13 +550,37 @@ func (db *DB) UpdateBatchTaskMessage(queueID, taskID, message string) error {
 }
 
 // AddBatchTask 添加任务到批量任务队列
-func (db *DB) AddBatchTask(queueID, taskID, message string) error {
+func (db *DB) AddBatchTask(queueID, taskID, message, aiChannelID string) error {
 	_, err := db.Exec(
-		"INSERT INTO batch_tasks (id, queue_id, message, status) VALUES (?, ?, ?, ?)",
-		taskID, queueID, message, "pending",
+		"INSERT INTO batch_tasks (id, queue_id, message, ai_channel_id, retry_count, status) VALUES (?, ?, ?, ?, ?, ?)",
+		taskID, queueID, message, strings.TrimSpace(aiChannelID), 0, "pending",
 	)
 	if err != nil {
 		return fmt.Errorf("添加批量任务失败: %w", err)
+	}
+	return nil
+}
+
+// UpdateBatchTaskChannel 更新子任务使用的模型通道。
+func (db *DB) UpdateBatchTaskChannel(queueID, taskID, aiChannelID string) error {
+	_, err := db.Exec(
+		"UPDATE batch_tasks SET ai_channel_id = ? WHERE queue_id = ? AND id = ?",
+		strings.TrimSpace(aiChannelID), queueID, taskID,
+	)
+	if err != nil {
+		return fmt.Errorf("更新批量任务模型失败: %w", err)
+	}
+	return nil
+}
+
+// UpdateBatchTaskRetry 记录模型报错后的重试次数，不改变运行状态。
+func (db *DB) UpdateBatchTaskRetry(queueID, taskID string, retryCount int, errorMsg string) error {
+	_, err := db.Exec(
+		"UPDATE batch_tasks SET retry_count = ?, error = ? WHERE queue_id = ? AND id = ?",
+		retryCount, errorMsg, queueID, taskID,
+	)
+	if err != nil {
+		return fmt.Errorf("更新批量任务重试次数失败: %w", err)
 	}
 	return nil
 }
@@ -569,7 +607,7 @@ func (db *DB) PrepareBatchSingleTaskRun(queueID, taskID string, taskIndex int, r
 
 	if resetTask {
 		_, err = tx.Exec(
-			"UPDATE batch_tasks SET status = ?, conversation_id = NULL, started_at = NULL, completed_at = NULL, error = NULL, result = NULL WHERE queue_id = ? AND id = ?",
+			"UPDATE batch_tasks SET status = ?, conversation_id = NULL, started_at = NULL, completed_at = NULL, error = NULL, result = NULL, retry_count = 0 WHERE queue_id = ? AND id = ?",
 			"pending", queueID, taskID,
 		)
 		if err != nil {

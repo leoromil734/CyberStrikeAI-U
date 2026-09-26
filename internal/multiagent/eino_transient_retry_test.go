@@ -40,6 +40,7 @@ func TestIsEinoTransientRunError(t *testing.T) {
 		{"canceled", context.Canceled, false},
 		{"deadline", context.DeadlineExceeded, false},
 		{"auth", errors.New("invalid api key"), false},
+		{"model busy zh", errors.New("模型繁忙，请稍后重试"), true},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -49,6 +50,22 @@ func TestIsEinoTransientRunError(t *testing.T) {
 				t.Fatalf("isEinoTransientRunError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestIsModelInterruptError(t *testing.T) {
+	t.Parallel()
+	if !IsModelInterruptError(&einoopenai.APIError{HTTPStatusCode: 400, Message: "model busy"}) {
+		t.Fatal("provider 400 should be retried at task level")
+	}
+	if IsModelInterruptError(&einoopenai.APIError{HTTPStatusCode: 401, Message: "invalid api key"}) {
+		t.Fatal("auth failure should not be retried")
+	}
+	if IsModelInterruptError(errors.New("maximum context length exceeded")) {
+		t.Fatal("context length should not be retried")
+	}
+	if !IsModelInterruptError(errors.New("上游模型服务异常")) {
+		t.Fatal("upstream model error should be retried")
 	}
 }
 

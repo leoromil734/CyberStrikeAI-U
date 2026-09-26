@@ -403,7 +403,24 @@ func conversationProjectIDColumn(alias string) string {
 	return "project_id"
 }
 
-func appendConversationProjectFilter(where string, args []interface{}, projectID, alias string) (string, []interface{}) {
+func conversationSearchClause(alias string) (string, int) {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	// 标题和角色是短字段；正文只对照每个会话最新一条，避免搜索时扫全部历史消息。
+	clause := fmt.Sprintf(`(%stitle LIKE ? OR IFNULL(%srole_name, '') LIKE ? OR EXISTS (
+			SELECT 1 FROM messages m
+			WHERE m.conversation_id = %sid
+			  AND m.id = (
+				SELECT m2.id FROM messages m2
+				WHERE m2.conversation_id = %sid
+				ORDER BY m2.created_at DESC, m2.id DESC
+				LIMIT 1
+			  )
+			  AND m.content LIKE ?))`, prefix, prefix, prefix, prefix)
+	return clause, 3
+}
 	pid := strings.TrimSpace(projectID)
 	if pid == "" {
 		return where, args
@@ -446,9 +463,9 @@ func (db *DB) CountConversations(search, projectID string) (int, error) {
 	var err error
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		where := ` WHERE (c.title LIKE ?
-			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
-		args := []interface{}{searchPattern, searchPattern}
+		searchClause, _ := conversationSearchClause("c")
+		where := ` WHERE ` + searchClause
+		args := []interface{}{searchPattern, searchPattern, searchPattern}
 		where, args = appendConversationProjectFilter(where, args, projectID, "c")
 		err = db.QueryRow(`SELECT COUNT(*) FROM conversations c`+where, args...).Scan(&count)
 	} else {
@@ -471,9 +488,9 @@ func (db *DB) CountConversationsForAccess(search, projectID, userID, scope strin
 	var err error
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		where := ` WHERE (c.title LIKE ?
-			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
-		args := []interface{}{searchPattern, searchPattern}
+		searchClause, _ := conversationSearchClause("c")
+		where := ` WHERE ` + searchClause
+		args := []interface{}{searchPattern, searchPattern, searchPattern}
 		where, args = appendConversationProjectFilter(where, args, projectID, "c")
 		where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
 		err = db.QueryRow(`SELECT COUNT(*) FROM conversations c`+where, args...).Scan(&count)
@@ -514,9 +531,9 @@ func (db *DB) ListConversations(limit, offset int, search, sortBy, projectID str
 		// 使用 EXISTS 子查询代替 LEFT JOIN + DISTINCT，避免大表笛卡尔积
 		searchPattern := "%" + search + "%"
 		orderClause := conversationOrderClause(sortBy, "c")
-		where := ` WHERE (c.title LIKE ?
-			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
-		args := []interface{}{searchPattern, searchPattern}
+		searchClause, _ := conversationSearchClause("c")
+		where := ` WHERE ` + searchClause
+		args := []interface{}{searchPattern, searchPattern, searchPattern}
 		where, args = appendConversationProjectFilter(where, args, projectID, "c")
 		args = append(args, limit, offset)
 		rows, err = db.Query(
@@ -557,9 +574,9 @@ func (db *DB) ListConversationsForAccess(limit, offset int, search, sortBy, proj
 	if search != "" {
 		searchPattern := "%" + search + "%"
 		orderClause := conversationOrderClause(sortBy, "c")
-		where := ` WHERE (c.title LIKE ?
-			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
-		args := []interface{}{searchPattern, searchPattern}
+		searchClause, _ := conversationSearchClause("c")
+		where := ` WHERE ` + searchClause
+		args := []interface{}{searchPattern, searchPattern, searchPattern}
 		where, args = appendConversationProjectFilter(where, args, projectID, "c")
 		where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
 		args = append(args, limit, offset)

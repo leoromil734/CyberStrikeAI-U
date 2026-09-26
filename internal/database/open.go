@@ -11,10 +11,38 @@ import (
 
 	"cyberstrike-ai/internal/config"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/mattn/go-sqlite3"
 	"go.uber.org/zap"
 )
+
+const sqliteTunedDriver = "sqlite3_tuned"
+
+func init() {
+	sql.Register(sqliteTunedDriver, &sqlite3.SQLiteDriver{
+		ConnectHook: tuneSQLiteConn,
+	})
+}
+
+// tuneSQLiteConn 在每条连接上生效。高配机器把缓存和 mmap 给足，加快读；
+// 连接数仍保持有限，因为 SQLite 同时只能有一个写入者。
+func tuneSQLiteConn(conn *sqlite3.SQLiteConn) error {
+	pragmas := []string{
+		"PRAGMA temp_store=MEMORY",
+		"PRAGMA cache_size=-131072",
+		fmt.Sprintf("PRAGMA mmap_size=%d", 512*1024*1024),
+		fmt.Sprintf("PRAGMA wal_autocheckpoint=%d", sqliteWALAutoCheckpointPages),
+		fmt.Sprintf("PRAGMA journal_size_limit=%d", sqliteJournalSizeLimitBytes),
+		"PRAGMA busy_timeout=10000",
+	}
+	for _, query := range pragmas {
+		if _, err := conn.Exec(query, nil); err != nil {
+			return fmt.Errorf("%s: %w", query, err)
+		}
+	}
+	return nil
+}
 
 // OpenOptions configures a database open (session or knowledge).
 type OpenOptions struct {
@@ -125,11 +153,10 @@ func Open(opt OpenOptions) (*DB, error) {
 		if derr != nil {
 			return nil, derr
 		}
-		sqlDB, err = sql.Open("pgx", dsn)
+		sqlDB, err = openPostgres(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("打开 PostgreSQL 失败: %w", err)
 		}
-		configurePostgresPool(sqlDB)
 	default:
 		path := strings.TrimSpace(opt.Path)
 		if path == "" {
@@ -138,7 +165,7 @@ func Open(opt OpenOptions) (*DB, error) {
 		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
 			return nil, fmt.Errorf("创建数据库目录失败: %w", mkErr)
 		}
-		sqlDB, err = sql.Open("sqlite3", path+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
+		sqlDB, err = sql.Open(sqliteTunedDriver, path+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=10000&_synchronous=NORMAL&_cache_size=-131072")
 		if err != nil {
 			return nil, fmt.Errorf("打开数据库失败: %w", err)
 		}
@@ -208,10 +235,38 @@ func Open(opt OpenOptions) (*DB, error) {
 	return database, nil
 }
 
+func openPostgres(dsn string) (*sql.DB, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	// 这些是会话级参数，高配机器把排序内存给够，并关掉对短查询不划算的 JIT。
+	// shared_buffers / effective_cache_size 要在 PostgreSQL 服务器配置里调，应用连不上那一层。
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		for _, query := range []string{
+			"SET work_mem = '32MB'",
+			"SET temp_buffers = '16MB'",
+			"SET jit = off",
+			"SET idle_in_transaction_session_timeout = '60s'",
+			"SET statement_timeout = '300s'",
+		} {
+			if _, err := conn.Exec(ctx, query); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	sqlDB := stdlib.OpenDB(*cfg)
+	configurePostgresPool(sqlDB)
+	return sqlDB, nil
+}
+
 func configurePostgresPool(db *sql.DB) {
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(10)
+	// 会话库和知识库各有一个池。默认 PostgreSQL max_connections 常为 100，两边加起来留出管理连接。
+	db.SetMaxOpenConns(40)
+	db.SetMaxIdleConns(12)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 }
 
 // Dialect returns the SQL dialect for this handle.

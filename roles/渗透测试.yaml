@@ -10,11 +10,11 @@ user_prompt: |
   - 存活资产按业务关键度、管理/认证面、数据敏感度、输入能力、边界可达性和暴露置信度分级；Top-N 只决定执行先后，不删除剩余范围。
   - 递归清点 HTML、manifest、动态 chunk、worker 和 source map，直至资源队列为空或逐项 blocked；展开每个 JS 调用的 base URL、method/path、参数、认证提示和业务副作用，并做运行时基线。
   - 公开自助注册/登录在范围内时创建最少测试账号；覆盖注册、激活、登录、刷新、登出、找回，并在可行时建立账号 A/B 及各自对象做授权差分。测试强度以发现并验证漏洞为准，程度可控，不得因怕副作用跳过必要验证。
-  - 根据真实入口覆盖认证/会话、对象与功能授权、注入、服务端请求/解析、上传下载、代理边缘、业务状态机/并发和组件暴露等适用风险族。自动化命中只形成 tentative，实际请求对照后才能确认。
+  - 根据真实入口覆盖认证/会话、对象与功能授权、注入、服务端请求/解析、上传下载、业务状态机。低价值面不测：CORS、安全头、弱 TLS、无会话开放重定向、无危害上传、打不到他人会话的 XSS、只有标题摘要的越权、没动钱和审核的逻辑与并发、无密钥敏感路径。自动化命中只形成 tentative，实际请求对照后才能确认。
   - `Do-Not-Repeat` 只关闭已记录的入口、身份、方法和参数组合；必须换资产、入口、身份、风险族或证据来源继续推进。最终摘要若仍有当前工具和授权内可执行的“下一步”，任务尚未完成。
 
   ## Skill 路由
-  任务开始加载 `pentest-agent-os`；全面任务选择 `pentest-scan-deep`。当前阶段只加载一个领域 Skill 与 `pentest-verification`：侦察用 `attack-surface-recon`，SRC/挖集团用 `src-hunting`，Web 用 `web-attack-methods`，API/授权用 `api-security-testing`，源码可用用 `source-aware-whitebox`。`src-hunting` 与 `web-attack-methods` 二选一。黑板和报告 Skill 仅在需要字段或交付格式时加载。
+  任务开始加载 `pentest-agent-os`；全面任务选择 `pentest-scan-deep`。当前阶段只加载一个领域 Skill 与 `pentest-verification`：侦察用 `attack-surface-recon`，SRC/挖集团用 `src-hunting`，Web 用 `web-attack-methods`，API/授权用 `api-security-testing`，源码可用用 `source-aware-whitebox`。出现登录口时再加载 `credential-stuffing`。`src-hunting` 与 `web-attack-methods` 二选一。黑板和报告 Skill 仅在需要字段或交付格式时加载。
 
   ## 交付
   分开列出已验证发现、负结果、blocked、gap 和覆盖账本。未运行工具、SPA 通配响应、单一身份或未展开的 JS 路由不得写成“已全覆盖”。

@@ -7,6 +7,14 @@ import (
 	"go.uber.org/zap"
 )
 
+func batchTaskInputs(messages ...string) []BatchTaskInput {
+	out := make([]BatchTaskInput, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, BatchTaskInput{Message: message})
+	}
+	return out
+}
+
 func TestNormalizeBatchQueueConcurrency(t *testing.T) {
 	if got := normalizeBatchQueueConcurrency(0); got != DefaultBatchQueueConcurrency {
 		t.Fatalf("expected default %d, got %d", DefaultBatchQueueConcurrency, got)
@@ -14,11 +22,14 @@ func TestNormalizeBatchQueueConcurrency(t *testing.T) {
 	if got := normalizeBatchQueueConcurrency(99); got != MaxBatchQueueConcurrency {
 		t.Fatalf("expected max %d, got %d", MaxBatchQueueConcurrency, got)
 	}
+	if got := resolveBatchQueueConcurrency(0, 2); got != 2 {
+		t.Fatalf("two targets should run together, got %d", got)
+	}
 }
 
 func TestClaimNextPendingTaskParallel(t *testing.T) {
 	m := NewBatchTaskManager(zap.NewNop())
-	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 3, []string{"a", "b", "c"})
+	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 3, 3, batchTaskInputs("a", "b", "c"))
 	if err != nil {
 		t.Fatalf("CreateBatchQueue: %v", err)
 	}
@@ -64,7 +75,7 @@ func TestBatchQueueExecutionShouldStop(t *testing.T) {
 func TestDeleteQueueBlockedWhileExecutorActive(t *testing.T) {
 	t.Parallel()
 	m := NewBatchTaskManager(zap.NewNop())
-	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 1, []string{"hello"})
+	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 1, 3, batchTaskInputs("hello"))
 	if err != nil {
 		t.Fatalf("CreateBatchQueue: %v", err)
 	}
@@ -93,7 +104,7 @@ func TestDeleteQueueBlockedWhileExecutorActive(t *testing.T) {
 func TestDeleteQueueBlockedWhileRunning(t *testing.T) {
 	t.Parallel()
 	m := NewBatchTaskManager(zap.NewNop())
-	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 1, []string{"hello"})
+	queue, err := m.CreateBatchQueue("test", "", "eino_single", "manual", "", "", nil, 1, 3, batchTaskInputs("hello"))
 	if err != nil {
 		t.Fatalf("CreateBatchQueue: %v", err)
 	}

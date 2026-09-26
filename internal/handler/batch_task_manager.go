@@ -50,11 +50,17 @@ const (
 	// MaxBatchQueueRoleLen 角色名最大长度
 	MaxBatchQueueRoleLen = 100
 
-	// DefaultBatchQueueConcurrency 批量队列默认并发数（串行）
+	// DefaultBatchQueueConcurrency 未指定并发且只有一条任务时串行。
 	DefaultBatchQueueConcurrency = 1
 
-	// MaxBatchQueueConcurrency 批量队列最大并发数
-	MaxBatchQueueConcurrency = 8
+	// MaxBatchQueueConcurrency 单队列同时执行的子任务上限。高配机器可并行多个目标。
+	MaxBatchQueueConcurrency = 32
+
+	// DefaultModelErrorRetryMax 模型报错导致任务中断后的默认自动重试次数。
+	DefaultModelErrorRetryMax = 3
+
+	// MaxModelErrorRetryMax 单条任务模型报错自动重试上限。
+	MaxModelErrorRetryMax = 8
 )
 
 // BatchTask 批量任务项
@@ -67,6 +73,14 @@ type BatchTask struct {
 	CompletedAt    *time.Time `json:"completedAt,omitempty"`
 	Error          string     `json:"error,omitempty"`
 	Result         string     `json:"result,omitempty"`
+	AIChannelID    string     `json:"aiChannelId,omitempty"`
+	RetryCount     int        `json:"retryCount,omitempty"`
+}
+
+// BatchTaskInput 创建队列时的一条子任务。Message 必填，AIChannelID 空则跟随系统默认模型通道。
+type BatchTaskInput struct {
+	Message     string `json:"message"`
+	AIChannelID string `json:"aiChannelId,omitempty"`
 }
 
 // BatchTaskQueue 批量任务队列
@@ -83,7 +97,8 @@ type BatchTaskQueue struct {
 	LastScheduleError     string       `json:"lastScheduleError,omitempty"`
 	LastRunError          string       `json:"lastRunError,omitempty"`
 	ProjectID             string       `json:"projectId,omitempty"`
-	Concurrency           int          `json:"concurrency"` // 同时执行的子任务数，默认 1
+	Concurrency           int          `json:"concurrency"`   // 同时执行的子任务数，默认 1
+	ModelRetryMax         int          `json:"modelRetryMax"` // 模型报错中断后的自动重试次数，0 表示不额外重试
 	Tasks                 []*BatchTask `json:"tasks"`
 	Status                string       `json:"status"` // pending, running, paused, completed, cancelled
 	CreatedAt             time.Time    `json:"createdAt"`
@@ -179,12 +194,44 @@ func normalizeBatchQueueConcurrency(n int) int {
 	return n
 }
 
+// resolveBatchQueueConcurrency 多条独立任务未指定并发时，按任务数并行，而不是退回串行。
+func resolveBatchQueueConcurrency(requested, taskCount int) int {
+	if requested < 1 {
+		if taskCount > 1 {
+			requested = taskCount
+		} else {
+			requested = DefaultBatchQueueConcurrency
+		}
+	}
+	return normalizeBatchQueueConcurrency(requested)
+}
+
+// normalizeModelErrorRetryMax 规范化模型报错自动重试次数。负数视为 0。
+func normalizeModelErrorRetryMax(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > MaxModelErrorRetryMax {
+		return MaxModelErrorRetryMax
+	}
+	return n
+}
+
+// resolveModelErrorRetryMax 未显式指定时使用默认重试次数。
+func resolveModelErrorRetryMax(requested *int) int {
+	if requested == nil {
+		return DefaultModelErrorRetryMax
+	}
+	return normalizeModelErrorRetryMax(*requested)
+}
+
 // CreateBatchQueue 创建批量任务队列
 func (m *BatchTaskManager) CreateBatchQueue(
 	title, role, agentMode, scheduleMode, cronExpr, projectID string,
 	nextRunAt *time.Time,
 	concurrency int,
-	tasks []string,
+	modelRetryMax int,
+	tasks []BatchTaskInput,
 ) (*BatchTaskQueue, error) {
 	// 输入校验
 	if utf8.RuneCountInString(title) > MaxBatchQueueTitleLen {
@@ -211,7 +258,8 @@ func (m *BatchTaskManager) CreateBatchQueue(
 		CronExpr:        strings.TrimSpace(cronExpr),
 		NextRunAt:       nextRunAt,
 		ScheduleEnabled: true,
-		Concurrency:     normalizeBatchQueueConcurrency(concurrency),
+		Concurrency:     resolveBatchQueueConcurrency(concurrency, len(tasks)),
+		ModelRetryMax:   normalizeModelErrorRetryMax(modelRetryMax),
 		Tasks:           make([]*BatchTask, 0, len(tasks)),
 		Status:          BatchQueueStatusPending,
 		CreatedAt:       time.Now(),
@@ -225,20 +273,23 @@ func (m *BatchTaskManager) CreateBatchQueue(
 	// 准备数据库保存的任务数据
 	dbTasks := make([]map[string]interface{}, 0, len(tasks))
 
-	for _, message := range tasks {
+	for _, input := range tasks {
+		message := strings.TrimSpace(input.Message)
 		if message == "" {
-			continue // 跳过空行
+			continue
 		}
 		taskID := generateShortID()
 		task := &BatchTask{
-			ID:      taskID,
-			Message: message,
-			Status:  BatchTaskStatusPending,
+			ID:          taskID,
+			Message:     message,
+			Status:      BatchTaskStatusPending,
+			AIChannelID: strings.TrimSpace(input.AIChannelID),
 		}
 		queue.Tasks = append(queue.Tasks, task)
 		dbTasks = append(dbTasks, map[string]interface{}{
-			"id":      taskID,
-			"message": message,
+			"id":          taskID,
+			"message":     message,
+			"aiChannelId": task.AIChannelID,
 		})
 	}
 
@@ -254,6 +305,7 @@ func (m *BatchTaskManager) CreateBatchQueue(
 			queue.NextRunAt,
 			queue.ProjectID,
 			queue.Concurrency,
+			queue.ModelRetryMax,
 			dbTasks,
 		); err != nil {
 			m.logger.Warn("batch queue DB create failed", zap.String("queueId", queueID), zap.Error(err))
@@ -350,6 +402,7 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 		queue.ProjectID = strings.TrimSpace(queueRow.ProjectID.String)
 	}
 	queue.Concurrency = batchQueueConcurrencyFromRow(queueRow)
+	queue.ModelRetryMax = batchQueueModelRetryFromRow(queueRow)
 	if queueRow.StartedAt.Valid {
 		queue.StartedAt = &queueRow.StartedAt.Time
 	}
@@ -377,6 +430,12 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 		}
 		if taskRow.Result.Valid {
 			task.Result = taskRow.Result.String
+		}
+		if taskRow.AIChannelID.Valid {
+			task.AIChannelID = strings.TrimSpace(taskRow.AIChannelID.String)
+		}
+		if taskRow.RetryCount.Valid {
+			task.RetryCount = int(taskRow.RetryCount.Int64)
 		}
 		queue.Tasks = append(queue.Tasks, task)
 	}
@@ -594,6 +653,7 @@ func (m *BatchTaskManager) LoadFromDB() error {
 			queue.ProjectID = strings.TrimSpace(queueRow.ProjectID.String)
 		}
 		queue.Concurrency = batchQueueConcurrencyFromRow(queueRow)
+		queue.ModelRetryMax = batchQueueModelRetryFromRow(queueRow)
 		if queueRow.StartedAt.Valid {
 			queue.StartedAt = &queueRow.StartedAt.Time
 		}
@@ -621,6 +681,12 @@ func (m *BatchTaskManager) LoadFromDB() error {
 			}
 			if taskRow.Result.Valid {
 				task.Result = taskRow.Result.String
+			}
+			if taskRow.AIChannelID.Valid {
+				task.AIChannelID = strings.TrimSpace(taskRow.AIChannelID.String)
+			}
+			if taskRow.RetryCount.Valid {
+				task.RetryCount = int(taskRow.RetryCount.Int64)
 			}
 			queue.Tasks = append(queue.Tasks, task)
 		}
@@ -661,7 +727,9 @@ func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, s
 			if result != "" {
 				task.Result = result
 			}
-			if errorMsg != "" {
+			if status == BatchTaskStatusCompleted {
+				task.Error = ""
+			} else if errorMsg != "" {
 				task.Error = errorMsg
 			}
 			if conversationID != "" {
@@ -740,6 +808,13 @@ func batchQueueConcurrencyFromRow(row *database.BatchTaskQueueRow) int {
 		return DefaultBatchQueueConcurrency
 	}
 	return normalizeBatchQueueConcurrency(int(row.Concurrency.Int64))
+}
+
+func batchQueueModelRetryFromRow(row *database.BatchTaskQueueRow) int {
+	if row == nil || !row.ModelRetryMax.Valid {
+		return DefaultModelErrorRetryMax
+	}
+	return normalizeModelErrorRetryMax(int(row.ModelRetryMax.Int64))
 }
 
 // UpdateQueueMetadata 更新队列标题、角色、代理模式和并发数（非 running 时可用）
@@ -880,6 +955,7 @@ func (m *BatchTaskManager) ResetQueueForRerun(queueID string) bool {
 		task.CompletedAt = nil
 		task.Error = ""
 		task.Result = ""
+		task.RetryCount = 0
 	}
 	return true
 }
@@ -906,7 +982,6 @@ func (m *BatchTaskManager) UpdateTaskMessage(queueID, taskID, message string) er
 			}
 			task.Message = message
 
-			// 同步到数据库
 			if m.db != nil {
 				if err := m.db.UpdateBatchTaskMessage(queueID, taskID, message); err != nil {
 					return fmt.Errorf("更新任务消息失败: %w", err)
@@ -919,8 +994,71 @@ func (m *BatchTaskManager) UpdateTaskMessage(queueID, taskID, message string) er
 	return fmt.Errorf("任务不存在")
 }
 
+// UpdateTaskChannel 更新子任务模型通道。空字符串表示跟随系统默认通道。
+func (m *BatchTaskManager) UpdateTaskChannel(queueID, taskID, aiChannelID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	queue, exists := m.queues[queueID]
+	if !exists {
+		return fmt.Errorf("队列不存在")
+	}
+	if !queueAllowsTaskListMutationLocked(queue) {
+		return fmt.Errorf("队列正在执行或未就绪，无法编辑任务")
+	}
+	aiChannelID = strings.TrimSpace(aiChannelID)
+	for _, task := range queue.Tasks {
+		if task.ID != taskID {
+			continue
+		}
+		if task.Status == BatchTaskStatusRunning {
+			return fmt.Errorf("执行中的任务不能编辑")
+		}
+		task.AIChannelID = aiChannelID
+		if m.db != nil {
+			if err := m.db.UpdateBatchTaskChannel(queueID, taskID, aiChannelID); err != nil {
+				return fmt.Errorf("更新任务模型失败: %w", err)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("任务不存在")
+}
+
+// NoteTaskModelRetry 记录模型报错后的自动重试，任务保持运行中。
+func (m *BatchTaskManager) NoteTaskModelRetry(queueID, taskID string, retryCount int, errText string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	queue, exists := m.queues[queueID]
+	if !exists {
+		return
+	}
+	note := fmt.Sprintf("模型报错，正在第 %d 次自动重试：%s", retryCount, trimBatchRetryNote(errText))
+	if m.db != nil {
+		if err := m.db.UpdateBatchTaskRetry(queueID, taskID, retryCount, note); err != nil {
+			m.logger.Warn("batch task retry note failed", zap.String("queueId", queueID), zap.String("taskId", taskID), zap.Error(err))
+		}
+	}
+	for _, task := range queue.Tasks {
+		if task.ID == taskID {
+			task.RetryCount = retryCount
+			task.Error = note
+			task.Status = BatchTaskStatusRunning
+			break
+		}
+	}
+}
+
+func trimBatchRetryNote(s string) string {
+	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+	if utf8.RuneCountInString(s) <= 240 {
+		return s
+	}
+	return string([]rune(s)[:240]) + "..."
+}
+
 // AddTaskToQueue 添加任务到队列（队列空闲时可添加：含 cron 本轮 completed、手动暂停后等）
-func (m *BatchTaskManager) AddTaskToQueue(queueID, message string) (*BatchTask, error) {
+func (m *BatchTaskManager) AddTaskToQueue(queueID, message, aiChannelID string) (*BatchTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -940,9 +1078,10 @@ func (m *BatchTaskManager) AddTaskToQueue(queueID, message string) (*BatchTask, 
 	// 生成任务ID
 	taskID := generateShortID()
 	task := &BatchTask{
-		ID:      taskID,
-		Message: message,
-		Status:  BatchTaskStatusPending,
+		ID:          taskID,
+		Message:     message,
+		Status:      BatchTaskStatusPending,
+		AIChannelID: strings.TrimSpace(aiChannelID),
 	}
 
 	// 添加到内存队列
@@ -950,7 +1089,7 @@ func (m *BatchTaskManager) AddTaskToQueue(queueID, message string) (*BatchTask, 
 
 	// 同步到数据库
 	if m.db != nil {
-		if err := m.db.AddBatchTask(queueID, taskID, message); err != nil {
+		if err := m.db.AddBatchTask(queueID, taskID, message, task.AIChannelID); err != nil {
 			// 如果数据库保存失败，从内存中移除
 			queue.Tasks = queue.Tasks[:len(queue.Tasks)-1]
 			return nil, fmt.Errorf("添加任务失败: %w", err)
@@ -1049,6 +1188,7 @@ func (m *BatchTaskManager) PrepareSingleTaskRun(queueID, taskID string) error {
 		task.CompletedAt = nil
 		task.Error = ""
 		task.Result = ""
+		task.RetryCount = 0
 	}
 	queue.CurrentIndex = taskIndex
 	queue.LastRunError = ""

@@ -76,9 +76,91 @@ func isEinoTransientRunError(err error) bool {
 		"unexpected eof",
 		`": eof`, // net/http: Post "url": EOF (often wraps io.EOF)
 		"unexpected end of json",
+		"模型繁忙",
+		"服务繁忙",
+		"系统繁忙",
+		"请稍后重试",
+		"请稍后再试",
+		"请求过于频繁",
+		"限流",
+		"overloaded_error",
+		"model is currently overloaded",
+		"engine is currently overloaded",
 	}
 	for _, m := range transientMarkers {
 		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsModelInterruptError 判断错误是否由模型/上游接口导致、并且应当有限次重试。
+// 用户取消、超时、迭代上限、鉴权失败和上下文长度超限不重试。
+func IsModelInterruptError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if isEinoIterationLimitError(err) {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if isNonRetryableModelError(msg) {
+		return false
+	}
+	if isEinoTransientRunError(err) {
+		return true
+	}
+	var apiErr *einoopenai.APIError
+	if errors.As(err, &apiErr) && apiErr.HTTPStatusCode > 0 {
+		return apiErr.HTTPStatusCode != 401 && apiErr.HTTPStatusCode != 403
+	}
+	if status := httpStatusFromErrorText(msg); status > 0 {
+		return status != 401 && status != 403
+	}
+	markers := []string{
+		"chat/completions",
+		"api error",
+		"api_error",
+		"upstream",
+		"quota",
+		"insufficient_quota",
+		"overloaded",
+		"engine_overloaded",
+		"server_error",
+		"please retry",
+		"try again",
+		"模型",
+		"繁忙",
+		"限流",
+		"请稍后",
+		"请求失败",
+		"服务异常",
+		"上游",
+	}
+	for _, marker := range markers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonRetryableModelError(msg string) bool {
+	needles := []string{
+		"invalid api key",
+		"incorrect api key",
+		"authentication",
+		"context_length",
+		"maximum context length",
+		"context length exceeded",
+		"token limit",
+	}
+	for _, needle := range needles {
+		if strings.Contains(msg, needle) {
 			return true
 		}
 	}

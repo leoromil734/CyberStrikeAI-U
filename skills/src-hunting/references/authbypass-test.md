@@ -1,6 +1,6 @@
 # authbypass-authentication-flaws
 
-打开是登录页 / SSO → 表单壳听 `dig-scope` §4.1.1：找业务面；别按本文件从头跑字典 / 验证码 / 无限试密。  
+打开是登录页 / SSO → 表单壳听 `dig-scope` §4.1.1：找业务面。每个登录口仍要按 `credential-stuffing.md` 做一次有界撞库。别 OCR、别绕滑块、别无限试密。  
 发会话、重置、改绑、换票、2FA 按本文件 + `dig-scope` §4.2.2 探针打，不要因为 §4.1.1 整摊跳过。表是每站下限，不是只准打这几枪。  
 中间件裸默认口可一眼。滑块 / 发码 / 没进号的试密 → 转认证链，别停半截。写不写只认 `vuln-report-format.md`。
 英文字典/验证码 20 法/重置矩阵已砍；短表指针用标题搜。Host 毒重置见 `http-host-header-test.md`。扫码登录 CSRF 见 `csrf-test.md` §18。

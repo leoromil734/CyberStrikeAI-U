@@ -113,8 +113,8 @@ agent:
   max_iterations: 12000 # 全局最大迭代次数（单代理 / Deep / Supervisor / Plan-Execute 主执行器 / 子代理均沿用；agents/*.md 中 max_iterations>0 可单独覆盖）
   tool_timeout_minutes: 60 # 单次工具执行最大时长（分钟），超时自动终止；0 表示不限制（不推荐，易出现长时间挂起）
   tool_wait_timeout_seconds: 300 # 工具本轮最多等待（秒）；到时返回 execution_id，worker 继续后台执行，可用 wait_tool_execution 继续等待；0=等到完成
-  external_mcp_max_concurrent_per_server: 5 # 单个外部 MCP server 同时运行的工具数；0=默认2；负数=不限制
-  external_mcp_max_concurrent_total: 16 # 所有外部 MCP 工具全局并发上限；0=默认16；负数=不限制
+  external_mcp_max_concurrent_per_server: 8 # 单个外部 MCP server 同时运行的工具数；0=默认8；负数=不限制
+  external_mcp_max_concurrent_total: 64 # 所有外部 MCP 工具全局并发上限；0=默认64；负数=不限制
   external_mcp_circuit_failure_threshold: 15 # 单个外部 MCP server 连续失败多少次后熔断；0=默认3；负数=关闭熔断
   external_mcp_circuit_cooldown_seconds: 60 # 熔断冷却秒数；0=默认60
   shell_no_output_timeout_seconds: 1200 # execute/exec 连续无新输出则终止（秒）；通用防挂死；0=默认300；-1=关闭
@@ -292,6 +292,13 @@ database:
   # 知识库可与主库同库（默认），或独立库：
   # knowledge_dbname: cyberstrike_knowledge
   # knowledge_dsn: "postgres://cyberstrike:password@127.0.0.1:5432/cyberstrike_knowledge?sslmode=disable"
+# Redis：缓存漏洞筛选、统计和对话列表。连不上时自动退回内存，不影响启动。
+redis:
+  enabled: true
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+  prefix: cyberstrike
 # ============================================
 # 任务管理相关配置
 # ============================================

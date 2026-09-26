@@ -18,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/c2"
+	"cyberstrike-ai/internal/cache"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/einoobserve"
@@ -84,6 +85,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// CORS中间件
 	router.Use(corsMiddleware(cfg.Server.CORSAllowedOrigins))
+	router.Use(responseSpeedMiddleware())
 
 	// 初始化数据库（sqlite | postgres，见 config.database）
 	db, err := database.OpenFromConfig(cfg.Database, log.Logger)
@@ -369,7 +371,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	authHandler := handler.NewAuthHandler(authManager, cfg, configPath, log.Logger)
 	authHandler.SetAudit(auditSvc)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
+	pageCache := openPageCache(cfg, log.Logger)
 	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger)
+	vulnerabilityHandler.SetStore(pageCache)
 	assetHandler := handler.NewAssetHandler(db, log.Logger)
 	projectHandler := handler.NewProjectHandler(db, log.Logger)
 	rbacHandler := handler.NewRBACHandler(db, log.Logger)
@@ -415,6 +419,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// 创建OpenAPI处理器
 	conversationHandler := handler.NewConversationHandler(db, log.Logger)
+	conversationHandler.SetStore(pageCache)
 	conversationHandler.SetAudit(auditSvc)
 	conversationHandler.SetTaskStopper(agentHandler)
 	auditHandler := handler.NewAuditHandler(db, auditSvc, log.Logger)
@@ -1390,6 +1395,23 @@ func setupRoutes(
 		}
 		c.HTML(http.StatusOK, "index.html", gin.H{"Version": version})
 	})
+}
+
+func openPageCache(cfg *config.Config, logger *zap.Logger) cache.Store {
+	if cfg == nil || !cfg.Redis.Enabled {
+		return cache.NewMemory()
+	}
+	addr := strings.TrimSpace(cfg.Redis.Addr)
+	if addr == "" {
+		addr = "127.0.0.1:6379"
+	}
+	store, err := cache.OpenRedis(addr, cfg.Redis.Password, cfg.Redis.Prefix, cfg.Redis.DB)
+	if err != nil {
+		logger.Warn("Redis 不可用，页面缓存退回内存", zap.String("addr", addr), zap.Error(err))
+		return cache.NewMemory()
+	}
+	logger.Info("页面缓存已连接 Redis", zap.String("addr", addr), zap.Int("db", cfg.Redis.DB))
+	return store
 }
 
 // registerWebshellTools 注册 WebShell 相关 MCP 工具，供 AI 助手在指定连接上执行命令与文件操作

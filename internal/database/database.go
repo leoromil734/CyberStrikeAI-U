@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	// SQLite 在 WAL 模式下建议使用较保守的连接数，降低长读快照导致 checkpoint 饥饿的概率。
-	sqliteMaxOpenConns = 25
-	sqliteMaxIdleConns = 5
-	// 以页为单位的自动 checkpoint 触发阈值（默认 1000 页，约 4MB @ 4KB/page）。
-	sqliteWALAutoCheckpointPages = 1000
+	// SQLite 同时只能有一个写入者。高配机器用更大的页缓存和 mmap，而不是把连接数拉得很高。
+	sqliteMaxOpenConns = 16
+	sqliteMaxIdleConns = 8
+	// 约 16MB 再 checkpoint，减少突发写入时的频繁回收。
+	sqliteWALAutoCheckpointPages = 4000
 	// 控制 WAL 目标上限，避免异常场景持续膨胀（256MB）。
 	sqliteJournalSizeLimitBytes = 256 * 1024 * 1024
 	// 定时执行 PASSIVE checkpoint，平滑推进 WAL 回收。
@@ -439,6 +439,7 @@ func (db *DB) initTables() error {
 		last_run_error TEXT,
 		project_id TEXT,
 		concurrency INTEGER NOT NULL DEFAULT 1,
+		model_retry_max INTEGER NOT NULL DEFAULT 3,
 		status TEXT NOT NULL,
 		created_at DATETIME NOT NULL,
 		started_at DATETIME,
@@ -458,6 +459,8 @@ func (db *DB) initTables() error {
 		completed_at DATETIME,
 		error TEXT,
 		result TEXT,
+		ai_channel_id TEXT,
+		retry_count INTEGER NOT NULL DEFAULT 0,
 		FOREIGN KEY (queue_id) REFERENCES batch_task_queues(id) ON DELETE CASCADE
 	);`
 
@@ -732,6 +735,8 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project_id ON vulnerabilities(project_id);
 	CREATE INDEX IF NOT EXISTS idx_batch_tasks_queue_id ON batch_tasks(queue_id);
+	CREATE INDEX IF NOT EXISTS idx_batch_tasks_conversation_id ON batch_tasks(conversation_id);
+	CREATE INDEX IF NOT EXISTS idx_messages_conversation_latest ON messages(conversation_id, created_at DESC, id DESC);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_created_at ON batch_task_queues(created_at);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_title ON batch_task_queues(title);
 	CREATE INDEX IF NOT EXISTS idx_webshell_connections_created_at ON webshell_connections(created_at);
@@ -1407,6 +1412,16 @@ func (db *DB) migrateBatchTaskQueuesTable() error {
 		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 1"); err != nil {
 			db.logger.Warn("添加batch_task_queues.concurrency字段失败", zap.Error(err))
 		}
+	}
+
+	if err := db.addColumnIfMissing("batch_task_queues", "model_retry_max", "ALTER TABLE batch_task_queues ADD COLUMN model_retry_max INTEGER NOT NULL DEFAULT 3"); err != nil {
+		db.logger.Warn("添加batch_task_queues.model_retry_max字段失败", zap.Error(err))
+	}
+	if err := db.addColumnIfMissing("batch_tasks", "ai_channel_id", "ALTER TABLE batch_tasks ADD COLUMN ai_channel_id TEXT"); err != nil {
+		db.logger.Warn("添加batch_tasks.ai_channel_id字段失败", zap.Error(err))
+	}
+	if err := db.addColumnIfMissing("batch_tasks", "retry_count", "ALTER TABLE batch_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.logger.Warn("添加batch_tasks.retry_count字段失败", zap.Error(err))
 	}
 
 	return nil

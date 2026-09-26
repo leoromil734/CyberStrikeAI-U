@@ -6007,8 +6007,21 @@
                 </div>
                 <div class="form-group">
                     <label for="batch-queue-concurrency" data-i18n="batchImportModal.concurrency">并发数</label>
-                    <input type="number" id="batch-queue-concurrency" min="1" max="8" value="1" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;" />
-                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.concurrencyHint">同时执行的子任务数量（1-8）。默认 1 为串行；含扫描类工具时建议 1-2。</div>
+                    <input type="number" id="batch-queue-concurrency" min="1" max="32" value="1" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;" />
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.concurrencyHint">每行一个目标。多行时按行数并行启动，每条任务一个协程，最大 32。</div>
+                </div>
+                <div class="form-group">
+                    <label for="batch-queue-default-model" data-i18n="batchImportModal.model">默认模型</label>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <select id="batch-queue-default-model" style="flex:1;"></select>
+                        <button type="button" class="btn-secondary" onclick="applyBatchDefaultModelToRows()" data-i18n="batchImportModal.applyModel">应用到全部</button>
+                    </div>
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.modelHint">每条任务可以单独选模型。留空则使用系统默认通道。</div>
+                </div>
+                <div class="form-group">
+                    <label for="batch-queue-model-retry" data-i18n="batchImportModal.modelRetry">模型报错自动重试次数</label>
+                    <input type="number" id="batch-queue-model-retry" min="0" max="8" value="3" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;" />
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.modelRetryHint">任一模型报错导致任务中断时，自动重试这么多次后再标记失败。0 表示不额外重试，最大 8。</div>
                 </div>
                 <div class="form-group">
                     <label for="batch-queue-schedule-mode" data-i18n="batchImportModal.scheduleMode">调度方式</label>
@@ -6025,15 +6038,16 @@
                 </div>
                 <div class="form-group">
                     <label for="batch-queue-execute-now" class="batch-execute-now-label">
-                        <input type="checkbox" id="batch-queue-execute-now" />
+                        <input type="checkbox" id="batch-queue-execute-now" checked />
                         <span data-i18n="batchImportModal.executeNow">创建后立即执行</span>
                     </label>
-                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.executeNowHint">默认不立即执行；关闭后队列保持待执行，可在需要时手动开始。</div>
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.executeNowHint">默认创建后立即并行执行。取消勾选则先保存为待执行。</div>
                 </div>
                 <div class="form-group">
                     <label for="batch-tasks-input"><span data-i18n="batchImportModal.tasksList">任务列表（每行一个任务）</span><span style="color: red;">*</span></label>
                     <textarea id="batch-tasks-input" rows="15" data-i18n="batchImportModal.tasksListPlaceholderExample" data-i18n-attr="placeholder" placeholder="请输入任务列表，每行一个任务，例如：&#10;扫描 192.168.1.1 的开放端口&#10;检查 https://example.com 是否存在SQL注入&#10;枚举 example.com 的子域名" style="font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 0.875rem; line-height: 1.5;"></textarea>
-                    <div class="form-hint" style="margin-top: 8px;" data-i18n="batchImportModal.tasksListHintFull">提示：每行输入一个任务指令，系统将依次执行这些任务。空行会被自动忽略。</div>
+                    <div class="form-hint" style="margin-top: 8px;" data-i18n="batchImportModal.tasksListHintFull">提示：每行一个任务。下方可为每一行单独选择模型，空行会被忽略。</div>
+                    <div id="batch-task-model-rows" class="batch-task-model-rows"></div>
                 </div>
                 <div class="form-group">
                     <div id="batch-import-stats" class="batch-import-stats"></div>
@@ -6079,6 +6093,11 @@
                 <div class="form-group">
                     <label for="add-task-message" data-i18n="addBatchTaskModal.taskMessage">任务消息</label>
                     <textarea id="add-task-message" class="form-control" rows="5" data-i18n="addBatchTaskModal.taskMessagePlaceholder" data-i18n-attr="placeholder" placeholder="请输入任务消息"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="add-task-model" data-i18n="batchImportModal.model">模型</label>
+                    <select id="add-task-model"></select>
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.modelHint">留空则使用系统默认通道。</div>
                 </div>
                 <div class="form-actions">
                     <button class="btn-primary" data-require-permission="tasks:write" onclick="saveAddBatchTask()" data-i18n="addBatchTaskModal.add">添加</button>

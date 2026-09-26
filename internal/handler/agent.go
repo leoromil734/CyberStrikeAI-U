@@ -1723,17 +1723,70 @@ func filterSlice[T any](items []T, keep func(T) bool) []T {
 	return out
 }
 
-// BatchTaskRequest 批量任务请求
+// BatchTaskRequest 批量任务请求。Tasks 兼容字符串数组，也接受 {message, aiChannelId} 对象数组。
 type BatchTaskRequest struct {
-	Title        string   `json:"title"`                    // 任务标题（可选）
-	Tasks        []string `json:"tasks" binding:"required"` // 任务列表，每行一个任务
-	Role         string   `json:"role,omitempty"`           // 角色名称（可选，空字符串表示默认角色）
-	AgentMode    string   `json:"agentMode,omitempty"`      // eino_single | deep | plan_execute | supervisor
-	ScheduleMode string   `json:"scheduleMode,omitempty"`   // manual | cron
-	CronExpr     string   `json:"cronExpr,omitempty"`       // scheduleMode=cron 时必填
-	ExecuteNow   bool     `json:"executeNow,omitempty"`     // 创建后是否立即执行（默认 false）
-	ProjectID    string   `json:"projectId,omitempty"`      // 队列内子对话绑定的项目（可选）
-	Concurrency  int      `json:"concurrency,omitempty"`    // 同时执行的子任务数，默认 1，最大 8
+	Title         string          `json:"title"`
+	Tasks         json.RawMessage `json:"tasks" binding:"required"`
+	Role          string          `json:"role,omitempty"`
+	AgentMode     string          `json:"agentMode,omitempty"`
+	ScheduleMode  string          `json:"scheduleMode,omitempty"`
+	CronExpr      string          `json:"cronExpr,omitempty"`
+	ExecuteNow    bool            `json:"executeNow,omitempty"`
+	ProjectID     string          `json:"projectId,omitempty"`
+	Concurrency   int             `json:"concurrency,omitempty"`
+	ModelRetryMax *int            `json:"modelRetryMax,omitempty"`
+	AIChannelID   string          `json:"aiChannelId,omitempty"`
+}
+
+func parseBatchTaskInputs(raw json.RawMessage, defaultChannel string) ([]BatchTaskInput, error) {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, fmt.Errorf("任务列表不能为空")
+	}
+	var asStrings []string
+	if err := json.Unmarshal(raw, &asStrings); err == nil {
+		out := make([]BatchTaskInput, 0, len(asStrings))
+		for _, item := range asStrings {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			out = append(out, BatchTaskInput{Message: item, AIChannelID: strings.TrimSpace(defaultChannel)})
+		}
+		return out, nil
+	}
+	var asObjects []struct {
+		Message     string `json:"message"`
+		Text        string `json:"text"`
+		AIChannelID string `json:"aiChannelId"`
+		AIChannel   string `json:"ai_channel_id"`
+	}
+	if err := json.Unmarshal(raw, &asObjects); err != nil {
+		return nil, fmt.Errorf("任务列表格式无效")
+	}
+	out := make([]BatchTaskInput, 0, len(asObjects))
+	for _, item := range asObjects {
+		msg := strings.TrimSpace(item.Message)
+		if msg == "" {
+			msg = strings.TrimSpace(item.Text)
+		}
+		if msg == "" {
+			continue
+		}
+		channel := strings.TrimSpace(item.AIChannelID)
+		if channel == "" {
+			channel = strings.TrimSpace(item.AIChannel)
+		}
+		if channel == "" {
+			channel = strings.TrimSpace(defaultChannel)
+		}
+		out = append(out, BatchTaskInput{Message: msg, AIChannelID: channel})
+	}
+	return out, nil
+}
+
+func bytesTrimSpace(raw json.RawMessage) json.RawMessage {
+	return json.RawMessage(strings.TrimSpace(string(raw)))
 }
 
 // batchQueueWantsEino 队列是否配置为走 Eino 多代理。
@@ -1762,14 +1815,11 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		return
 	}
 
-	// 过滤空任务
-	validTasks := make([]string, 0, len(req.Tasks))
-	for _, task := range req.Tasks {
-		if task != "" {
-			validTasks = append(validTasks, task)
-		}
+	validTasks, parseErr := parseBatchTaskInputs(req.Tasks, req.AIChannelID)
+	if parseErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": parseErr.Error()})
+		return
 	}
-
 	if len(validTasks) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "没有有效的任务"})
 		return
@@ -1799,7 +1849,7 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		nextRunAt = &next
 	}
 
-	queue, createErr := h.batchTaskManager.CreateBatchQueue(req.Title, req.Role, agentMode, scheduleMode, cronExpr, req.ProjectID, nextRunAt, req.Concurrency, validTasks)
+	queue, createErr := h.batchTaskManager.CreateBatchQueue(req.Title, req.Role, agentMode, scheduleMode, cronExpr, req.ProjectID, nextRunAt, req.Concurrency, resolveModelErrorRetryMax(req.ModelRetryMax), validTasks)
 	if createErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": createErr.Error()})
 		return
@@ -2110,22 +2160,28 @@ func (h *AgentHandler) UpdateBatchTask(c *gin.Context) {
 	taskID := c.Param("taskId")
 
 	var req struct {
-		Message string `json:"message" binding:"required"`
+		Message     string  `json:"message"`
+		AIChannelID *string `json:"aiChannelId"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
 		return
 	}
-
-	if req.Message == "" {
+	if strings.TrimSpace(req.Message) == "" && req.AIChannelID == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "任务消息不能为空"})
 		return
 	}
-
-	err := h.batchTaskManager.UpdateTaskMessage(queueID, taskID, req.Message)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if strings.TrimSpace(req.Message) != "" {
+		if err := h.batchTaskManager.UpdateTaskMessage(queueID, taskID, req.Message); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if req.AIChannelID != nil {
+		if err := h.batchTaskManager.UpdateTaskChannel(queueID, taskID, *req.AIChannelID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// 返回更新后的队列信息
@@ -2142,7 +2198,8 @@ func (h *AgentHandler) AddBatchTask(c *gin.Context) {
 	queueID := c.Param("queueId")
 
 	var req struct {
-		Message string `json:"message" binding:"required"`
+		Message     string `json:"message" binding:"required"`
+		AIChannelID string `json:"aiChannelId,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
@@ -2154,7 +2211,7 @@ func (h *AgentHandler) AddBatchTask(c *gin.Context) {
 		return
 	}
 
-	task, err := h.batchTaskManager.AddTaskToQueue(queueID, req.Message)
+	task, err := h.batchTaskManager.AddTaskToQueue(queueID, req.Message, req.AIChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

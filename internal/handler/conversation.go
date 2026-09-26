@@ -2,11 +2,14 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cyberstrike-ai/internal/audit"
+	"cyberstrike-ai/internal/cache"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
 	"github.com/gin-gonic/gin"
@@ -24,6 +27,7 @@ type ConversationHandler struct {
 	logger      *zap.Logger
 	audit       *audit.Service
 	taskStopper ConversationTaskStopper
+	store       cache.Store
 }
 
 // SetAudit wires platform audit logging.
@@ -34,6 +38,10 @@ func (h *ConversationHandler) SetAudit(s *audit.Service) {
 // SetTaskStopper wires cancellation of in-flight agent tasks on conversation delete.
 func (h *ConversationHandler) SetTaskStopper(stopper ConversationTaskStopper) {
 	h.taskStopper = stopper
+}
+
+func (h *ConversationHandler) SetStore(store cache.Store) {
+	h.store = store
 }
 
 // NewConversationHandler 创建新的对话处理器
@@ -148,6 +156,13 @@ func (h *ConversationHandler) ListConversations(c *gin.Context) {
 		(c.Query("exclude_grouped") == "true" || c.Query("exclude_grouped") == "1")
 	sortBy := strings.TrimSpace(c.Query("sort_by"))
 	session, _ := security.CurrentSession(c)
+	cacheKey := fmt.Sprintf("conv-list:%s:%s:%d:%d:%s:%s:%s:%t", session.UserID, session.Scope, limit, offset, search, sortBy, projectID, excludeGrouped)
+	if h.store != nil {
+		if raw, ok := h.store.Get(c.Request.Context(), cacheKey); ok && len(raw) > 0 {
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+			return
+		}
+	}
 
 	var conversations []*database.Conversation
 	var total int
@@ -171,12 +186,20 @@ func (h *ConversationHandler) ListConversations(c *gin.Context) {
 	if conversations == nil {
 		conversations = []*database.Conversation{}
 	}
-	c.JSON(http.StatusOK, gin.H{
+	payload := gin.H{
 		"conversations": conversations,
 		"total":         total,
 		"limit":         limit,
 		"offset":        offset,
-	})
+	}
+	if h.store != nil {
+		if raw, err := json.Marshal(payload); err == nil {
+			h.store.Set(c.Request.Context(), cacheKey, raw, 8*time.Second)
+			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+			return
+		}
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 // GetConversation 获取对话
@@ -373,7 +396,7 @@ func summarizeProcessDetailData(eventType string, data interface{}) interface{} 
 		"success": true, "isError": true, "executionId": true,
 		"einoAgent": true, "einoRole": true, "einoScope": true, "orchestration": true,
 		"agentFacing": true,
-		"status": true, "modelFacingIsError": true, "resultPreview": true,
+		"status":      true, "modelFacingIsError": true, "resultPreview": true,
 	}
 	out := make(map[string]interface{}, len(allow)+1)
 	for k, v := range m {

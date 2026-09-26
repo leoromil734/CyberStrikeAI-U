@@ -17,6 +17,7 @@ func TestComposeSystemPromptIncludesSharedContractOnce(t *testing.T) {
 	required := []string{
 		"## 范围与执行边界",
 		"## 证据闭环",
+		"## 低价值面不测",
 		"## 独立安全边界",
 		"## 执行与恢复",
 		"## Skill 路由",
@@ -87,6 +88,12 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 	if !strings.Contains(EvidenceLoopSection(), "不能据此跳过新资产、新身份、JS/API") {
 		t.Fatal("Do-Not-Repeat scope must not suppress unexplored surfaces")
 	}
+	if !strings.Contains(EvidenceLoopSection(), "下一条必须验证队首") {
+		t.Fatal("evidence loop must verify the candidate queue before another scan")
+	}
+	if !strings.Contains(SkipLowValueSection(), "不发请求") || !strings.Contains(SkipLowValueSection(), "反射型 XSS") {
+		t.Fatal("low-value skip list must tell the agent not to test reflected XSS")
+	}
 	completion := CompletionContractSection()
 	for _, required := range []string{
 		"它只是进度更新",
@@ -103,7 +110,7 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 
 func TestSharedContractStaticBudget(t *testing.T) {
 	prompt := ComposeSystemPrompt("", PromptModeSingle)
-	if got := utf8.RuneCountInString(prompt); got > 3450 {
+	if got := utf8.RuneCountInString(prompt); got > 4600 {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
 	scope := ScopeAuthorizationSection()

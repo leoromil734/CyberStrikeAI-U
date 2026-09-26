@@ -162,8 +162,8 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 				},
 				"tasks": map[string]interface{}{
 					"type":        "array",
-					"description": "队列中的子任务指令，每项一条独立待执行文案（与 tasks_text 二选一）",
-					"items":       map[string]interface{}{"type": "string"},
+					"description": "子任务列表。每项可以是字符串，或对象 {message, ai_channel_id}。ai_channel_id 为空则跟随默认通道或队列级 ai_channel_id。",
+					"items":       map[string]interface{}{},
 				},
 				"tasks_text": map[string]interface{}{
 					"type":        "string",
@@ -193,7 +193,15 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 				},
 				"concurrency": map[string]interface{}{
 					"type":        "integer",
-					"description": "同时执行的子任务数，默认 1（串行），最大 8。含扫描类工具时建议 1-2。",
+					"description": "同时执行的子任务数。0 或未填时按任务条数并行，最大 32。",
+				},
+				"model_retry_max": map[string]interface{}{
+					"type":        "integer",
+					"description": "模型报错导致子任务中断后的自动重试次数。未填默认 3，0 表示不额外重试，最大 8。",
+				},
+				"ai_channel_id": map[string]interface{}{
+					"type":        "string",
+					"description": "未单独指定模型的子任务使用的模型通道 ID。空则跟随系统默认通道。",
 				},
 			},
 		},
@@ -201,6 +209,12 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 		tasks, errMsg := batchMCPTasksFromArgs(args)
 		if errMsg != "" {
 			return batchMCPTextResult(errMsg, true), nil
+		}
+		defaultChannel := mcpArgString(args, "ai_channel_id")
+		for i := range tasks {
+			if strings.TrimSpace(tasks[i].AIChannelID) == "" {
+				tasks[i].AIChannelID = defaultChannel
+			}
 		}
 		title := mcpArgString(args, "title")
 		role := mcpArgString(args, "role")
@@ -230,7 +244,12 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 			}
 		}
 		concurrency := int(mcpArgFloat(args, "concurrency"))
-		queue, createErr := h.batchTaskManager.CreateBatchQueue(title, role, agentMode, scheduleMode, cronExpr, projectID, nextRunAt, concurrency, tasks)
+		var modelRetry *int
+		if _, ok := args["model_retry_max"]; ok {
+			n := int(mcpArgFloat(args, "model_retry_max"))
+			modelRetry = &n
+		}
+		queue, createErr := h.batchTaskManager.CreateBatchQueue(title, role, agentMode, scheduleMode, cronExpr, projectID, nextRunAt, concurrency, resolveModelErrorRetryMax(modelRetry), tasks)
 		if createErr != nil {
 			return batchMCPTextResult("创建队列失败: "+createErr.Error(), true), nil
 		}
@@ -432,7 +451,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 				},
 				"concurrency": map[string]interface{}{
 					"type":        "integer",
-					"description": "同时执行的子任务数，默认 1，最大 8",
+					"description": "同时执行的子任务数，最大 32",
 				},
 			},
 			"required": []string{"queue_id"},
@@ -575,6 +594,10 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 					"type":        "string",
 					"description": "任务指令内容",
 				},
+				"ai_channel_id": map[string]interface{}{
+					"type":        "string",
+					"description": "该子任务使用的模型通道 ID。空则跟随系统默认通道。",
+				},
 			},
 			"required": []string{"queue_id", "message"},
 		},
@@ -584,7 +607,7 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		if qid == "" || msg == "" {
 			return batchMCPTextResult("queue_id 与 message 均不能为空", true), nil
 		}
-		task, err := h.batchTaskManager.AddTaskToQueue(qid, msg)
+		task, err := h.batchTaskManager.AddTaskToQueue(qid, msg, mcpArgString(args, "ai_channel_id"))
 		if err != nil {
 			return batchMCPTextResult(err.Error(), true), nil
 		}
@@ -780,16 +803,30 @@ func batchMCPJSONResult(v interface{}) (*mcp.ToolResult, error) {
 	return &mcp.ToolResult{Content: []mcp.Content{{Type: "text", Text: string(b)}}}, nil
 }
 
-func batchMCPTasksFromArgs(args map[string]interface{}) ([]string, string) {
+func batchMCPTasksFromArgs(args map[string]interface{}) ([]BatchTaskInput, string) {
 	if raw, ok := args["tasks"]; ok && raw != nil {
 		switch t := raw.(type) {
 		case []interface{}:
-			out := make([]string, 0, len(t))
+			out := make([]BatchTaskInput, 0, len(t))
 			for _, x := range t {
-				if s, ok := x.(string); ok {
-					if tr := strings.TrimSpace(s); tr != "" {
-						out = append(out, tr)
+				switch item := x.(type) {
+				case string:
+					if tr := strings.TrimSpace(item); tr != "" {
+						out = append(out, BatchTaskInput{Message: tr})
 					}
+				case map[string]interface{}:
+					msg := strings.TrimSpace(mcpArgString(item, "message"))
+					if msg == "" {
+						msg = strings.TrimSpace(mcpArgString(item, "text"))
+					}
+					if msg == "" {
+						continue
+					}
+					channel := mcpArgString(item, "ai_channel_id")
+					if channel == "" {
+						channel = mcpArgString(item, "aiChannelId")
+					}
+					out = append(out, BatchTaskInput{Message: msg, AIChannelID: channel})
 				}
 			}
 			if len(out) > 0 {
@@ -799,17 +836,17 @@ func batchMCPTasksFromArgs(args map[string]interface{}) ([]string, string) {
 	}
 	if txt := mcpArgString(args, "tasks_text"); txt != "" {
 		lines := strings.Split(txt, "\n")
-		out := make([]string, 0, len(lines))
+		out := make([]BatchTaskInput, 0, len(lines))
 		for _, line := range lines {
 			if tr := strings.TrimSpace(line); tr != "" {
-				out = append(out, tr)
+				out = append(out, BatchTaskInput{Message: tr})
 			}
 		}
 		if len(out) > 0 {
 			return out, ""
 		}
 	}
-	return nil, "需要提供 tasks（字符串数组）或 tasks_text（多行文本，每行一条任务）"
+	return nil, "需要提供 tasks（字符串数组，或含 message/ai_channel_id 的对象数组）或 tasks_text（多行文本，每行一条任务）"
 }
 
 func mcpArgString(args map[string]interface{}, key string) string {

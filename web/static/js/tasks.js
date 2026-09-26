@@ -899,10 +899,21 @@ async function showBatchImportModal() {
             cronExprInput.value = '';
         }
         if (executeNowCheckbox) {
-            executeNowCheckbox.checked = false;
+            executeNowCheckbox.checked = true;
+        }
+        const concurrencyInput = document.getElementById('batch-queue-concurrency');
+        if (concurrencyInput) {
+            concurrencyInput.value = '1';
+            concurrencyInput.dataset.touched = '';
         }
         handleBatchScheduleModeChange();
         updateBatchImportStats('');
+        batchTaskModelByIndex = [];
+        const retryInput = document.getElementById('batch-queue-model-retry');
+        if (retryInput) retryInput.value = '3';
+        await ensureBatchAIChannels();
+        fillBatchModelSelect(document.getElementById('batch-queue-default-model'), '');
+        syncBatchTaskModelRows('');
         
         // 加载并填充角色列表
         if (roleSelect && typeof loadRoles === 'function') {
@@ -963,10 +974,13 @@ function handleBatchScheduleModeChange() {
 // 更新新建任务统计
 function updateBatchImportStats(text) {
     const statsEl = document.getElementById('batch-import-stats');
-    if (!statsEl) return;
-    
-    const lines = text.split('\n').filter(line => line.trim() !== '');
+    const lines = String(text || '').split('\n').filter(line => line.trim() !== '');
     const count = lines.length;
+    const concurrencyInput = document.getElementById('batch-queue-concurrency');
+    if (concurrencyInput && concurrencyInput.dataset.touched !== '1') {
+        concurrencyInput.value = String(Math.max(1, Math.min(count || 1, 32)));
+    }
+    if (!statsEl) return;
     
     if (count > 0) {
         statsEl.innerHTML = '<div class="batch-import-stat">' + _t('tasks.taskCount', { count: count }) + '</div>';
@@ -982,9 +996,110 @@ document.addEventListener('DOMContentLoaded', function() {
     if (input) {
         input.addEventListener('input', function() {
             updateBatchImportStats(this.value);
+            syncBatchTaskModelRows(this.value);
+        });
+    }
+    const concurrencyInput = document.getElementById('batch-queue-concurrency');
+    if (concurrencyInput) {
+        concurrencyInput.addEventListener('input', function() {
+            this.dataset.touched = '1';
         });
     }
 });
+
+let batchAIChannels = {};
+let batchTaskModelByIndex = [];
+
+async function ensureBatchAIChannels() {
+    if (Object.keys(batchAIChannels).length > 0) return batchAIChannels;
+    try {
+        const response = await apiFetch('/api/config');
+        if (!response.ok) return batchAIChannels;
+        const cfg = await response.json();
+        const channels = (cfg.ai && cfg.ai.channels) || {};
+        const safe = {};
+        Object.keys(channels).forEach(function (id) {
+            const ch = channels[id] || {};
+            safe[id] = { name: ch.name || id, model: ch.model || '' };
+        });
+        batchAIChannels = safe;
+    } catch (error) {
+        console.warn('加载模型通道失败:', error);
+    }
+    return batchAIChannels;
+}
+
+function batchAIChannelLabel(id) {
+    if (!id) return _t('batchImportModal.modelDefault');
+    const ch = batchAIChannels[id];
+    if (!ch) return id;
+    return (ch.name || id) + (ch.model ? ' · ' + ch.model : '');
+}
+
+function batchAIChannelOptionsHTML(selected) {
+    const current = selected || '';
+    let html = '<option value="">' + escapeHtml(_t('batchImportModal.modelDefault')) + '</option>';
+    Object.keys(batchAIChannels).sort().forEach(function (id) {
+        html += '<option value="' + escapeHtml(id) + '"' + (id === current ? ' selected' : '') + '>' + escapeHtml(batchAIChannelLabel(id)) + '</option>';
+    });
+    return html;
+}
+
+function fillBatchModelSelect(select, selected) {
+    if (!select) return;
+    select.innerHTML = batchAIChannelOptionsHTML(selected);
+    select.value = selected || '';
+}
+
+function batchTaskLines(text) {
+    return String(text || '').split('\n').map(function (line) { return line.trim(); }).filter(function (line) { return line !== ''; });
+}
+
+function syncBatchTaskModelRows(text) {
+    const box = document.getElementById('batch-task-model-rows');
+    if (!box) return;
+    const lines = batchTaskLines(text);
+    const prev = batchTaskModelByIndex.slice();
+    const fallback = (document.getElementById('batch-queue-default-model') || {}).value || '';
+    batchTaskModelByIndex = lines.map(function (_, index) {
+        return prev[index] != null ? prev[index] : fallback;
+    });
+    if (lines.length === 0) {
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = lines.map(function (line, index) {
+        const preview = line.length > 72 ? line.slice(0, 72) + '...' : line;
+        return '<div class="batch-task-model-row" style="display:flex; gap:8px; align-items:center; margin-top:6px;">' +
+            '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.8rem;" title="' + escapeHtml(line) + '">#' + (index + 1) + ' ' + escapeHtml(preview) + '</span>' +
+            '<select class="batch-task-model-select" data-index="' + index + '" style="max-width:280px;">' + batchAIChannelOptionsHTML(batchTaskModelByIndex[index]) + '</select>' +
+            '</div>';
+    }).join('');
+    box.querySelectorAll('.batch-task-model-select').forEach(function (select) {
+        select.addEventListener('change', function () {
+            const index = parseInt(select.getAttribute('data-index'), 10);
+            if (Number.isFinite(index)) batchTaskModelByIndex[index] = select.value || '';
+        });
+    });
+}
+
+function applyBatchDefaultModelToRows() {
+    const fallback = (document.getElementById('batch-queue-default-model') || {}).value || '';
+    batchTaskModelByIndex = batchTaskModelByIndex.map(function () { return fallback; });
+    const input = document.getElementById('batch-tasks-input');
+    syncBatchTaskModelRows(input ? input.value : '');
+}
+
+function collectBatchTaskPayloads() {
+    const input = document.getElementById('batch-tasks-input');
+    const lines = batchTaskLines(input ? input.value : '');
+    return lines.map(function (message, index) {
+        return {
+            message: message,
+            aiChannelId: batchTaskModelByIndex[index] || '',
+        };
+    });
+}
 
 // 创建批量任务队列
 async function createBatchQueue() {
@@ -1006,8 +1121,7 @@ async function createBatchQueue() {
         return;
     }
     
-    // 按行分割任务
-    const tasks = text.split('\n').map(line => line.trim()).filter(line => line !== '');
+    const tasks = collectBatchTaskPayloads();
     if (tasks.length === 0) {
         alert(_t('tasks.noValidTask'));
         return;
@@ -1024,9 +1138,13 @@ async function createBatchQueue() {
     const scheduleMode = scheduleModeSelect ? (scheduleModeSelect.value === 'cron' ? 'cron' : 'manual') : 'manual';
     const cronExpr = cronExprInput ? cronExprInput.value.trim() : '';
     const executeNow = executeNowCheckbox ? !!executeNowCheckbox.checked : false;
-    let concurrency = concurrencyInput ? parseInt(concurrencyInput.value, 10) : 1;
-    if (!Number.isFinite(concurrency) || concurrency < 1) concurrency = 1;
-    if (concurrency > 8) concurrency = 8;
+    let concurrency = concurrencyInput ? parseInt(concurrencyInput.value, 10) : tasks.length;
+    if (!Number.isFinite(concurrency) || concurrency < 1) concurrency = tasks.length;
+    if (concurrency > 32) concurrency = 32;
+    const retryInput = document.getElementById('batch-queue-model-retry');
+    let modelRetryMax = retryInput ? parseInt(retryInput.value, 10) : 3;
+    if (!Number.isFinite(modelRetryMax) || modelRetryMax < 0) modelRetryMax = 3;
+    if (modelRetryMax > 8) modelRetryMax = 8;
     if (scheduleMode === 'cron' && !cronExpr) {
         alert(_t('batchImportModal.cronExprRequired'));
         return;
@@ -1052,6 +1170,7 @@ async function createBatchQueue() {
                 executeNow,
                 projectId,
                 concurrency,
+                modelRetryMax,
             }),
         });
         
@@ -1740,6 +1859,7 @@ async function showBatchQueueDetail(queueId) {
         if (!response.ok) {
             throw new Error(_t('tasks.getQueueDetailFailed'));
         }
+        await ensureBatchAIChannels();
         
         const result = await response.json();
         const queue = result.queue;
@@ -1847,6 +1967,7 @@ async function showBatchQueueDetail(queueId) {
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.agentMode'))}</span><span class="bq-kv__v" id="bq-agentmode-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditAgentMode()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(agentModeText)}</span>` : escapeHtml(agentModeText)}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.scheduleMode'))}</span><span class="bq-kv__v" id="bq-schedule-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditSchedule()" title="${escapeHtml(_t('common.edit'))}">${scheduleDetail}</span>` : scheduleDetail}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.concurrency'))}</span><span class="bq-kv__v" id="bq-concurrency-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditConcurrency()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span>` : escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.modelRetry'))}</span><span class="bq-kv__v">${escapeHtml(String(Number.isFinite(queue.modelRetryMax) ? queue.modelRetryMax : 3))}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.taskTotal'))}</span><span class="bq-kv__v">${queue.tasks.length}</span></div>
                 ${queue.scheduleMode === 'cron' ? `<div class="bq-kv bq-kv--block"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAuto'))}</span><span class="bq-kv__v bq-kv__v--control"><label class="bq-cron-toggle"><input type="checkbox" ${queue.scheduleEnabled !== false ? 'checked' : ''} onchange="updateBatchQueueScheduleEnabled(this.checked)" /><span class="bq-cron-toggle__hint">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}</span></label></span></div>` : ''}
             </section>
@@ -1873,18 +1994,22 @@ async function showBatchQueueDetail(queueId) {
                     const canRunSingle = batchQueueCanRunSingleTask(queue, task);
                     const runSingleUnavailableTitle = escapeHtml(batchQueueRunSingleTaskDisabledReason(queue, task));
                     const taskMessageEscaped = escapeHtml(task.message).replace(/'/g, "&#39;").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
+                    const modelLabel = batchAIChannelLabel(task.aiChannelId);
+                    const retryNote = task.retryCount > 0 ? _t('batchQueueDetailModal.retried', { count: task.retryCount }) : '';
                     return `
                         <div class="batch-task-item ${task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${queue.id}" data-task-id="${task.id}" data-task-message="${taskMessageEscaped}">
                             <div class="batch-task-header">
                                 <span class="batch-task-index">#${index + 1}</span>
                                 <span class="batch-task-status ${taskStatus.class}">${taskStatus.text}</span>
                                 <span class="batch-task-message" title="${escapeHtml(task.message)}">${escapeHtml(task.message)}</span>
+                                ${canEdit ? `<select class="batch-task-model-select" title="${escapeHtml(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModel('${queue.id}', '${task.id}', this.value); event.stopPropagation();">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
                                 <button class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? `onclick="runSingleBatchTask('${queue.id}', '${task.id}'); event.stopPropagation();"` : `disabled title="${runSingleUnavailableTitle}"`}>` + _t('tasks.runSingleTask') + `</button>
                                 ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewBatchTaskConversation('${task.conversationId}'); event.stopPropagation();">` + _t('tasks.viewConversation') + `</button>` : ''}
                                 ${canEdit ? `<button class="btn-secondary btn-small batch-task-edit-btn" onclick="editBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.edit') + `</button>` : ''}
                                 ${canEdit ? `<button class="btn-secondary btn-small btn-danger batch-task-delete-btn" onclick="deleteBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.delete') + `</button>` : ''}
                             </div>
                             ${task.startedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.startLabel') + `: ${new Date(task.startedAt).toLocaleString()}</div>` : ''}
+                            ${retryNote ? `<div class="batch-task-time">${escapeHtml(retryNote)}</div>` : ''}
                             ${task.completedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.completeLabel') + `: ${new Date(task.completedAt).toLocaleString()}</div>` : ''}
                             ${task.error ? `<div class="batch-task-error">` + _t('batchQueueDetailModal.errorLabel') + `: ${escapeHtml(task.error)}</div>` : ''}
                             ${task.result ? `<div class="batch-task-result">` + _t('batchQueueDetailModal.resultLabel') + `: ${escapeHtml(task.result.substring(0, 200))}${task.result.length > 200 ? '...' : ''}</div>` : ''}
@@ -2249,7 +2374,24 @@ async function saveInlineTask(queueId, taskId) {
     }
 }
 
-// 显示添加批量任务模态框
+async function updateBatchTaskModel(queueId, taskId, aiChannelId) {
+    if (!queueId || !taskId) return;
+    try {
+        const response = await apiFetch(`/api/batch-tasks/${queueId}/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ aiChannelId: aiChannelId || '' }),
+        });
+        if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.error || _t('tasks.updateTaskFailed'));
+        }
+    } catch (error) {
+        console.error(error);
+        alert(_t('tasks.updateTaskFailed') + ': ' + error.message);
+        showBatchQueueDetail(queueId);
+    }
+}
 function showAddBatchTaskModal() {
     if (typeof requirePermission === 'function' && !requirePermission('tasks:write')) return;
     const queueId = batchQueuesState.currentQueueId;
@@ -2267,6 +2409,9 @@ function showAddBatchTaskModal() {
     }
     
     messageInput.value = '';
+    ensureBatchAIChannels().then(function () {
+        fillBatchModelSelect(document.getElementById('add-task-model'), '');
+    });
     openAppModal('add-batch-task-modal', { focusEl: messageInput });
     
     // 清理旧的事件监听器
@@ -2344,7 +2489,10 @@ async function saveAddBatchTask() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: message }),
+            body: JSON.stringify({
+                message: message,
+                aiChannelId: (document.getElementById('add-task-model') || {}).value || '',
+            }),
         });
         
         if (!response.ok) {
@@ -2659,7 +2807,7 @@ async function saveInlineAgentMode() {
 function normalizeBatchQueueConcurrencyInput(raw) {
     let n = parseInt(raw, 10);
     if (!Number.isFinite(n) || n < 1) n = 1;
-    if (n > 8) n = 8;
+    if (n > 32) n = 32;
     return n;
 }
 
@@ -2673,7 +2821,7 @@ function startInlineEditConcurrency() {
         const queue = detail.queue || {};
         const current = normalizeBatchQueueConcurrencyInput(queue.concurrency || 1);
         container.innerHTML = `<span class="bq-inline-edit-controls">
-            <input type="number" id="bq-edit-concurrency" min="1" max="8" value="${current}" style="width:72px;" />
+            <input type="number" id="bq-edit-concurrency" min="1" max="32" value="${current}" style="width:72px;" />
         </span>`;
         const inp = document.getElementById('bq-edit-concurrency');
         if (!inp) return;
@@ -2844,6 +2992,8 @@ async function saveInlineSchedule() {
 window.showBatchImportModal = showBatchImportModal;
 window.closeBatchImportModal = closeBatchImportModal;
 window.createBatchQueue = createBatchQueue;
+window.applyBatchDefaultModelToRows = applyBatchDefaultModelToRows;
+window.updateBatchTaskModel = updateBatchTaskModel;
 window.showBatchQueueDetail = showBatchQueueDetail;
 window.startBatchQueue = startBatchQueue;
 window.pauseBatchQueue = pauseBatchQueue;

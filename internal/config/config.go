@@ -31,6 +31,7 @@ type Config struct {
 	Hitl        HitlConfig            `yaml:"hitl,omitempty" json:"hitl,omitempty"`
 	Security    SecurityConfig        `yaml:"security"`
 	Database    DatabaseConfig        `yaml:"database"`
+	Redis       RedisConfig           `yaml:"redis,omitempty" json:"redis,omitempty"`
 	Auth        AuthConfig            `yaml:"auth"`
 	Audit       AuditConfig           `yaml:"audit,omitempty" json:"audit,omitempty"`
 	Monitor     MonitorConfig         `yaml:"monitor,omitempty" json:"monitor,omitempty"`
@@ -1077,6 +1078,15 @@ type DatabaseConfig struct {
 	// 为 false 且未配置时，知识库表建在主库中。
 }
 
+// RedisConfig 页面热数据缓存。未启用或连接失败时自动退回进程内缓存。
+type RedisConfig struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	Addr     string `yaml:"addr,omitempty" json:"addr,omitempty"`
+	Password string `yaml:"password,omitempty" json:"password,omitempty"`
+	DB       int    `yaml:"db,omitempty" json:"db,omitempty"`
+	Prefix   string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+}
+
 type AgentConfig struct {
 	MaxIterations                      int `yaml:"max_iterations" json:"max_iterations"`
 	ToolTimeoutMinutes                 int `yaml:"tool_timeout_minutes" json:"tool_timeout_minutes"`                                     // 单次工具执行最大时长（分钟），超时自动终止，防止长时间挂起；0 表示不限制（不推荐）
@@ -1930,8 +1940,8 @@ func Default() *Config {
 			MaxIterations:                      30,  // 默认最大迭代次数
 			ToolTimeoutMinutes:                 10,  // 单次工具执行默认最多 10 分钟，避免异常长时间占用
 			ToolWaitTimeoutSeconds:             60,  // 外部 MCP 工具单轮最多等待 60 秒，超时后返回 execution_id 可继续等待
-			ExternalMCPMaxConcurrentPerServer:  2,   // 单个外部 MCP server 默认最多 2 个工具同时执行
-			ExternalMCPMaxConcurrentTotal:      16,  // 外部 MCP 工具全局默认最多 16 个同时执行
+			ExternalMCPMaxConcurrentPerServer:  8,   // 单个外部 MCP server 默认可并行工具数
+			ExternalMCPMaxConcurrentTotal:      64,  // 外部 MCP 工具全局默认可并行数
 			ExternalMCPCircuitFailureThreshold: 3,   // 单个 server 连续 3 次失败后临时熔断
 			ExternalMCPCircuitCooldownSeconds:  60,  // 熔断默认冷却 60 秒
 			ShellNoOutputTimeoutSeconds:        300, // execute/exec 无新输出空闲终止（秒）；-1 关闭

@@ -164,7 +164,15 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		assistantMessageID = assistantMsg.ID
 	}
 
-	h.logger.Info("执行批量任务", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("message", task.Message), zap.String("role", queue.Role), zap.String("conversationId", conversationID))
+	h.logger.Info("执行批量任务",
+		zap.String("queueId", queueID),
+		zap.String("taskId", task.ID),
+		zap.String("message", task.Message),
+		zap.String("role", queue.Role),
+		zap.String("conversationId", conversationID),
+		zap.String("aiChannelId", strings.TrimSpace(task.AIChannelID)),
+		zap.Int("modelRetryMax", queue.ModelRetryMax),
+	)
 
 	principalCtx := authctx.WithPrincipal(context.Background(), principal)
 	baseCtx, cancelWithCause := context.WithCancelCause(principalCtx)
@@ -239,17 +247,41 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		batchOrch = "deep"
 	}
 
+	runCfg := h.batchTaskRunConfig(task.AIChannelID)
+	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)
 	var resultMA *multiagent.RunResult
 	var runErr error
-	switch {
-	case useBatchMulti:
-		resultMA, runErr = multiagent.RunDeepAgent(taskCtx, h.config, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
-	default:
-		if h.config == nil {
-			runErr = fmt.Errorf("服务器配置未加载")
-		} else {
-			resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, h.config, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			if !h.waitBatchModelRetry(taskCtx, queueID, task, conversationID, assistantMessageID, attempt, maxRetry, runErr) {
+				if taskCtx.Err() != nil {
+					runErr = taskCtx.Err()
+				}
+				break
+			}
 		}
+		switch {
+		case useBatchMulti:
+			resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
+		default:
+			if runCfg == nil {
+				runErr = fmt.Errorf("服务器配置未加载")
+			} else {
+				resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
+			}
+		}
+		if runErr == nil || attempt >= maxRetry || !batchModelErrorShouldRetry(baseCtx, taskCtx, runErr) {
+			break
+		}
+		h.logger.Warn("批量任务因模型报错中断，将自动重试",
+			zap.String("queueId", queueID),
+			zap.String("taskId", task.ID),
+			zap.String("conversationId", conversationID),
+			zap.String("aiChannelId", strings.TrimSpace(task.AIChannelID)),
+			zap.Int("attempt", attempt+1),
+			zap.Int("maxRetries", maxRetry),
+			zap.Error(runErr),
+		)
 	}
 
 	if runErr != nil {
@@ -360,4 +392,60 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 		}
 	}
 	h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", runErr.Error())
+}
+
+func (h *AgentHandler) batchTaskRunConfig(channelID string) *config.Config {
+	if h == nil || h.config == nil {
+		return nil
+	}
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return h.config
+	}
+	cfg, _, err := h.configForAIChannel(channelID)
+	if err != nil || cfg == nil {
+		if h.logger != nil {
+			h.logger.Warn("批量任务指定模型通道不可用，改用默认通道", zap.String("aiChannelId", channelID), zap.Error(err))
+		}
+		return h.config
+	}
+	return cfg
+}
+
+func batchModelErrorShouldRetry(baseCtx, taskCtx context.Context, runErr error) bool {
+	if runErr == nil {
+		return false
+	}
+	if errors.Is(context.Cause(baseCtx), ErrTaskCancelled) {
+		return false
+	}
+	if taskCtx != nil && taskCtx.Err() != nil {
+		return false
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return false
+	}
+	return multiagent.IsModelInterruptError(runErr)
+}
+
+func (h *AgentHandler) waitBatchModelRetry(taskCtx context.Context, queueID string, task *BatchTask, conversationID, assistantMessageID string, attempt, maxRetry int, runErr error) bool {
+	if task == nil || runErr == nil {
+		return false
+	}
+	h.batchTaskManager.NoteTaskModelRetry(queueID, task.ID, attempt, runErr.Error())
+	if assistantMessageID != "" && h.db != nil {
+		note := fmt.Sprintf("模型报错，正在第 %d/%d 次自动重试…\n%s", attempt, maxRetry, runErr.Error())
+		_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", note, time.Now(), assistantMessageID)
+		_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "retry", note, nil)
+	}
+	backoff := time.Duration(attempt) * 2 * time.Second
+	if backoff > 12*time.Second {
+		backoff = 12 * time.Second
+	}
+	select {
+	case <-taskCtx.Done():
+		return false
+	case <-time.After(backoff):
+		return true
+	}
 }

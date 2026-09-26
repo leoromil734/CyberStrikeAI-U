@@ -118,8 +118,8 @@ func NewExternalMCPManagerWithStorage(logger *zap.Logger, storage MonitorStorage
 		toolWaitTimeout:    60 * time.Second,
 		toolResultMaxBytes: DefaultToolResultMaxBytes,
 		resilience: ExternalMCPResilienceConfig{
-			MaxConcurrentPerServer:  2,
-			MaxConcurrentTotal:      16,
+			MaxConcurrentPerServer:  8,
+			MaxConcurrentTotal:      64,
 			CircuitFailureThreshold: 3,
 			CircuitCooldown:         60 * time.Second,
 		},
@@ -192,10 +192,10 @@ func (m *ExternalMCPManager) ConfigureResilience(cfg ExternalMCPResilienceConfig
 
 func normalizeExternalMCPResilienceConfig(cfg ExternalMCPResilienceConfig) ExternalMCPResilienceConfig {
 	if cfg.MaxConcurrentPerServer == 0 {
-		cfg.MaxConcurrentPerServer = 2
+		cfg.MaxConcurrentPerServer = 8
 	}
 	if cfg.MaxConcurrentTotal == 0 {
-		cfg.MaxConcurrentTotal = 16
+		cfg.MaxConcurrentTotal = 64
 	}
 	if cfg.CircuitFailureThreshold == 0 {
 		cfg.CircuitFailureThreshold = 3

@@ -17,6 +17,7 @@ user_prompt: |
   5) JWT：jwt-analyzer（none/弱密钥/声明篡改）仅在有证据时 record
   6) 注入：sqlmap/手测；入口须已证明非边缘误拦
   7) 每个确认端点与 finding 写 fact；区分 edge_block 与 app_403
+  8) 登录/短信口令/密码接口按 credential-stuffing 做一次有界撞库；进号才 record，类型写撞库。低价值面不测：CORS、安全头、弱 TLS、无会话开放重定向、打不到他人会话的 XSS、只有标题摘要的越权、没动钱和审核的逻辑与并发、无密钥敏感路径
 
   ## 禁止
   未复现不 record_vulnerability；不把 CDN/TLS 拦截当成「无接口」；不把 401/403 本身当高危除非可绕过。

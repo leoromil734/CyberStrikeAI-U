@@ -8406,6 +8406,13 @@ async function loadConversationsWithGroups(searchQuery = '', options = {}) {
     const refreshMeta = options.refreshMeta !== false;
     const scrollToTop = options.scrollToTop === true;
     const intentPage = Number.isFinite(options.intentPage) ? options.intentPage : null;
+    const loadKey = [searchQuery || '', intentPage == null ? '' : String(intentPage), conversationSortBy, typeof getConversationProjectFilter === 'function' ? getConversationProjectFilter() : '', refreshMeta ? '1' : '0'].join('|');
+    const now = Date.now();
+    if (!options.force && loadConversationsWithGroups._lastKey === loadKey && now - (loadConversationsWithGroups._lastAt || 0) < 400) {
+        return;
+    }
+    loadConversationsWithGroups._lastKey = loadKey;
+    loadConversationsWithGroups._lastAt = now;
     const navigateGenAtStart = conversationsListNavigateGen;
     const loadSeq = ++conversationsListLoadSeq;
     try {
@@ -8476,6 +8483,7 @@ async function loadConversationsWithGroups(searchQuery = '', options = {}) {
             }
             loadConversationsWithGroups(searchQuery, {
                 ...options,
+                force: true,
                 intentPage: pageCheck.clampedPage,
                 scrollToTop: options.scrollToTop === true || activePage !== pageCheck.clampedPage,
             });
@@ -8483,7 +8491,7 @@ async function loadConversationsWithGroups(searchQuery = '', options = {}) {
         }
         if (intentPage == null && clampConversationsPageToTotal()) {
             if (isStaleConversationListLoad(loadSeq, intentPage, navigateGenAtStart, activePage)) return;
-            loadConversationsWithGroups(searchQuery, options);
+            loadConversationsWithGroups(searchQuery, { ...options, force: true });
             return;
         }
 

@@ -21,6 +21,7 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 		ScopeAuthorizationSection(),
 		modeLifecycleSection(mode),
 		EvidenceLoopSection(),
+		SkipLowValueSection(),
 		IndependentBoundarySection(),
 		ExecutionRecoverySection(),
 		SkillsRoutingSection(),
@@ -69,7 +70,16 @@ func modeLifecycleSection(mode PromptMode) string {
 func EvidenceLoopSection() string {
 	return `## 证据闭环
 
-按 **Surface → Hypothesize → Verify → Record/Negate** 推进：Surface 明确资产/入口/边界/身份；Hypothesize 形成可证伪候选；Verify 单变量对照取证据；Record/Negate 可复现才 confirmed，扫描/版本匹配仅 tentative。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。先高价值入口，再高置信候选。同类方法连续三次无进展则换路。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。`
+按 Surface → Hypothesize → Verify → Record/Negate 推进。扫描、版本匹配和 nuclei 只入候选队列；队列非空时下一条必须验证队首，禁止再开一轮同类扫描。每个新 Web/API 入口按适用项测完才算覆盖：去掉或替换身份后再请求、替换对象 ID、参数单引号或模板差分、上传/路径/内网 URL、备份/swagger/.git/报错栈。未测不得写成已排除。可复现才 confirmed。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。同类方法连续三次无进展则换入口或风险族。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。低价值面见下一节，不在此覆盖要求内。`
+}
+
+// SkipLowValueSection 列出不测的低价值面，避免把时间花在没有实际危害的探针上。
+func SkipLowValueSection() string {
+	return `## 低价值面不测
+
+下列面不发请求、不升链、不记漏洞，覆盖账本直接 N/A：CORS；缺安全头、点击劫持、Cookie 缺 Secure/HttpOnly；证书过期、弱 TLS、缺 HSTS；只害自己的 CSRF；开放重定向但没带出会话；只能上传或下载、读不到敏感文件也不能执行；反射型 XSS 打不到别人会话；存储型 XSS 只出现在自己的资料或评论；越权只读到标题、摘要、昵称，没有手机号、证件或正文；日记/说说/相册过墙但只有标题或摘要；跨用户 CSRF 没改钱、没改密、没接管；逻辑只改自己的状态、积分或优惠券，钱和审核没动；并发只让自己多领一次，没打到别人余额；路径穿越只读到非敏感文件；缓存投毒或 Host 头没带到账号或内部数据；敏感路径打开了但没有密钥，只有内部路径或配置项。
+
+仍要测：XSS 打到他人会话；越权出手机号、证件或正文；上传或穿越读到敏感文件或可执行；CSRF、逻辑、并发动到钱、审核、改密或接管；开放重定向带出会话；敏感路径出密钥后按认钥继续。`
 }
 
 // IndependentBoundarySection 防止把既有身份能力误报为新漏洞。
@@ -90,7 +100,7 @@ func ExecutionRecoverySection() string {
 func SkillsRoutingSection() string {
 	return `## Skill 路由
 
-按 name/description 选最小集合再加载正文/references。出现 SRC、漏洞赏金、白帽、挖集团/品牌/站点或中文 SRC 报告语境时，优先加载 'src-hunting'；同一 SRC 任务后续即使只出现越权、接口、注入、上传、WAF、JS 等单类词，也继续使用其 'references/routing-index.md'，不切去通用 Web/API Skill。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
+按 name/description 选最小集合再加载正文/references。出现 SRC、漏洞赏金、白帽、挖集团/品牌/站点或中文 SRC 报告语境时，优先加载 'src-hunting'；同一 SRC 任务后续即使只出现越权、接口、注入、上传、WAF、JS 等单类词，也继续使用其 'references/routing-index.md'，不切去通用 Web/API Skill。登录、撞库、手机号口令再加 'credential-stuffing'，SRC 任务改读其 references/credential-stuffing.md。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
 }
 
 func ComprehensiveAssessmentSection() string {
