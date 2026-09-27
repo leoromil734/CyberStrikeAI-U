@@ -425,8 +425,16 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 				})
 			}
 		}
+		// 合并而非整体替换：主 Agent 与 SubAgent 共用同一 Agent 实例，
+		// 子代理按角色裁剪出的工具集更窄，整体替换会丢掉主代理的外部 MCP 名称映射，
+		// 导致执行阶段把外部工具误判为内部工具（报「工具未找到」）。
 		a.mu.Lock()
-		a.toolNameMapping = extMap
+		if a.toolNameMapping == nil {
+			a.toolNameMapping = make(map[string]string)
+		}
+		for openAIName, originalName := range extMap {
+			a.toolNameMapping[openAIName] = originalName
+		}
 		a.mu.Unlock()
 	}
 
@@ -559,6 +567,23 @@ func (a *Agent) executeToolViaMCP(ctx context.Context, toolName string, args map
 	a.mu.RLock()
 	originalToolName, isExternalTool := a.toolNameMapping[toolName]
 	a.mu.RUnlock()
+
+	// 兜底：映射缺失时按 "mcpName__toolName" 解析（OpenAI 命名规范），
+	// 仅当内部 MCP 未注册该工具、且 mcpName 确实是已配置的外部 MCP 时才判定为外部工具。
+	if !isExternalTool && a.externalMCPMgr != nil && a.mcpServer != nil && !a.mcpServer.HasTool(toolName) {
+		if idx := strings.Index(toolName, "__"); idx > 0 {
+			mcpName := toolName[:idx]
+			actualToolName := toolName[idx+2:]
+			if actualToolName != "" && a.externalMCPMgr.HasServerConfig(mcpName) {
+				originalToolName = mcpName + "::" + actualToolName
+				isExternalTool = true
+				a.logger.Debug("按前缀解析外部MCP工具",
+					zap.String("tool", toolName),
+					zap.String("originalName", originalToolName),
+				)
+			}
+		}
+	}
 
 	if isExternalTool && a.externalMCPMgr != nil {
 		// 使用原始工具名称调用外部MCP工具

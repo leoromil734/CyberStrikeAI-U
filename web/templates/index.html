@@ -3988,9 +3988,11 @@
                                                     <option value="" disabled data-i18n="settingsBasic.modelsListSelectPlaceholder">请选择模型</option>
                                                 </select>
                                                 <a href="javascript:void(0)" id="fetch-knowledge-embedding-models-btn" class="model-pick-fetch-link" onclick="fetchModelList('knowledgeEmbedding')" data-i18n="settingsBasic.fetchModels">获取列表</a>
+                                                <a href="javascript:void(0)" id="test-knowledge-embedding-btn" class="model-pick-fetch-link" onclick="testKnowledgeEmbedding()" data-i18n="settingsBasic.testEmbedding">测试连接</a>
                                             </div>
                                             <small id="fetch-knowledge-embedding-models-hint" class="form-hint" style="display: none; font-size: 0.75rem; margin-top: 4px;"></small>
                                             <span id="fetch-knowledge-embedding-models-result" style="font-size: 0.75rem; margin-top: 2px; display: block;"></span>
+                                            <span id="test-knowledge-embedding-result" style="font-size: 0.75rem; margin-top: 2px; display: block;"></span>
                                         </div>
 
                                         <div class="settings-subsection-header">

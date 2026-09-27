@@ -239,6 +239,17 @@ func (m *ExternalMCPManager) GetConfigs() map[string]config.ExternalMCPServerCon
 	return result
 }
 
+// HasServerConfig 判断是否存在指定名称的外部 MCP server 配置。
+func (m *ExternalMCPManager) HasServerConfig(name string) bool {
+	if m == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, exists := m.configs[name]
+	return exists
+}
+
 // AddOrUpdateConfig 添加或更新配置
 func (m *ExternalMCPManager) AddOrUpdateConfig(name string, serverCfg config.ExternalMCPServerConfig) error {
 	m.mu.Lock()

@@ -2112,11 +2112,20 @@ func (c MultiQueryConfig) MaxQueriesEffective() int {
 
 // RerankConfig 检索精排（始终启用）；支持 dashscope 与 Cohere 兼容 HTTP API。
 type RerankConfig struct {
+	// Enabled: 是否启用精排；未设置（nil）视为启用，保持向后兼容。
+	// 当检索端点不提供 rerank API（如 OpenRouter 只有 /embeddings）时应设为 false，
+	// 否则每次检索都会先发一次注定失败的请求，再回退到融合序。
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Provider: dashscope | cohere；空则按 base_url 自动推断。
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model    string `yaml:"model,omitempty" json:"model,omitempty"`
 	BaseURL  string `yaml:"base_url,omitempty" json:"base_url,omitempty"`
 	APIKey   string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+}
+
+// EnabledEffective 返回是否启用精排（未显式设置时视为启用）。
+func (c RerankConfig) EnabledEffective() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 func (c RerankConfig) ProviderEffective(baseURL string) string {

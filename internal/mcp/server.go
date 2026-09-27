@@ -893,6 +893,14 @@ func (s *Server) GetAllTools() []Tool {
 	return tools
 }
 
+// HasTool 判断指定名称的内部工具是否已注册。
+func (s *Server) HasTool(toolName string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, exists := s.tools[toolName]
+	return exists
+}
+
 // CallTool 直接调用工具（用于内部调用）
 func (s *Server) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (*ToolResult, string, error) {
 	_, authenticated := authctx.PrincipalFromContext(ctx)

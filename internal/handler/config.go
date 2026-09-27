@@ -3,7 +3,10 @@ package handler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1427,6 +1430,117 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		"success":    true,
 		"model":      chatResp.Model,
 		"latency_ms": latency.Milliseconds(),
+	})
+}
+
+// TestEmbeddingRequest 测试知识库嵌入模型。各字段留空时回退到已保存的 knowledge.embedding，
+// 因此可直接测试「界面上刚改还没保存」的配置。
+type TestEmbeddingRequest struct {
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+// TestEmbedding 用给定（或已保存）的嵌入配置做一次真实嵌入，验证配置是否可用。
+// 不要求知识库已启用，便于在保存配置、建立索引之前先确认端点可用。
+func (h *ConfigHandler) TestEmbedding(c *gin.Context) {
+	var req TestEmbeddingRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		return
+	}
+
+	h.mu.RLock()
+	cfg := h.config
+	h.mu.RUnlock()
+	if cfg == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "服务器配置未加载"})
+		return
+	}
+
+	// 以已保存的知识库配置为底，用请求字段覆盖
+	kc := cfg.Knowledge
+	if v := strings.TrimSpace(req.Provider); v != "" {
+		kc.Embedding.Provider = v
+	}
+	if v := strings.TrimSpace(req.Model); v != "" {
+		kc.Embedding.Model = v
+	}
+	if v := strings.TrimSpace(req.BaseURL); v != "" {
+		kc.Embedding.BaseURL = v
+	}
+	if v := strings.TrimSpace(req.APIKey); v != "" {
+		kc.Embedding.APIKey = v
+	}
+	// 连通性测试不应把限速等待和重试时间算进耗时，这里临时关闭
+	kc.Indexing.MaxRPM = 0
+	kc.Indexing.RateLimitDelayMs = 0
+	kc.Indexing.MaxRetries = 0
+	kc.Indexing.RetryDelayMs = 0
+
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		text = "CyberStrikeAI knowledge base embedding connectivity test"
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	embedder, err := knowledge.NewEmbedder(ctx, &kc, &cfg.OpenAI, h.logger)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	start := time.Now()
+	vec, err := embedder.EmbedText(ctx, text)
+	latency := time.Since(start)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success":    false,
+			"error":      "嵌入调用失败: " + err.Error(),
+			"latency_ms": latency.Milliseconds(),
+		})
+		return
+	}
+	if len(vec) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "API 返回空向量，请检查模型名称与 Base URL"})
+		return
+	}
+
+	// 健全性检查：全 0 或含 NaN/Inf 说明端点返回的不是有效向量
+	preview := make([]float64, 0, 5)
+	nonZero := 0
+	for i, v := range vec {
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"error":   fmt.Sprintf("向量第 %d 维为 NaN/Inf，端点返回异常", i),
+			})
+			return
+		}
+		if v != 0 {
+			nonZero++
+		}
+		if i < 5 {
+			preview = append(preview, math.Round(f*10000)/10000)
+		}
+	}
+	if nonZero == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "向量全部为 0，端点返回异常"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":        true,
+		"model":          embedder.EmbeddingModelName(),
+		"base_url":       strings.TrimSpace(kc.Embedding.BaseURL),
+		"dimension":      len(vec),
+		"latency_ms":     latency.Milliseconds(),
+		"vector_preview": preview,
 	})
 }
 

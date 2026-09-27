@@ -331,6 +331,17 @@ mcp:
   auth_header_value: "" # 全局服务凭证值，仅 allow_global_access=true 时生效
   allow_global_access: false # 高风险兼容模式：静态密钥映射为全局服务身份；默认请使用用户 Bearer Token
 # 外部 MCP 配置
+# 外部 MCP（stdio / http / sse）。也可在 Web「设置 → 外部 MCP」中增删。
+# 示例：接入 CloakBrowser 反检测浏览器工具集（安装与说明见 mcp-servers/cloakbrowser/README.md）
+#   cloakbrowser:
+#     type: stdio
+#     command: /opt/cloakbrowser-mcp/venv/bin/python
+#     args:
+#       - /opt/CyberStrikeAI-U/mcp-servers/cloakbrowser/mcp_cloakbrowser.py
+#     env:
+#       CLOAKBROWSER_MCP_HUMANIZE: "1"
+#       CLOAKBROWSER_MCP_OUTPUT_DIR: /opt/cloakbrowser-mcp/output
+#     external_mcp_enable: true
 external_mcp:
   servers: {}
 # 内置 C2：本机仅做对话/知识库时可设为 false，不启动监听器、不注册 C2 MCP 工具；省略本段时默认启用

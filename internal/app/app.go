@@ -1052,6 +1052,7 @@ func setupRoutes(
 		protected.POST("/config/apply", configHandler.ApplyConfig)
 		protected.POST("/config/test-openai", configHandler.TestOpenAI)
 		protected.POST("/config/test-vision", configHandler.TestVision)
+		protected.POST("/config/test-embedding", configHandler.TestEmbedding)
 		protected.POST("/config/list-models", configHandler.ListModels)
 
 		// 系统设置 - 终端（执行命令，提高运维效率）

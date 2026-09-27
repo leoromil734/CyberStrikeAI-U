@@ -46,11 +46,17 @@ func WireRetrieverPipeline(ctx context.Context, r *Retriever, openAI *config.Ope
 		return fmt.Errorf("multi_query rewrite model: %w", err)
 	}
 
-	reranker, err := NewHTTPReranker(&r.config.Rerank, openAI, r.logger)
-	if err != nil {
-		return fmt.Errorf("reranker: %w", err)
+	// 精排可显式关闭：部分端点（如 OpenRouter）只提供 /embeddings，不提供 rerank API，
+	// 开启只会让每次检索先发一次注定失败的请求，再回退到融合序。
+	if r.config.Rerank.EnabledEffective() {
+		reranker, err := NewHTTPReranker(&r.config.Rerank, openAI, r.logger)
+		if err != nil {
+			return fmt.Errorf("reranker: %w", err)
+		}
+		r.SetDocumentReranker(reranker)
+	} else if r.logger != nil {
+		r.logger.Info("知识库精排已按配置关闭，检索直接使用融合序")
 	}
-	r.SetDocumentReranker(reranker)
 
 	vec := NewVectorEinoRetriever(r)
 	mq, err := multiquery.NewRetriever(ctx, &multiquery.Config{
@@ -64,12 +70,19 @@ func WireRetrieverPipeline(ctx context.Context, r *Retriever, openAI *config.Ope
 
 	r.pipeline = newKnowledgePipelineRetriever(mq, r)
 	if r.logger != nil {
-		provider := r.config.Rerank.ProviderEffective(strings.TrimSpace(openAI.BaseURL))
+		// 精排关闭时不要再打印推断出的 provider/model，否则日志会误导（显示已配置某家 rerank，实际未启用）
+		rerankState := "disabled"
+		rerankModel := ""
+		if r.config.Rerank.EnabledEffective() {
+			provider := r.config.Rerank.ProviderEffective(strings.TrimSpace(openAI.BaseURL))
+			rerankState = provider
+			rerankModel = r.config.Rerank.ModelEffective(provider)
+		}
 		r.logger.Info("知识库检索流水线已启用",
 			zap.String("pipeline", "MultiQuery→Vector→Rerank→PostRetrieve"),
 			zap.Int("multi_query_max", r.config.MultiQuery.MaxQueriesEffective()),
-			zap.String("rerank_provider", provider),
-			zap.String("rerank_model", r.config.Rerank.ModelEffective(provider)),
+			zap.String("rerank", rerankState),
+			zap.String("rerank_model", rerankModel),
 		)
 	}
 	return nil

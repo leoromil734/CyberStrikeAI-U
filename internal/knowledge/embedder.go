@@ -43,7 +43,10 @@ func NewEmbedder(ctx context.Context, cfg *config.KnowledgeConfig, openAIConfig 
 	var rateLimitDelay time.Duration
 	if cfg.Indexing.MaxRPM > 0 {
 		rpm := cfg.Indexing.MaxRPM
-		rateLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(rpm)), rpm)
+		// burst 必须为 1：令牌桶容量若等于 rpm，初始状态可一次性突发 rpm 个请求，
+		// 会立刻打满服务端的每分钟配额并触发 429（OpenRouter 免费模型即如此）。
+		// 限速的目的正是把请求摊平，因此这里严格按间隔放行。
+		rateLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(rpm)), 1)
 		if logger != nil {
 			logger.Info("知识库索引速率限制已启用", zap.Int("maxRPM", rpm))
 		}

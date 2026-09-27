@@ -3381,6 +3381,64 @@ function populateModelSelect(scope, models, currentValue) {
     syncModelPickDropdown(selectId);
 }
 
+// 知识库嵌入模型连通性测试：用当前表单（含尚未保存）的配置真实调用一次嵌入接口
+async function testKnowledgeEmbedding() {
+    const tFn = typeof window.t === 'function' ? window.t : (k) => k;
+    const btn = document.getElementById('test-knowledge-embedding-btn');
+    const resultEl = document.getElementById('test-knowledge-embedding-result');
+    if (!resultEl) return;
+
+    const setResult = (text, ok) => {
+        resultEl.textContent = text;
+        resultEl.style.color = ok
+            ? 'var(--success-color, #38a169)'
+            : 'var(--error-color, #e53e3e)';
+    };
+
+    if (btn) {
+        btn.style.pointerEvents = 'none';
+        btn.style.opacity = '0.6';
+    }
+    setResult(tFn('settingsBasic.testEmbeddingRunning'), true);
+
+    try {
+        const payload = {
+            provider: document.getElementById('knowledge-embedding-provider')?.value || 'openai',
+            model: document.getElementById('knowledge-embedding-model')?.value.trim() || '',
+            base_url: document.getElementById('knowledge-embedding-base-url')?.value.trim() || '',
+            api_key: document.getElementById('knowledge-embedding-api-key')?.value.trim() || ''
+        };
+        const response = await apiFetch('/api/config/test-embedding', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || '请求失败');
+        }
+        if (!result.success) {
+            setResult(tFn('settingsBasic.testEmbeddingFailed') + ': ' + (result.error || ''), false);
+            return;
+        }
+        let msg = tFn('settingsBasic.testEmbeddingSuccess')
+            .replace('{model}', String(result.model || ''))
+            .replace('{dim}', String(result.dimension != null ? result.dimension : ''))
+            .replace('{ms}', String(result.latency_ms != null ? result.latency_ms : ''));
+        if (result.dimension != null && result.dimension !== 1024) {
+            msg += tFn('settingsBasic.testEmbeddingDimHint').replace('{dim}', String(result.dimension));
+        }
+        setResult(msg, true);
+    } catch (error) {
+        setResult(tFn('settingsBasic.testEmbeddingFailed') + ': ' + (error?.message || error), false);
+    } finally {
+        if (btn) {
+            btn.style.pointerEvents = '';
+            btn.style.opacity = '';
+        }
+    }
+}
+
 async function fetchModelList(scope) {
     const tFn = typeof window.t === 'function' ? window.t : (k) => k;
     const creds = resolveModelListCredentials(scope);
