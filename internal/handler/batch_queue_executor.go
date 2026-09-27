@@ -246,6 +246,15 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		useBatchMulti = true
 		batchOrch = "deep"
 	}
+	batchMode := am
+	if batchMode == "" {
+		if useBatchMulti {
+			batchMode = batchOrch
+		} else {
+			batchMode = "eino_single"
+		}
+	}
+	h.tasks.SetTaskAgentMode(conversationID, batchMode)
 
 	runCfg := h.batchTaskRunConfig(task.AIChannelID)
 	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)

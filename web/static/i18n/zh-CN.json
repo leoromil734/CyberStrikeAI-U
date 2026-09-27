@@ -859,6 +859,11 @@
   "tasks": {
     "title": "任务管理",
     "stopTask": "停止任务",
+    "modeWorkflow": "工作流",
+    "activeTasksSummary": "{{n}} 个任务执行中",
+    "expandTaskList": "展开任务列表",
+    "collapseTaskList": "收起任务列表",
+    "viewAll": "查看全部",
     "interruptModalTitle": "中断当前步骤",
     "interruptReasonLabel": "中断说明",
     "interruptModalHint": "有工具在执行时：与 MCP 监控页「终止工具」一致，仅结束当前这一次工具调用，本轮推理会继续；说明可写入工具返回（USER INTERRUPT NOTE）。无工具在执行时（模型纯思考/流式输出）：仍可「中断并继续」——会暂停当前输出，把你的说明合并进上下文并自动续跑；进度详情时间线会出现「用户中断并继续」条目。不需要整轮停止时请优先用本按钮；要结束整条任务请用「彻底停止」。",

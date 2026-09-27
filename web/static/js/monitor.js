@@ -4948,6 +4948,8 @@ function renderActiveTasks(tasks) {
     bar.style.display = 'flex';
     bar.innerHTML = '';
 
+    const _t = function (k) { return typeof window.t === 'function' ? window.t(k) : k; };
+
     function openActiveTaskConversation(conversationId) {
         if (!conversationId) return;
         if (typeof switchPage === 'function') {
@@ -4962,68 +4964,123 @@ function renderActiveTasks(tasks) {
         window.location.hash = 'chat?conversation=' + encodeURIComponent(conversationId);
     }
 
-    normalizedTasks.forEach(task => {
-        const item = document.createElement('div');
-        item.className = 'active-task-item active-task-item-clickable';
-        if (task && task.conversationId) {
-            item.title = (typeof window.t === 'function' ? window.t('tasks.viewConversation') : '查看会话');
-            item.setAttribute('role', 'button');
-            item.onclick = () => openActiveTaskConversation(task.conversationId);
-        }
+    function agentModeLabel(mode) {
+        const m = String(mode || '').toLowerCase();
+        if (m === 'eino_single' || m === '') return _t('chat.agentModeEinoSingle') || 'Single';
+        if (m === 'deep') return _t('chat.agentModeDeep') || 'Deep';
+        if (m === 'plan_execute') return _t('chat.agentModePlanExecuteLabel') || 'Plan';
+        if (m === 'supervisor') return _t('chat.agentModeSupervisorLabel') || 'Supervisor';
+        if (m === 'workflow') return _t('tasks.modeWorkflow') || 'Workflow';
+        return mode;
+    }
 
-        const startedTime = task.startedAt ? new Date(task.startedAt) : null;
-        const taskTimeLocale = getCurrentTimeLocale();
-        const timeOpts = getTimeFormatOptions();
-        const timeText = startedTime && !isNaN(startedTime.getTime())
-            ? startedTime.toLocaleTimeString(taskTimeLocale, timeOpts)
-            : '';
+    const COLLAPSE_THRESHOLD = 3;
+    const isCollapsed = normalizedTasks.length >= COLLAPSE_THRESHOLD;
 
-        const _t = function (k) { return typeof window.t === 'function' ? window.t(k) : k; };
-        const statusMap = {
-            'running': _t('tasks.statusRunning'),
-            'cancelling': _t('tasks.statusCancelling'),
-            'failed': _t('tasks.statusFailed'),
-            'timeout': _t('tasks.statusTimeout'),
-            'cancelled': _t('tasks.statusCancelled'),
-            'completed': _t('tasks.statusCompleted')
-        };
-        const statusText = statusMap[task.status] || _t('tasks.statusRunning');
-        const isFinalStatus = ['failed', 'timeout', 'cancelled', 'completed'].includes(task.status);
-        const taskDisplayName = getActiveTaskDisplayName(task);
-        const stopTaskBtnText = _t('tasks.stopTask');
-
-        if (task && task.conversationId) {
-            item.dataset.conversationId = task.conversationId;
-        }
-
-        item.innerHTML = `
-            <div class="active-task-info">
-                <span class="active-task-status">${statusText}</span>
-                <span class="active-task-message">${escapeHtml(taskDisplayName)}</span>
+    // 当任务数 >= 阈值时，渲染折叠摘要条
+    if (isCollapsed) {
+        const runningCount = normalizedTasks.filter(t => t.status === 'running').length;
+        const cancellingCount = normalizedTasks.filter(t => t.status === 'cancelling').length;
+        const summary = document.createElement('div');
+        summary.className = 'active-tasks-summary';
+        const summaryText = _t('tasks.activeTasksSummary') || '{{n}} 个任务执行中';
+        const countText = summaryText.replace('{{n}}', normalizedTasks.length);
+        summary.innerHTML = `
+            <div class="active-tasks-summary-info">
+                <span class="active-tasks-summary-icon">⚡</span>
+                <span class="active-tasks-summary-text">${escapeHtml(countText)}</span>
+                ${runningCount > 0 ? `<span class="active-task-status-pill active-task-status-running">${runningCount} ${_t('tasks.statusRunning') || '执行中'}</span>` : ''}
+                ${cancellingCount > 0 ? `<span class="active-task-status-pill active-task-status-cancelling">${cancellingCount} ${_t('tasks.statusCancelling') || '取消中'}</span>` : ''}
             </div>
-            <div class="active-task-actions">
-                ${timeText ? `<span class="active-task-time">${timeText}</span>` : ''}
-                ${!isFinalStatus ? '<button class="active-task-cancel">' + stopTaskBtnText + '</button>' : ''}
-            </div>
+            <button class="active-tasks-expand-btn" title="${_t('tasks.expandTaskList') || '展开任务列表'}">${_t('tasks.viewAll') || '查看全部'} ▾</button>
         `;
+        bar.appendChild(summary);
 
-        // 只有非最终状态的任务才显示停止按钮
-        if (!isFinalStatus) {
-            const cancelBtn = item.querySelector('.active-task-cancel');
-            if (cancelBtn) {
-                cancelBtn.onclick = (evt) => {
-                    evt.stopPropagation();
-                    cancelActiveTask(task.conversationId);
-                };
-                if (task.status === 'cancelling') {
-                    cancelBtn.disabled = true;
-                    cancelBtn.textContent = typeof window.t === 'function' ? window.t('tasks.cancelling') : '取消中...';
-                }
+        const expandBtn = summary.querySelector('.active-tasks-expand-btn');
+        const expandedPanel = document.createElement('div');
+        expandedPanel.className = 'active-tasks-expanded-panel';
+        expandedPanel.style.display = 'none';
+        bar.appendChild(expandedPanel);
+
+        let panelOpen = false;
+        expandBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            panelOpen = !panelOpen;
+            expandedPanel.style.display = panelOpen ? 'block' : 'none';
+            expandBtn.textContent = panelOpen
+                ? ((_t('tasks.collapseTaskList') || '收起') + ' ▴')
+                : ((_t('tasks.viewAll') || '查看全部') + ' ▾');
+        });
+
+        normalizedTasks.forEach(task => renderTaskItemIntoContainer(task, expandedPanel, openActiveTaskConversation, agentModeLabel, _t));
+        return;
+    }
+
+    // 少量任务：直接平铺
+    normalizedTasks.forEach(task => renderTaskItemIntoContainer(task, bar, openActiveTaskConversation, agentModeLabel, _t));
+}
+
+function renderTaskItemIntoContainer(task, container, openActiveTaskConversation, agentModeLabel, _t) {
+    const item = document.createElement('div');
+    item.className = 'active-task-item active-task-item-clickable';
+    if (task && task.conversationId) {
+        item.title = (typeof window.t === 'function' ? window.t('tasks.viewConversation') : '查看会话');
+        item.setAttribute('role', 'button');
+        item.onclick = () => openActiveTaskConversation(task.conversationId);
+    }
+
+    const startedTime = task.startedAt ? new Date(task.startedAt) : null;
+    const taskTimeLocale = getCurrentTimeLocale();
+    const timeOpts = getTimeFormatOptions();
+    const timeText = startedTime && !isNaN(startedTime.getTime())
+        ? startedTime.toLocaleTimeString(taskTimeLocale, timeOpts)
+        : '';
+
+    const statusMap = {
+        'running': _t('tasks.statusRunning'),
+        'cancelling': _t('tasks.statusCancelling'),
+        'failed': _t('tasks.statusFailed'),
+        'timeout': _t('tasks.statusTimeout'),
+        'cancelled': _t('tasks.statusCancelled'),
+        'completed': _t('tasks.statusCompleted')
+    };
+    const statusText = statusMap[task.status] || _t('tasks.statusRunning');
+    const isFinalStatus = ['failed', 'timeout', 'cancelled', 'completed'].includes(task.status);
+    const taskDisplayName = getActiveTaskDisplayName(task);
+    const stopTaskBtnText = _t('tasks.stopTask');
+    const modeLabel = task.agentMode ? agentModeLabel(task.agentMode) : '';
+
+    if (task && task.conversationId) {
+        item.dataset.conversationId = task.conversationId;
+    }
+
+    item.innerHTML = `
+        <div class="active-task-info">
+            <span class="active-task-status">${statusText}</span>
+            ${modeLabel ? `<span class="active-task-mode">${escapeHtml(modeLabel)}</span>` : ''}
+            <span class="active-task-message">${escapeHtml(taskDisplayName)}</span>
+        </div>
+        <div class="active-task-actions">
+            ${timeText ? `<span class="active-task-time">${timeText}</span>` : ''}
+            ${!isFinalStatus ? '<button class="active-task-cancel">' + stopTaskBtnText + '</button>' : ''}
+        </div>
+    `;
+
+    if (!isFinalStatus) {
+        const cancelBtn = item.querySelector('.active-task-cancel');
+        if (cancelBtn) {
+            cancelBtn.onclick = (evt) => {
+                evt.stopPropagation();
+                cancelActiveTask(task.conversationId);
+            };
+            if (task.status === 'cancelling') {
+                cancelBtn.disabled = true;
+                cancelBtn.textContent = typeof window.t === 'function' ? window.t('tasks.cancelling') : '取消中...';
             }
         }
+    }
 
-        bar.appendChild(item);
-    });
+    container.appendChild(item);
 }
 
 function cancelActiveTask(conversationId) {

@@ -871,6 +871,11 @@
   "tasks": {
     "title": "Task Management",
     "stopTask": "Stop task",
+    "modeWorkflow": "Workflow",
+    "activeTasksSummary": "{{n}} tasks running",
+    "expandTaskList": "Expand task list",
+    "collapseTaskList": "Collapse task list",
+    "viewAll": "View all",
     "interruptModalTitle": "Interrupt current step",
     "interruptReasonLabel": "Interrupt note",
     "interruptModalHint": "When a tool is running: same as MCP monitor \"Stop tool\" — only that call is stopped and the run continues; your note can be merged into the tool result (USER INTERRUPT NOTE). When no tool is running (model thinking/streaming only): \"Interrupt & continue\" still works — current output pauses, your note is merged into context and the run resumes automatically; the progress timeline shows a \"User interrupt & continue\" entry. Use this instead of a full stop when you only want to steer; use \"Stop completely\" to end the whole task.",

@@ -95,6 +95,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return true
 	}
+	h.tasks.SetTaskAgentMode(conversationID, "workflow")
 	taskOwned = true
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
@@ -222,6 +223,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		}
 		return true
 	}
+	h.tasks.SetTaskAgentMode(conversationID, "workflow")
 	taskOwned = true
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)

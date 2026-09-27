@@ -183,6 +183,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		timeoutCancel()
 		return
 	}
+	h.tasks.SetTaskAgentMode(conversationID, "eino_single")
 	taskOwned = true
 
 	var cumulativeMCPExecutionIDs []string

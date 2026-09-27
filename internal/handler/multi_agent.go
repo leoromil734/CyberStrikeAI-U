@@ -195,6 +195,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		timeoutCancel()
 		return
 	}
+	h.tasks.SetTaskAgentMode(conversationID, effectiveOrchestration)
 	taskOwned = true
 
 	// 同一 HTTP 流内多段 Run（如中断并继续）合并 MCP execution id，供最终 response / 库表与工具芯片展示完整列表

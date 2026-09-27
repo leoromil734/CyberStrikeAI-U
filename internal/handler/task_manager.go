@@ -30,6 +30,7 @@ type AgentTask struct {
 	Message        string    `json:"message,omitempty"`
 	StartedAt      time.Time `json:"startedAt"`
 	Status         string    `json:"status"`
+	AgentMode      string    `json:"agentMode,omitempty"` // eino_single / deep / plan_execute / supervisor / workflow
 	CancellingAt   time.Time `json:"-"` // 进入 cancelling 状态的时间，用于清理长时间卡住的任务
 
 	// ActiveMCPExecutionID 当前正在执行的 MCP 工具 executionId（仅内存，供「中断并继续」= 仅掐当前工具）
@@ -501,6 +502,20 @@ func (m *AgentTaskManager) cleanupHistory() {
 	m.completedTasks = validTasks
 }
 
+// SetTaskAgentMode 记录任务所用的 agent 模式（eino_single / deep / plan_execute / supervisor / workflow）。
+// 在 StartTask 成功后立即调用；若任务已不存在则静默忽略。
+func (m *AgentTaskManager) SetTaskAgentMode(conversationID, mode string) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.tasks[conversationID]; ok && t != nil {
+		t.AgentMode = strings.TrimSpace(mode)
+	}
+}
+
 // GetActiveTasks 返回所有正在运行的任务
 func (m *AgentTaskManager) GetActiveTasks() []*AgentTask {
 	m.mu.RLock()
@@ -513,6 +528,7 @@ func (m *AgentTaskManager) GetActiveTasks() []*AgentTask {
 			Message:        task.Message,
 			StartedAt:      task.StartedAt,
 			Status:         task.Status,
+			AgentMode:      task.AgentMode,
 		})
 	}
 	return result

@@ -7870,6 +7870,146 @@ html[data-theme="dark"] .login-card .login-submit:disabled {
     color: var(--error-color);
 }
 
+/* 顶部执行栏——模式徽章 */
+.active-task-mode {
+    background: rgba(99, 102, 241, 0.12);
+    color: #6366f1;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* 顶部执行栏——多任务折叠：摘要条 */
+.active-tasks-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 12px;
+    padding: 2px 0;
+}
+
+.active-tasks-summary-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.active-tasks-summary-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.active-tasks-summary-text {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.active-task-status-pill {
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.active-task-status-running {
+    background: rgba(0, 102, 255, 0.12);
+    color: var(--accent-color);
+}
+
+.active-task-status-cancelling {
+    background: rgba(234, 88, 12, 0.12);
+    color: #ea580c;
+}
+
+.active-tasks-expand-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.78rem;
+    padding: 3px 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.active-tasks-expand-btn:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* 展开后的下拉面板 */
+.active-tasks-expanded-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: var(--bg-primary);
+    border: 1px solid rgba(0, 102, 255, 0.2);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+/* 折叠模式时，active-tasks-bar 改为 relative + flex-wrap 以托住展开面板 */
+.active-tasks-bar:has(.active-tasks-summary) {
+    position: relative;
+    flex-wrap: wrap;
+    overflow: visible;
+}
+
+/* 任务列表页——模式徽章 */
+.task-mode-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+    white-space: nowrap;
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+}
+
+.task-mode-deep {
+    background: rgba(168, 85, 247, 0.12);
+    color: #a855f7;
+}
+
+.task-mode-plan_execute {
+    background: rgba(234, 88, 12, 0.1);
+    color: #ea580c;
+}
+
+.task-mode-supervisor {
+    background: rgba(5, 150, 105, 0.12);
+    color: #059669;
+}
+
+.task-mode-workflow {
+    background: rgba(14, 165, 233, 0.12);
+    color: #0ea5e9;
+}
+
 /* 设置模态框样式 */
 .settings-modal-content {
     max-width: 800px;

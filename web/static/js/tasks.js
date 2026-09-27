@@ -525,6 +525,17 @@ function renderTaskItem(task, statusMap, isHistory = false) {
         ? calculateDuration(task.startedAt) 
         : '';
 
+    // 模式徽章
+    const modeMap = {
+        'eino_single': _t('chat.agentModeEinoSingle') || 'Single',
+        'deep':        _t('chat.agentModeDeep') || 'Deep',
+        'plan_execute':_t('chat.agentModePlanExecuteLabel') || 'Plan',
+        'supervisor':  _t('chat.agentModeSupervisorLabel') || 'Supervisor',
+        'workflow':    _t('tasks.modeWorkflow') || 'Workflow',
+    };
+    const modeLabel = task.agentMode ? (modeMap[task.agentMode] || task.agentMode) : '';
+    const modeBadge = modeLabel ? `<span class="task-mode-badge task-mode-${escapeHtml(task.agentMode || '')}">${escapeHtml(modeLabel)}</span>` : '';
+
     return `
         <div class="task-item ${isHistory ? 'task-item-history' : ''}" data-task-id="${task.conversationId}" data-started-at="${task.startedAt}" data-status="${task.status}">
             <div class="task-header">
@@ -536,6 +547,7 @@ function renderTaskItem(task, statusMap, isHistory = false) {
                         </label>
                     ` : '<div class="task-checkbox-placeholder"></div>'}
                     <span class="task-status ${status.class}">${status.text}</span>
+                    ${modeBadge}
                     ${isHistory ? '<span class="task-history-badge" title="' + _t('tasks.historyBadge') + '">📜</span>' : ''}
                     <span class="task-message" title="${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}">${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}</span>
                 </div>

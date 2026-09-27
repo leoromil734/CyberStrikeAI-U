@@ -835,6 +835,7 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 		}
 		return "", conversationID, fmt.Errorf("无法启动任务: %w", err)
 	}
+	h.tasks.SetTaskAgentMode(conversationID, config.NormalizeAgentMode(agentMode))
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 
 	robotMode := config.NormalizeAgentMode(agentMode)
