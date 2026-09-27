@@ -372,6 +372,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	authHandler.SetAudit(auditSvc)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
 	pageCache := openPageCache(cfg, log.Logger)
+	// 登录会话持久化：Redis 可用时重启后仍保持登录（session_duration_hours 决定有效期）；
+	// Redis 不可用时自动退化为进程内存会话。
+	authManager.AttachSessionPersister(pageCache)
 	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger)
 	vulnerabilityHandler.SetStore(pageCache)
 	assetHandler := handler.NewAssetHandler(db, log.Logger)

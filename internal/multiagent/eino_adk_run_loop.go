@@ -1494,10 +1494,12 @@ func buildEinoRunResultFromAccumulated(
 			cleaned = UnwrapPlanExecuteUserText(cleaned)
 		}
 	}
-	if cleaned == "" {
-		if fb := strings.TrimSpace(einoExtractFallbackAssistantFromMsgs(runAccumulatedMsgs)); fb != "" {
-			cleaned = fb
-		}
+	// exit 报告回填：监督者常把过程性文字（planning/进度/思考）作为助手正文流出，真正的正式
+	// 报告只写在 exit.final_result 里。若仅当正文为空才回填，一段几十字的过程片段就会顶掉报告，
+	// 用户在网页上只能点开 exit 工具卡片才能看到交付物（且数据库里也没有报告消息）。
+	// 因此这里同时覆盖「正文为空」和「正文只是短片段、而 exit 报告明显更完整」两种情况。
+	if fb := strings.TrimSpace(einoExtractFallbackAssistantFromMsgs(runAccumulatedMsgs)); fb != "" && shouldPreferExitReport(cleaned, fb) {
+		cleaned = fb
 	}
 	cleaned = dedupeRepeatedParagraphs(cleaned, 80)
 	cleaned = dedupeParagraphsByLineFingerprint(cleaned, 100)
@@ -1537,7 +1539,40 @@ func markModelFacingTraceForPersistence(msgs []adk.Message) []adk.Message {
 	return out
 }
 
-// einoExtractFallbackAssistantFromMsgs 在「主通道未产出助手正文」时，从 Eino ADK 轨迹中回填用户可见回复。
+// einoExitReportPreferMaxCurrentRunes 正文短于该长度时视为「过程性片段」而非正式交付，
+// 此时若 exit 报告明显更完整，就用 exit 报告作为用户可见回复。
+const einoExitReportPreferMaxCurrentRunes = 600
+
+// einoExitReportPreferMinGrowthRunes exit 报告相对正文至少要多的字符数，避免用简报覆盖正文。
+const einoExitReportPreferMinGrowthRunes = 200
+
+// shouldPreferExitReport 判断是否改用 exit 报告作为用户可见正文。
+//
+// 采用条件（任一）：
+//   - 当前正文为空：沿用原有兜底语义。
+//   - 当前正文只是短片段（<= einoExitReportPreferMaxCurrentRunes 字符），
+//     且 exit 报告明显更完整（至少 2 倍且多出 einoExitReportPreferMinGrowthRunes 字符）。
+//
+// 正文已经足够长时一律保留，避免模型已经自行输出完整交付物反而被 exit 摘要覆盖。
+func shouldPreferExitReport(current, exitReport string) bool {
+	cur := strings.TrimSpace(current)
+	rep := strings.TrimSpace(exitReport)
+	if rep == "" {
+		return false
+	}
+	if cur == "" {
+		return true
+	}
+	curRunes := len([]rune(cur))
+	repRunes := len([]rune(rep))
+	if curRunes > einoExitReportPreferMaxCurrentRunes {
+		return false
+	}
+	return repRunes >= curRunes*2 && repRunes-curRunes >= einoExitReportPreferMinGrowthRunes
+}
+
+// einoExtractFallbackAssistantFromMsgs 在「主通道未产出可用交付正文」时，从 Eino ADK 轨迹中回填用户可见回复。
+// 可用交付正文的判定见 shouldPreferExitReport（正文为空，或只是过程性短片段）。
 // 典型场景：监督者仅调用 exit（final_result 落在 Tool 消息中），或工具结果已写入历史但 lastAssistant 未更新。
 //
 // 优先级：最后一次 exit 工具输出 → 最后一条含 exit 的助手 tool_calls 参数中的 final_result。

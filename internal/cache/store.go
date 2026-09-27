@@ -12,6 +12,7 @@ import (
 type Store interface {
 	Get(ctx context.Context, key string) ([]byte, bool)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration)
+	Delete(ctx context.Context, key string)
 }
 
 type memoryStore struct {
@@ -45,6 +46,12 @@ func (s *memoryStore) Set(_ context.Context, key string, value []byte, ttl time.
 	}
 	s.mu.Lock()
 	s.items[key] = memoryItem{value: append([]byte(nil), value...), expires: time.Now().Add(ttl)}
+	s.mu.Unlock()
+}
+
+func (s *memoryStore) Delete(_ context.Context, key string) {
+	s.mu.Lock()
+	delete(s.items, key)
 	s.mu.Unlock()
 }
 
@@ -91,4 +98,8 @@ func (s *redisStore) Set(ctx context.Context, key string, value []byte, ttl time
 		ttl = time.Minute
 	}
 	_ = s.client.Set(ctx, s.key(key), value, ttl).Err()
+}
+
+func (s *redisStore) Delete(ctx context.Context, key string) {
+	_ = s.client.Del(ctx, s.key(key)).Err()
 }

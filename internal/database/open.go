@@ -12,6 +12,7 @@ import (
 	"cyberstrike-ai/internal/config"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/mattn/go-sqlite3"
 	"go.uber.org/zap"
@@ -242,7 +243,9 @@ func openPostgres(dsn string) (*sql.DB, error) {
 	}
 	// 这些是会话级参数，高配机器把排序内存给够，并关掉对短查询不划算的 JIT。
 	// shared_buffers / effective_cache_size 要在 PostgreSQL 服务器配置里调，应用连不上那一层。
-	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+	// pgx v5 的 pgconn.AfterConnectFunc 形参是 *pgconn.PgConn（不是 *pgx.Conn），
+	// 必须显式读完 Exec 返回的 MultiResultReader 才能拿到执行错误。
+	cfg.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
 		for _, query := range []string{
 			"SET work_mem = '32MB'",
 			"SET temp_buffers = '16MB'",
@@ -250,7 +253,10 @@ func openPostgres(dsn string) (*sql.DB, error) {
 			"SET idle_in_transaction_session_timeout = '60s'",
 			"SET statement_timeout = '300s'",
 		} {
-			if _, err := conn.Exec(ctx, query); err != nil {
+			mrr := conn.Exec(ctx, query)
+			_, err := mrr.ReadAll()
+			mrr.Close()
+			if err != nil {
 				return err
 			}
 		}

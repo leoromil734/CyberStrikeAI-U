@@ -421,6 +421,8 @@ func conversationSearchClause(alias string) (string, int) {
 			  AND m.content LIKE ?))`, prefix, prefix, prefix, prefix)
 	return clause, 3
 }
+
+func appendConversationProjectFilter(where string, args []interface{}, projectID, alias string) (string, []interface{}) {
 	pid := strings.TrimSpace(projectID)
 	if pid == "" {
 		return where, args
