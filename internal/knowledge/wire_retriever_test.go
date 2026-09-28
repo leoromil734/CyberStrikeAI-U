@@ -80,3 +80,32 @@ func TestSanitizeRewriteQueriesKeepsPayloadLines(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeRewriteQueriesKeepsNumericPrefixes(t *testing.T) {
+	// "2.0" 这种查询开头的版本号不能被当成列表序号剥掉。
+	got := sanitizeRewriteQueries("2.0 版本 SSRF 绕过\n1. kerberos delegation abuse")
+	want := []string{"2.0 版本 SSRF 绕过", "kerberos delegation abuse"}
+	if len(got) != len(want) {
+		t.Fatalf("变体数量不符：got %q want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 条不符：got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestTrimWrappingOnlyStripsPairedWrappers(t *testing.T) {
+	cases := map[string]string{
+		`"kerberos delegation abuse"`:     "kerberos delegation abuse",
+		"`ADCS 证书模板提权`":                   "ADCS 证书模板提权",
+		"“NTLM relay coercion”":           "NTLM relay coercion",
+		`--header "X-Forwarded-For: 1.2.3"`: `--header "X-Forwarded-For: 1.2.3"`,
+		`2.0 版本 SSRF`:                      `2.0 版本 SSRF`,
+	}
+	for in, want := range cases {
+		if got := trimWrapping(in); got != want {
+			t.Errorf("trimWrapping(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

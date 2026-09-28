@@ -32,7 +32,7 @@ const defaultMultiQueryRewritePrompt = `You are an helpful assistant.
 var (
 	rewriteThinkBlockRe = regexp.MustCompile(`(?is)<(think|thinking|reasoning)>.*?</(think|thinking|reasoning)>`)
 	rewriteOpenThinkRe  = regexp.MustCompile(`(?is)<(think|thinking|reasoning)>.*$`)
-	rewriteListMarkRe   = regexp.MustCompile(`^\s*(?:[-*•‣·]|\(?\d{1,2}\)?\s*[.、)）])\s*`)
+	rewriteListMarkRe   = regexp.MustCompile(`^\s*(?:[-*•‣·]|\(?\d{1,2}\)?\s*[、)）]|\d{1,2}\.\s+)\s*`)
 )
 
 // buildMultiQueryRewritePrompt 组装改写提示词，保持与 Eino 默认模板同义。
@@ -51,7 +51,7 @@ func sanitizeRewriteQueries(content string) []string {
 	out := make([]string, 0, 4)
 	for _, raw := range strings.Split(cleaned, "\n") {
 		line := strings.TrimSpace(rewriteListMarkRe.ReplaceAllString(raw, ""))
-		line = strings.TrimSpace(strings.Trim(line, "\"'“”‘’`"))
+		line = trimWrapping(line)
 		if line == "" || !hasQueryRune(line) {
 			continue
 		}
@@ -77,6 +77,23 @@ func hasQueryRune(s string) bool {
 		}
 	}
 	return false
+}
+
+// wrapperPairs 是模型常用的「整条查询被包裹」符号对；只有成对出现才剥离。
+var wrapperPairs = map[rune]rune{'"': '"', '\'': '\'', '“': '”', '‘': '’', '「': '」'}
+
+// trimWrapping 去掉包裹整条查询的成对引号或反引号，但不碰查询自身结尾的标点
+// （例如 --header "X-Forwarded-For: 127.0.0.1" 的结尾引号必须保留）。
+func trimWrapping(line string) string {
+	line = strings.TrimSpace(strings.Trim(line, "`"))
+	runes := []rune(line)
+	if len(runes) < 2 {
+		return line
+	}
+	if closing, ok := wrapperPairs[runes[0]]; ok && runes[len(runes)-1] == closing {
+		return strings.TrimSpace(string(runes[1 : len(runes)-1]))
+	}
+	return line
 }
 
 // newRewriteHandler 包装改写模型：清洗输出，异常或产出为空时回退原始查询，保证检索不会整体失败。
