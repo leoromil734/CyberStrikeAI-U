@@ -6,8 +6,12 @@ args:
     import sys
     import json
     import base64
+    import random
+    import time
     import requests
     import os
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
 
     # ==================== FOFA配置 ====================
     # 请在此处配置您的 FOFA API Key
@@ -18,6 +22,91 @@ args:
 
     # FOFA API基础URL（系统设置通过环境变量注入，可覆盖默认地址）
     base_url = os.getenv('FOFA_BASE_URL', '').strip() or "https://fofa.info/api/v1/search/all"
+
+    # ==================== 限流重试 ====================
+    # FOFA 对接口调用有频率限制，超限时返回 HTTP 429（偶发 5xx、连接抖动同样按瞬时故障处理）。
+    # 这里统一做指数退避 + 抖动重试，并尊重服务端 Retry-After。
+    # 可用环境变量调整：FOFA_MAX_RETRIES（额外重试次数，默认 4）、
+    # FOFA_RETRY_BASE_DELAY_MS（首次退避，默认 2000）、FOFA_RETRY_MAX_DELAY_MS（单次退避上限，默认 60000）。
+    RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+    TRANSIENT_ERRMSG_KEYWORDS = ('频繁', '频率', '限流', '限制', '过多', 'rate', 'limit', 'too many', '超时', 'timeout')
+
+    def _env_int(name, default, minimum=0):
+        try:
+            value = int(str(os.getenv(name, '')).strip())
+        except (TypeError, ValueError):
+            return default
+        return value if value >= minimum else default
+
+    MAX_RETRIES = _env_int('FOFA_MAX_RETRIES', 4)
+    RETRY_BASE_DELAY = _env_int('FOFA_RETRY_BASE_DELAY_MS', 2000) / 1000.0
+    RETRY_MAX_DELAY = _env_int('FOFA_RETRY_MAX_DELAY_MS', 60000) / 1000.0
+
+    def _log_retry(reason, attempt, delay):
+        # 重试过程只写 stderr，保证 stdout 仍是纯 JSON 结果，不会破坏上层解析。
+        print(f"[fofa_search] {reason}，{delay:.1f}s 后进行第 {attempt + 1}/{MAX_RETRIES} 次重试", file=sys.stderr, flush=True)
+
+    def _backoff_delay(attempt):
+        delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
+        return delay * (0.5 + random.random() * 0.5)  # 抖动，避免并发调用同时重试再次撞限流
+
+    def _retry_after_delay(response):
+        raw = (response.headers.get('Retry-After') or '').strip()
+        if not raw:
+            return None
+        try:
+            return max(0.0, min(float(raw), RETRY_MAX_DELAY))
+        except (TypeError, ValueError):
+            pass
+        try:
+            parsed = parsedate_to_datetime(raw)
+            if parsed is not None:
+                return max(0.0, min((parsed - datetime.now(timezone.utc)).total_seconds(), RETRY_MAX_DELAY))
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    def _is_transient_api_error(data):
+        # FOFA 有时以 HTTP 200 + error 字段表达限流，这类也应重试。
+        if not isinstance(data, dict) or not data.get('error'):
+            return False
+        errmsg = str(data.get('errmsg') or '').lower()
+        return any(keyword in errmsg for keyword in TRANSIENT_ERRMSG_KEYWORDS)
+
+    def fetch_fofa(url, params, timeout=30):
+        """带指数退避重试地请求 FOFA，返回已解析的 JSON 数据。"""
+        attempt = 0
+        while True:
+            try:
+                response = requests.get(url, params=params, timeout=timeout)
+            except requests.exceptions.RequestException as exc:
+                if attempt >= MAX_RETRIES:
+                    raise
+                delay = _backoff_delay(attempt)
+                _log_retry(f"请求异常（{type(exc).__name__}）", attempt, delay)
+                time.sleep(delay)
+                attempt += 1
+                continue
+
+            if response.status_code in RETRY_STATUS_CODES and attempt < MAX_RETRIES:
+                delay = _retry_after_delay(response) or _backoff_delay(attempt)
+                _log_retry(f"HTTP {response.status_code}（限流或服务端抖动）", attempt, delay)
+                time.sleep(delay)
+                attempt += 1
+                continue
+
+            response.raise_for_status()
+            data = response.json()
+
+            if _is_transient_api_error(data) and attempt < MAX_RETRIES:
+                delay = _backoff_delay(attempt)
+                _log_retry(f"接口返回瞬时限流错误（{data.get('errmsg')}）", attempt, delay)
+                time.sleep(delay)
+                attempt += 1
+                continue
+
+            return data
+    # ==================================================
 
     # 解析参数（从JSON字符串或命令行参数）
     def parse_args():
@@ -143,12 +232,9 @@ args:
             elif isinstance(full_val, (int, float)):
                 params['full'] = 'true' if full_val != 0 else 'false'
 
-        # 发送请求
+        # 发送请求（429/5xx/连接抖动会自动重试）
         try:
-            response = requests.get(base_url, params=params, timeout=30)
-            response.raise_for_status()
-
-            result_data = response.json()
+            result_data = fetch_fofa(base_url, params, timeout=30)
 
             # 检查FOFA API返回的错误
             if result_data.get('error'):
@@ -179,7 +265,8 @@ args:
             error_result = {
                 "status": "error",
                 "message": f"请求失败: {str(e)}",
-                "suggestion": "请检查网络连接或FOFA API服务状态"
+                "retries": MAX_RETRIES,
+                "suggestion": f"已重试 {MAX_RETRIES} 次仍失败：请检查网络连接或 FOFA API 服务状态；FOFA 接口有频率限制（常见 HTTP 429），可稍后重试、降低调用频率，或用环境变量 FOFA_MAX_RETRIES / FOFA_RETRY_BASE_DELAY_MS 调整重试策略"
             }
             print(json.dumps(error_result, ensure_ascii=False, indent=2))
             sys.exit(1)
