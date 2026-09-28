@@ -152,6 +152,13 @@ args:
                 config['full'] = bool(val)
         return config
 
+    # 参数宽容处理：模型有时把 fields 传成数组（如 ["host","ip"]），直接 str() 会得到
+    # "['host', 'ip']" 这种非法参数，FOFA 会返回字段全空的结果，故统一按文本归一化。
+    def as_text(value):
+        if isinstance(value, (list, tuple)):
+            return ','.join(str(item).strip() for item in value if str(item).strip())
+        return '' if value is None else str(value).strip()
+
     try:
         config = parse_args()
 
@@ -167,7 +174,7 @@ args:
 
         # 从配置或环境变量获取 api_key
         api_key = os.getenv('FOFA_API_KEY', FOFA_API_KEY).strip()
-        query = config.get('query', '').strip()
+        query = as_text(config.get('query', ''))
 
         if not api_key:
             error_result = {
@@ -221,7 +228,7 @@ args:
                 pass
 
         if 'fields' in config and config['fields']:
-            params['fields'] = str(config['fields']).strip()
+            params['fields'] = as_text(config['fields'])
 
         if 'full' in config and config['full'] is not None:
             full_val = config['full']
