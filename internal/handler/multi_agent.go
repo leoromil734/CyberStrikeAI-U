@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
@@ -203,6 +204,8 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	// 同一请求内分段续跑时，主代理 iteration 事件按偏移累计，避免 UI 出现「第3轮 → 第1轮」回跳。
 	var mainIterationOffset int
 	var emptyResponseContinueAttempt int
+	var finalizationAutoContinueAttempt int
+	var finalizationDecision agentfinalizer.Decision
 
 	for {
 		segmentMainIterationMax := 0
@@ -268,6 +271,13 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		if runErr == nil {
 			mw := &h.config.MultiAgent.EinoMiddleware
 			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, preferFinalReport, progressCallback) {
+				mainIterationOffset += segmentMainIterationMax
+				timeoutCancel()
+				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
+				continue
+			}
+			finalizationDecision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), result, cumulativeMCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+			if h.tryAutoContinueAfterFinalization(taskCtx, conversationID, result, finalizationDecision, &finalizationAutoContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
 				timeoutCancel()
 				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
@@ -373,9 +383,13 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 
 	timeoutCancel()
 
-	if assistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(assistantMessageID, result.Response, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput))
+	effectiveOrch := config.NormalizeMultiAgentOrchestration(h.config.MultiAgent.Orchestration)
+	if o := strings.TrimSpace(req.Orchestration); o != "" {
+		effectiveOrch = config.NormalizeMultiAgentOrchestration(o)
 	}
+
+	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
+	h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_"+effectiveOrch, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
@@ -383,16 +397,14 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		}
 	}
 
-	effectiveOrch := config.NormalizeMultiAgentOrchestration(h.config.MultiAgent.Orchestration)
-	if o := strings.TrimSpace(req.Orchestration); o != "" {
-		effectiveOrch = config.NormalizeMultiAgentOrchestration(o)
+	responseText := finalizationDecision.FinalText
+	if !finalizationDecision.Finalizable {
+		responseText = finalizationBlockedMessage(finalizationDecision)
 	}
-	sendEvent("response", result.Response, map[string]interface{}{
+	sendEvent("response", responseText, finalizationResponsePayload(finalizationDecision, map[string]interface{}{
 		"mcpExecutionIds": cumulativeMCPExecutionIDs,
-		"conversationId":  conversationID,
-		"messageId":       assistantMessageID,
 		"agentMode":       "eino_" + effectiveOrch,
-	})
+	}))
 	sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 }
 
@@ -443,6 +455,9 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 	curMsg := prep.FinalMessage
 	var result *multiagent.RunResult
 	var runErr error
+	var emptyResponseContinueAttempt int
+	var finalizationAutoContinueAttempt int
+	var decision agentfinalizer.Decision
 	for {
 		result, runErr = multiagent.RunDeepAgent(
 			taskCtx,
@@ -462,36 +477,60 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 			chatReasoningToClientIntent(req.Reasoning),
 			h.agentSessionContextBlock(prep.ConversationID),
 		)
-		if runErr == nil {
-			break
+		if runErr != nil {
+			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
+				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
+			}
+			h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
+			errMsg := "执行失败: " + runErr.Error()
+			if prep.AssistantMessageID != "" {
+				_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), prep.AssistantMessageID)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			return
 		}
-		if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
-			h.persistEinoAgentTraceForResume(prep.ConversationID, result)
+		if h.tryContinueOnEinoEmptyResponse(taskCtx, &h.config.MultiAgent.EinoMiddleware, prep.ConversationID, result, &emptyResponseContinueAttempt, &curHist, &curMsg, false, progressCallback) {
+			continue
 		}
-		h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
-		errMsg := "执行失败: " + runErr.Error()
-		if prep.AssistantMessageID != "" {
-			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), prep.AssistantMessageID)
+		decision = h.decideAgentRunForDeliveryWithPolicy(prep.ConversationID, prep.AssistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)), result, result.MCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+		if h.tryAutoContinueAfterFinalization(taskCtx, prep.ConversationID, result, decision, &finalizationAutoContinueAttempt, &curHist, &curMsg, progressCallback) {
+			continue
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
-		return
+		break
 	}
 
-	if prep.AssistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(prep.AssistantMessageID, result.Response, result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput))
-	}
-
+	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
+	h.persistFinalizationDecision(
+		prep.ConversationID,
+		prep.AssistantMessageID,
+		"eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)),
+		result.MCPExecutionIDs,
+		multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput),
+		decision,
+	)
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		if err := h.db.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
 			h.logger.Warn("保存代理轨迹失败", zap.Error(err))
 		}
 	}
 
+	responseText := decision.FinalText
+	if !decision.Finalizable {
+		responseText = finalizationBlockedMessage(decision)
+	}
 	c.JSON(http.StatusOK, ChatResponse{
-		Response:        result.Response,
-		MCPExecutionIDs: result.MCPExecutionIDs,
-		ConversationID:  prep.ConversationID,
-		Time:            time.Now(),
+		Response:            responseText,
+		MCPExecutionIDs:     result.MCPExecutionIDs,
+		ConversationID:      prep.ConversationID,
+		Time:                time.Now(),
+		Finalized:           decision.Finalized,
+		Finalizable:         decision.Finalizable,
+		Status:              decision.Status,
+		CompletionReason:    decision.CompletionReason,
+		EvidenceVerified:    decision.EvidenceVerified,
+		EvidenceRefs:        decision.EvidenceRefs,
+		MissingChecks:       decision.MissingChecks,
+		PendingExecutionIDs: decision.PendingExecutionIDs,
 	})
 }
 

@@ -161,20 +161,29 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return true
 	}
-	if prep.AssistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(prep.AssistantMessageID, result.Response, nil, "")
-	}
+	// 最终回复治理：workflow 等待 HITL 时不允许 final；候选文本通过 finalizer 才交付。
+	decision := h.finalizeCandidateForDeliveryWithPolicy(
+		prep.ConversationID,
+		prep.AssistantMessageID,
+		"workflow",
+		result.Response,
+		nil,
+		result.AwaitingHITL,
+		"",
+		requestRequiresExecutionEvidence(req),
+	)
 	payload := map[string]interface{}{
-		"conversationId": prep.ConversationID,
-		"messageId":      prep.AssistantMessageID,
-		"agentMode":      "workflow",
-		"workflowRunId":  result.RunID,
+		"workflowRunId": result.RunID,
 	}
 	if result.AwaitingHITL {
 		payload["workflowStatus"] = "awaiting_hitl"
 		payload["awaitingHitl"] = true
 	}
-	sendEvent("response", result.Response, payload)
+	responseText := decision.FinalText
+	if !decision.Finalizable {
+		responseText = finalizationBlockedMessage(decision)
+	}
+	sendEvent("response", responseText, finalizationResponsePayload(decision, payload))
 	sendEvent("done", "", map[string]interface{}{"conversationId": prep.ConversationID})
 	return true
 }
@@ -267,17 +276,35 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg, "conversationId": conversationID})
 		return true
 	}
-	if prep.AssistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(prep.AssistantMessageID, result.Response, nil, "")
+	// 最终回复治理：workflow 等待 HITL 时不允许 final。
+	decision := h.finalizeCandidateForDeliveryWithPolicy(
+		prep.ConversationID,
+		prep.AssistantMessageID,
+		"workflow",
+		result.Response,
+		nil,
+		result.AwaitingHITL,
+		"",
+		requestRequiresExecutionEvidence(req),
+	)
+	responseText := decision.FinalText
+	if !decision.Finalizable {
+		responseText = finalizationBlockedMessage(decision)
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"response":           result.Response,
-		"conversationId":     prep.ConversationID,
-		"assistantMessageId": prep.AssistantMessageID,
-		"agentMode":          "workflow",
-		"workflowRunId":      result.RunID,
-		"workflowStatus":     result.Status,
-		"awaitingHitl":       result.AwaitingHITL,
+		"response":            responseText,
+		"finalized":           decision.Finalized,
+		"finalizable":         decision.Finalizable,
+		"status":              decision.Status,
+		"completionReason":    decision.CompletionReason,
+		"missingChecks":       decision.MissingChecks,
+		"pendingExecutionIds": decision.PendingExecutionIDs,
+		"conversationId":      prep.ConversationID,
+		"assistantMessageId":  prep.AssistantMessageID,
+		"agentMode":           "workflow",
+		"workflowRunId":       result.RunID,
+		"workflowStatus":      result.Status,
+		"awaitingHitl":        result.AwaitingHITL,
 	})
 	return true
 }

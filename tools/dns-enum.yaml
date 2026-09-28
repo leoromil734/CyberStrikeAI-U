@@ -1,0 +1,59 @@
+name: "dns-enum"
+command: "/opt/CyberStrikeAI-U/venv/bin/python3"
+args: ["/opt/CyberStrikeAI-U/scripts/recon/dns_enum.py"]
+enabled: true
+short_description: "批量 DNS 解析（A/AAAA/MX/NS/CNAME/TXT → CSV）— 被动信息收集"
+description: |
+  批量 DNS 解析工具。从参数或文件读取域名列表，批量解析 A/AAAA/MX/NS/CNAME/TXT 记录并输出 CSV。
+
+  **用途（被动信息收集）：**
+  - 解析出的 A 记录 IP 即资产，建议入库（source=dns）
+  - 多域名解析到同一 IP = 同服务器横向线索
+  - MX/NS 记录可发现邮件系统 / DNS 服务商
+
+  **用法示例：**
+  - `dns-enum domains="www.example.com,mail.example.com"` → 逗号分隔
+  - `dns-enum input_file="/root/domains.txt"` → 文件每行一个
+  - `dns-enum domains="example.com" record_type="MX"` → 只查 MX
+  - `dns-enum domains="example.com" resolvers="114.114.114.114,8.8.8.8"` → 指定 DNS 对比 CDN 差异
+
+  **输出：** CSV（列：domain, record_type, value, note）。不传 output_file 时写到平台工作目录 dns_enum_<时间戳>.csv。
+  **注意：** 超时/错误会以 note 列标注（如 timeout / NXDOMAIN），不会中断整批解析。
+parameters:
+  - name: "domains"
+    type: "string"
+    description: "逗号分隔的域名列表，如 www.example.com,mail.example.com"
+    required: false
+    flag: "--domains"
+    format: "flag"
+  - name: "input_file"
+    type: "string"
+    description: "域名列表文件路径（每行一个域名），与 domains 可并用"
+    required: false
+    flag: "--input-file"
+    format: "flag"
+  - name: "output_file"
+    type: "string"
+    description: "输出 CSV 路径（默认当前目录 dns_enum_<时间戳>.csv）"
+    required: false
+    flag: "--output-file"
+    format: "flag"
+  - name: "record_type"
+    type: "string"
+    description: "解析记录类型：A / AAAA / MX / NS / CNAME / TXT / ALL（默认 ALL）"
+    required: false
+    flag: "--record-type"
+    format: "flag"
+    default: "ALL"
+    options: ["A", "AAAA", "MX", "NS", "CNAME", "TXT", "ALL"]
+  - name: "resolvers"
+    type: "string"
+    description: "逗号分隔的 DNS 服务器（默认系统解析器）。示例：114.114.114.114,8.8.8.8"
+    required: false
+    flag: "--resolvers"
+    format: "flag"
+  - name: "additional_args"
+    type: "string"
+    description: "额外参数，按空格追加到命令末尾（如 --timeout 3）"
+    required: false
+    format: "positional"

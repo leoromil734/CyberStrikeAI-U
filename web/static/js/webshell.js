@@ -1338,6 +1338,58 @@ function escapeHtmlAttr(s) {
     return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function webshellFinalizationReasonLabel(reason, status) {
+    var key = String(reason || status || '').trim();
+    var labels = {
+        pending_tool_executions: '等待工具执行完成',
+        missing_execution_evidence: '缺少完成态证据',
+        awaiting_hitl: '等待人工确认',
+        empty_response: '未捕获到有效回复',
+        missing_finalization_contract: '缺少最终化证明',
+        in_progress: '仍在验证',
+        blocked: '检查未通过',
+        failed: '任务失败',
+        cancelled: '任务已取消',
+        verified: '已验证'
+    };
+    return labels[key] || key || '检查未通过';
+}
+
+function webshellFinalizationMissingCheckLabel(check) {
+    var s = String(check || '').trim();
+    if (!s) return '';
+    if (s.indexOf('tool execution still queued or running') !== -1) return '仍有工具执行未结束';
+    if (s.indexOf('execution evidence is required but no completed tool execution was recorded') !== -1) return '本轮要求执行证据，但没有 completed 工具记录';
+    if (s.indexOf('workflow is awaiting HITL approval') !== -1) return '工作流正在等待人工确认';
+    if (s.indexOf('assistant final text is empty') !== -1) return '未捕获到有效最终文本';
+    if (s.indexOf('agent run status is ') === 0) return '任务状态仍为 ' + s.replace('agent run status is ', '');
+    return s;
+}
+
+/**
+ * WebShell AI 最终回复治理：未通过 finalizer 时，用提示文案替代候选输出。
+ */
+function webshellFinalizationNotice(data, eventMessage, hasContract) {
+    var reason = hasContract
+        ? webshellFinalizationReasonLabel(data && data.completionReason, data && data.status)
+        : webshellFinalizationReasonLabel('missing_finalization_contract');
+    var lines = ['仍在验证，暂不生成最终结论', '状态：' + reason];
+    var pending = Array.isArray(data && data.pendingExecutionIds) ? data.pendingExecutionIds.filter(Boolean).map(String) : [];
+    if (pending.length) {
+        lines.push('待完成工具：' + pending.slice(0, 3).join(', ') + (pending.length > 3 ? ' 等' : ''));
+    }
+    var missing = Array.isArray(data && data.missingChecks)
+        ? data.missingChecks.map(webshellFinalizationMissingCheckLabel).filter(Boolean)
+        : [];
+    if (missing.length) {
+        lines.push('待完成检查：' + missing.slice(0, 2).join('；') + (missing.length > 2 ? ' 等' : ''));
+    }
+    if (!hasContract && eventMessage) {
+        lines.push('候选输出已移入过程详情。');
+    }
+    return lines.join('\n');
+}
+
 function escapeSingleQuotedShellArg(value) {
     var s = value == null ? '' : String(value);
     return "'" + s.replace(/'/g, "'\\''") + "'";
@@ -3465,6 +3517,8 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                         streamingTarget = '';
                         webshellStreamingTypingId += 1;
                         streamingTypingId = webshellStreamingTypingId;
+                        assistantDiv.dataset.finalized = 'false';
+                        assistantDiv.classList.add('webshell-ai-candidate-output');
                         assistantDiv.textContent = '…';
                         messagesContainer.scrollTop = messagesContainer.scrollHeight;
                     } else if (_et === 'response_delta') {
@@ -3485,6 +3539,23 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                         }
                     } else if (_et === 'response') {
                         var text = (_em != null && _em !== '') ? _em : (typeof _ed === 'string' ? _ed : '');
+                        var finalized = !!(_ed && _ed.finalized === true);
+                        var hasFinalizationContract = !!(_ed && (
+                            Object.prototype.hasOwnProperty.call(_ed, 'finalized') ||
+                            Object.prototype.hasOwnProperty.call(_ed, 'finalizable') ||
+                            Object.prototype.hasOwnProperty.call(_ed, 'completionReason') ||
+                            Object.prototype.hasOwnProperty.call(_ed, 'evidenceVerified') ||
+                            Object.prototype.hasOwnProperty.call(_ed, 'missingChecks')
+                        ));
+                        assistantDiv.dataset.finalized = finalized ? 'true' : 'false';
+                        assistantDiv.classList.toggle('webshell-ai-candidate-output', !finalized);
+                        assistantDiv.classList.toggle('webshell-ai-finalized-output', finalized);
+                        if (!finalized && !hasFinalizationContract && text) {
+                            appendTimelineItem('finalization_check', '候选输出缺少最终化证明', text, Object.assign({}, _ed || {}, { missingFinalizationContract: true }));
+                            text = webshellFinalizationNotice(_ed || {}, text, false);
+                        } else if (!finalized && hasFinalizationContract) {
+                            text = webshellFinalizationNotice(_ed || {}, text, true);
+                        }
                         if (text) {
                             streamingTarget = String(text);
                             webshellStreamingTypingId += 1;
@@ -3493,6 +3564,11 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                         }
 
                     // ─── Terminal events ───
+                    } else if (_et === 'finalization_check') {
+                        var finalizationOk = !!(_ed && _ed.finalized === true);
+                        appendTimelineItem('finalization_check', finalizationOk ? '最终回复检查通过' : '最终回复检查未通过', finalizationOk ? (_em || '最终回复检查通过。') : webshellFinalizationNotice(_ed || {}, _em, true), _ed);
+                    } else if (_et === 'finalization_auto_continue') {
+                        appendTimelineItem('progress', '继续验证', _em, _ed);
                     } else if (_et === 'error' && _em) {
                         streamingTypingId += 1;
                         var errLabel = wsTOr('chat.error', '错误');

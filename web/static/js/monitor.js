@@ -199,6 +199,97 @@ function resolveFinalAssistantResponseText(finalMessage, streamState) {
 }
 
 /**
+ * 最终回复治理（Finalization Contract）前端侧判断。
+ * 只有 data.finalized === true 的 response 才是可交付结论；其余仅作候选/进度展示，
+ * 避免把「像结论的过程文本」误判为最终回复。
+ */
+function isFinalizedResponseData(data) {
+    return !!(data && data.finalized === true);
+}
+
+function hasFinalizationContract(data) {
+    if (!data || typeof data !== 'object') return false;
+    return Object.prototype.hasOwnProperty.call(data, 'finalized')
+        || Object.prototype.hasOwnProperty.call(data, 'finalizable')
+        || Object.prototype.hasOwnProperty.call(data, 'completionReason')
+        || Object.prototype.hasOwnProperty.call(data, 'evidenceVerified')
+        || Object.prototype.hasOwnProperty.call(data, 'missingChecks');
+}
+
+function finalizationCheckTitle(data) {
+    return isFinalizedResponseData(data) ? '最终回复检查通过' : '最终回复检查未通过';
+}
+
+function finalizationReasonLabel(reason, status) {
+    const key = String(reason || status || '').trim();
+    const labels = {
+        pending_tool_executions: '等待工具执行完成',
+        missing_execution_evidence: '缺少完成态证据',
+        awaiting_hitl: '等待人工确认',
+        empty_response: '未捕获到有效回复',
+        missing_finalization_contract: '缺少最终化证明',
+        in_progress: '仍在验证',
+        blocked: '检查未通过',
+        failed: '任务失败',
+        cancelled: '任务已取消',
+        verified: '已验证'
+    };
+    return labels[key] || key || '检查未通过';
+}
+
+function finalizationMissingCheckLabel(check) {
+    const s = String(check || '').trim();
+    if (!s) return '';
+    if (s.indexOf('tool execution still queued or running') !== -1) return '仍有工具执行未结束';
+    if (s.indexOf('execution evidence is required but no completed tool execution was recorded') !== -1) return '本轮要求执行证据，但没有 completed 工具记录';
+    if (s.indexOf('workflow is awaiting HITL approval') !== -1) return '工作流正在等待人工确认';
+    if (s.indexOf('assistant final text is empty') !== -1) return '未捕获到有效最终文本';
+    if (s.indexOf('agent run status is ') === 0) return '任务状态仍为 ' + s.replace('agent run status is ', '');
+    return s;
+}
+
+function compactStringList(values, limit) {
+    const arr = Array.isArray(values) ? values.filter(Boolean).map(String) : [];
+    const max = limit || 3;
+    if (arr.length <= max) return arr;
+    return arr.slice(0, max).concat('另 ' + (arr.length - max) + ' 项');
+}
+
+function finalizationNoticeMarkdown(responseData, eventMessage) {
+    const hasContract = hasFinalizationContract(responseData);
+    const reason = hasContract
+        ? finalizationReasonLabel(responseData && responseData.completionReason, responseData && responseData.status)
+        : finalizationReasonLabel('missing_finalization_contract');
+    const lines = ['**仍在验证，暂不生成最终结论**', '', '状态：' + reason];
+    const pending = compactStringList(responseData && responseData.pendingExecutionIds, 3);
+    if (pending.length) {
+        lines.push('待完成工具：`' + pending.join('`, `') + '`');
+    }
+    const rawMissingChecks = responseData && responseData.missingChecks;
+    const missingChecks = Array.isArray(rawMissingChecks)
+        ? rawMissingChecks
+        : (rawMissingChecks ? [rawMissingChecks] : []);
+    const missing = compactStringList(missingChecks.map(finalizationMissingCheckLabel).filter(Boolean), 3);
+    if (missing.length) {
+        lines.push('待完成检查：' + missing.join('；'));
+    }
+    if (!hasContract && eventMessage != null && String(eventMessage).trim() !== '') {
+        lines.push('', '候选输出已移入过程详情，避免误判为最终结论。');
+    }
+    return lines.join('\n');
+}
+
+function markAssistantFinalizationState(assistantMessageId, responseData) {
+    const assistantElement = document.getElementById(assistantMessageId);
+    if (!assistantElement) return;
+    const finalized = isFinalizedResponseData(responseData);
+    assistantElement.dataset.finalized = finalized ? 'true' : 'false';
+    assistantElement.dataset.finalizationStatus = responseData && responseData.status ? String(responseData.status) : '';
+    assistantElement.classList.toggle('assistant-finalized', finalized);
+    assistantElement.classList.toggle('assistant-not-finalized', !finalized);
+}
+
+/**
  * 主通道 response 结束时：将流式占位条目固化为 planning（与后端 flushResponsePlan 落库类型一致），
  * 避免 integrateProgressToMCPSection 快照前删除占位导致「助手输出」仅刷新后才出现。
  */
@@ -2958,7 +3049,14 @@ function handleStreamEvent(event, progressElement, progressId,
             const streamState = responseStreamStateByProgressId.get(progressId);
             const existingAssistantId = streamState?.assistantId || getAssistantId();
             let assistantIdFinal = existingAssistantId;
-            const bubbleText = resolveFinalAssistantResponseText(event.message, streamState);
+            // 只有 finalized===true 的 response 才作为最终结论；否则显示为「仍在验证」提示，
+            // 候选文本只进过程详情，避免把过程性输出误判为交付结果。
+            const responseFinalized = isFinalizedResponseData(responseData);
+            const responseHasFinalizationContract = hasFinalizationContract(responseData);
+            const resolvedResponseText = resolveFinalAssistantResponseText(event.message, streamState);
+            const bubbleText = responseFinalized
+                ? resolvedResponseText
+                : finalizationNoticeMarkdown(responseData, event.message);
 
             if (!assistantIdFinal) {
                 assistantIdFinal = addMessage('assistant', bubbleText, mcpIds, progressId);
@@ -2967,11 +3065,12 @@ function handleStreamEvent(event, progressElement, progressId,
                 setAssistantId(assistantIdFinal);
                 updateAssistantBubbleContent(assistantIdFinal, bubbleText, true);
             }
+            markAssistantFinalizationState(assistantIdFinal, responseData);
 
             // 将 response_start/response_delta 占位固化为 planning，与后端落库一致后再快照过程详情
             if (streamState && streamState.itemId) {
-                finalizeMainResponseStreamItem(streamState, event.message, responseData);
-            } else if (timeline && bubbleText && String(bubbleText).trim() && !isEinoEmptyResponsePlaceholder(event.message)) {
+                finalizeMainResponseStreamItem(streamState, responseFinalized ? event.message : '', responseData);
+            } else if (timeline && responseFinalized && bubbleText && String(bubbleText).trim() && !isEinoEmptyResponsePlaceholder(event.message)) {
                 addTimelineItem(timeline, 'planning', {
                     title: typeof einoMainStreamPlanningTitle === 'function'
                         ? einoMainStreamPlanningTitle(responseData)
@@ -2979,6 +3078,13 @@ function handleStreamEvent(event, progressElement, progressId,
                     message: event.message,
                     data: responseData,
                     expanded: false
+                });
+            } else if (timeline && !responseFinalized && !responseHasFinalizationContract && resolvedResponseText && String(resolvedResponseText).trim()) {
+                addTimelineItem(timeline, 'finalization_check', {
+                    title: '候选输出缺少最终化证明',
+                    message: resolvedResponseText,
+                    data: Object.assign({}, responseData, { missingFinalizationContract: true }),
+                    expanded: true
                 });
             }
 

@@ -346,6 +346,16 @@ type ChatRequest struct {
 	Reasoning            *ChatReasoningRequest `json:"reasoning,omitempty"`
 	// Orchestration 仅对 /api/multi-agent、/api/multi-agent/stream：deep | plan_execute | supervisor；空则等同 deep。机器人/批量等无请求体时由服务端默认 deep。/api/eino-agent* 不使用此字段。
 	Orchestration string `json:"orchestration,omitempty"`
+	// Finalization 最终回复治理策略（可选）。未配置时采用默认门禁（不做强制证据要求）。
+	Finalization ChatFinalizationRequest `json:"finalization,omitempty"`
+}
+
+// ChatFinalizationRequest 控制本轮是否必须存在执行证据才允许最终化。
+// 后端不从用户自然语言或 agent mode 名称推断执行意图，必须由调用点显式声明。
+type ChatFinalizationRequest struct {
+	// RequireExecutionEvidence 为 true 时，本轮必须存在至少一条 completed 的工具执行记录，
+	// 否则最终回复被阻断为 blocked / missing_execution_evidence。
+	RequireExecutionEvidence *bool `json:"requireExecutionEvidence,omitempty"`
 }
 
 func (h *AgentHandler) configForAIChannel(channelID string) (*config.Config, string, error) {
@@ -680,6 +690,16 @@ type ChatResponse struct {
 	MCPExecutionIDs []string  `json:"mcpExecutionIds,omitempty"` // 本次对话中执行的MCP调用ID列表
 	ConversationID  string    `json:"conversationId"`            // 对话ID
 	Time            time.Time `json:"time"`
+
+	// 最终回复治理终态字段：response 只是当 finalized=true 时才是可交付结论。
+	Finalized           bool     `json:"finalized"`
+	Finalizable         bool     `json:"finalizable,omitempty"`
+	Status              string   `json:"status,omitempty"`
+	CompletionReason    string   `json:"completionReason,omitempty"`
+	EvidenceVerified    bool     `json:"evidenceVerified,omitempty"`
+	EvidenceRefs        []string `json:"evidenceRefs,omitempty"`
+	MissingChecks       []string `json:"missingChecks,omitempty"`
+	PendingExecutionIDs []string `json:"pendingExecutionIds,omitempty"`
 }
 
 func (h *AgentHandler) finalizeRobotAgentError(ctx context.Context, assistantMessageID, conversationID string, resultMA *multiagent.RunResult, errMA error) (string, string, error) {
@@ -695,19 +715,29 @@ func (h *AgentHandler) finalizeRobotAgentError(ctx context.Context, assistantMes
 }
 
 func (h *AgentHandler) finalizeRobotAgentSuccess(assistantMessageID, conversationID string, resultMA *multiagent.RunResult) (string, string, error) {
-	if assistantMessageID != "" {
-		if errU := h.db.UpdateAssistantMessageFinalize(assistantMessageID, resultMA.Response, resultMA.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(resultMA.LastAgentTraceInput)); errU != nil {
-			h.logger.Warn("机器人：更新助手消息失败", zap.Error(errU))
-		}
-	} else {
-		if _, err := h.db.AddMessage(conversationID, "assistant", resultMA.Response, resultMA.MCPExecutionIDs); err != nil {
+	// 最终回复治理：机器人路径与聊天路径共用同一门禁。
+	decision := h.finalizeAgentRunForDeliveryWithPolicy(
+		conversationID,
+		assistantMessageID,
+		"robot",
+		resultMA,
+		resultMA.MCPExecutionIDs,
+		multiagent.AggregatedReasoningFromTraceJSON(resultMA.LastAgentTraceInput),
+		false,
+	)
+	delivered := decision.FinalText
+	if !decision.Finalizable {
+		delivered = finalizationBlockedMessage(decision)
+	}
+	if assistantMessageID == "" {
+		if _, err := h.db.AddMessage(conversationID, "assistant", delivered, resultMA.MCPExecutionIDs); err != nil {
 			h.logger.Warn("机器人：保存助手消息失败", zap.Error(err))
 		}
 	}
 	if resultMA.LastAgentTraceInput != "" || resultMA.LastAgentTraceOutput != "" {
 		_ = h.db.SaveAgentTrace(conversationID, resultMA.LastAgentTraceInput, resultMA.LastAgentTraceOutput)
 	}
-	return resultMA.Response, conversationID, nil
+	return delivered, conversationID, nil
 }
 
 func (h *AgentHandler) runRobotEinoSingleWithRetry(

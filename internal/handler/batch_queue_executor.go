@@ -314,8 +314,17 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	lastIn := resultMA.LastAgentTraceInput
 	lastOut := resultMA.LastAgentTraceOutput
 
+	// 最终回复治理：候选文本必须先通过 finalizer 判定。
+	decision := h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, mcpIDs)
+	if !decision.Finalizable {
+		resText = finalizationBlockedMessage(decision)
+	}
+
 	if assistantMessageID != "" {
-		if updateErr := h.db.UpdateAssistantMessageFinalize(assistantMessageID, resText, mcpIDs, multiagent.AggregatedReasoningFromTraceJSON(lastIn)); updateErr != nil {
+		if !decision.Finalizable {
+			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", resText, time.Now(), assistantMessageID)
+			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
+		} else if updateErr := h.db.UpdateAssistantMessageFinalize(assistantMessageID, resText, mcpIDs, multiagent.AggregatedReasoningFromTraceJSON(lastIn)); updateErr != nil {
 			h.logger.Warn("更新助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(updateErr))
 			if _, err = h.db.AddMessage(conversationID, "assistant", resText, mcpIDs); err != nil {
 				h.logger.Error("保存助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))

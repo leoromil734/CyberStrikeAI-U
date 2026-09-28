@@ -1,0 +1,62 @@
+name: "supply-chain-collect"
+command: "/opt/CyberStrikeAI-U/venv/bin/python3"
+args: ["/opt/CyberStrikeAI-U/scripts/recon/supply_chain_collect.py"]
+enabled: true
+short_description: "供应链信息收集（FOFA 证书/域名反查 → 供应链域名与 IP → CSV 汇总）"
+description: |
+  供应链信息收集工具。基于 FOFA 官方 API 的证书 / 域名反查，用于从目标公司出发
+  找到其供应商 / 子公司 / 关联方资产。
+
+  **步骤：**
+  1. `cert="<target>"` 证书反查 → 发现供应链域名/IP（目标自己签发的证书）
+  2. `domain="<主域名>"` 对发现的主域名查子域名资产
+  3. `ip="<关键IP>"` 对高价值 IP 查全端口（当前实现覆盖 Step1/2，Step3 可后续扩展）
+  4. 去重导出 CSV + 汇总
+
+  **需要 FOFA API Key**（`--key` 或 `FOFA_API_KEY` 环境变量）；也可在平台「系统设置 → 资产管理」中填写。
+
+  **用法示例：**
+  - `supply-chain-collect target="example.com"`
+  - `supply-chain-collect target="example.com" key="<FOFA_KEY>" output="/root/supply.csv"`
+  - `supply-chain-collect target="某公司" cert_exact="true" size="200"`
+
+  **注意：** FOFA 证书反查只能看到"目标自己签发的证书"；供应链关系常需配合 WebSearch
+  搜索 "<公司名> 供应商/服务商" 补充。产出为 CSV 报告，路径在输出中。
+parameters:
+  - name: "target"
+    type: "string"
+    description: "目标关键字：域名 / 公司名 / 证书 CN（证书反查主体）"
+    required: true
+    flag: "--target"
+    format: "flag"
+  - name: "key"
+    type: "string"
+    description: "FOFA API Key（默认读 FOFA_API_KEY 环境变量）"
+    required: false
+    flag: "--key"
+    format: "flag"
+  - name: "cert_exact"
+    type: "bool"
+    description: "证书精确匹配 subject_cn（生成 cert.subject_cn=\"target\"，否则用 cert=\"target\"）"
+    required: false
+    flag: "--cert-exact"
+    format: "flag"
+    default: false
+  - name: "size"
+    type: "int"
+    description: "每步返回条数（默认 100，上限取决于 FOFA 账号）"
+    required: false
+    flag: "--size"
+    format: "flag"
+    default: 100
+  - name: "output"
+    type: "string"
+    description: "输出 CSV 路径（默认当前目录 supply_chain_<时间戳>.csv）"
+    required: false
+    flag: "--output"
+    format: "flag"
+  - name: "additional_args"
+    type: "string"
+    description: "额外参数，按空格追加到命令末尾（如 --timeout 60）"
+    required: false
+    format: "positional"

@@ -1,0 +1,75 @@
+name: "sg-code-search"
+command: "/opt/CyberStrikeAI-U/venv/bin/python3"
+args: ["/opt/CyberStrikeAI-U/scripts/recon/sg_code_search.py"]
+enabled: true
+short_description: "代码/仓库泄露搜索（公开代码平台关键词搜索）— 被动信息收集"
+description: |
+  代码 / 仓库泄露搜索工具。搜索公开代码平台中与目标相关的泄露：源码、密钥、
+  配置文件、内部域名。用于被动信息收集（信息泄露搜索）。
+
+  **数据源（按实测可用性排序）：**
+  - `github-repo`（默认，**免 token 可用**）：GitHub 仓库搜索，匹配仓库名/描述/README。
+    适合发现与目标同名或相关的可疑仓库；要限定外部组织可用 `pattern="org:xxx"` / `user:xxx`。
+  - `github-code`（**需 token**）：GitHub 代码内容搜索，是"源码/密钥泄露"最直接的来源。
+    GitHub 已对未认证请求返回 401，必须配置 `--token` 或 `GITHUB_TOKEN`。
+  - `grep.app`：公开代码搜索，无需 token；但**部分数据中心 IP 会被 Vercel 安全挑战拦截（429）**，
+    此环境下请改用 github-code 并配置 token。
+
+  **用法示例：**
+  - `sg-code-search query="example.com"` → 默认 github-repo，免 token
+  - `sg-code-search query="example.com password" source="github-code" token="ghp_xxx"` → 代码内容搜索
+  - `sg-code-search query="example.com" pattern="org:example"` → 限定组织
+  - `sg-code-search list="/root/keywords.txt" output="/root/result.txt" limit="50"`
+
+  **建议关键词形态：** `<域名> password`、`<域名> api_key`、`<公司名> internal`、`<域名> .env`
+parameters:
+  - name: "query"
+    type: "string"
+    description: "搜索关键词"
+    required: false
+    flag: "--query"
+    format: "flag"
+  - name: "list"
+    type: "string"
+    description: "批量关键词文件路径（每行一个）"
+    required: false
+    flag: "--list"
+    format: "flag"
+  - name: "pattern"
+    type: "string"
+    description: "追加到查询的过滤条件，如 in:readme、org:example、user:xxx、fork:yes"
+    required: false
+    flag: "--pattern"
+    format: "flag"
+  - name: "output"
+    type: "string"
+    description: "结果落地文件路径（不指定则打印到 stdout）"
+    required: false
+    flag: "--output"
+    format: "flag"
+  - name: "limit"
+    type: "int"
+    description: "每个关键词最多返回条数（默认 30）"
+    required: false
+    flag: "--limit"
+    format: "flag"
+    default: 30
+  - name: "source"
+    type: "string"
+    description: "数据源：github-repo（默认，免 token）/ github-code（需 token）/ grep.app"
+    required: false
+    flag: "--source"
+    format: "flag"
+    default: "github-repo"
+    options: ["github-repo", "github-code", "grep.app"]
+  - name: "token"
+    type: "string"
+    description: "GitHub token（github-code 必需；也可用 GITHUB_TOKEN 环境变量）"
+    required: false
+    flag: "--token"
+    format: "flag"
+  - name: "additional_args"
+    type: "string"
+    description: "额外参数，按空格追加到命令末尾"
+    required: false
+    format: "positional"

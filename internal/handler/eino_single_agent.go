@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 
@@ -190,6 +191,8 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	// 同一请求内分段续跑时，主代理 iteration 事件按偏移累计，避免 UI 出现「第3轮 → 第1轮」回跳。
 	var mainIterationOffset int
 	var emptyResponseContinueAttempt int
+	var finalizationAutoContinueAttempt int
+	var finalizationDecision agentfinalizer.Decision
 
 	for {
 		segmentMainIterationMax := 0
@@ -254,6 +257,13 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		if runErr == nil {
 			mw := &h.config.MultiAgent.EinoMiddleware
 			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, false, progressCallback) {
+				mainIterationOffset += segmentMainIterationMax
+				timeoutCancel()
+				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
+				continue
+			}
+			finalizationDecision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "eino_single", result, cumulativeMCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+			if h.tryAutoContinueAfterFinalization(taskCtx, conversationID, result, finalizationDecision, &finalizationAutoContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
 				timeoutCancel()
 				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
@@ -359,9 +369,8 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 
 	timeoutCancel()
 
-	if assistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(assistantMessageID, result.Response, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput))
-	}
+	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
+	h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_single", cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
@@ -369,12 +378,14 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		}
 	}
 
-	sendEvent("response", result.Response, map[string]interface{}{
+	responseText := finalizationDecision.FinalText
+	if !finalizationDecision.Finalizable {
+		responseText = finalizationBlockedMessage(finalizationDecision)
+	}
+	sendEvent("response", responseText, finalizationResponsePayload(finalizationDecision, map[string]interface{}{
 		"mcpExecutionIds": cumulativeMCPExecutionIDs,
-		"conversationId":  conversationID,
-		"messageId":       assistantMessageID,
 		"agentMode":       "eino_single",
-	})
+	}))
 	sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 }
 
@@ -430,6 +441,9 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 	curMsg := prep.FinalMessage
 	var result *multiagent.RunResult
 	var runErr error
+	var emptyResponseContinueAttempt int
+	var finalizationAutoContinueAttempt int
+	var decision agentfinalizer.Decision
 	for {
 		result, runErr = multiagent.RunEinoSingleChatModelAgent(
 			taskCtx,
@@ -447,28 +461,43 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 			chatReasoningToClientIntent(req.Reasoning),
 			h.agentSessionContextBlock(prep.ConversationID),
 		)
-		if runErr == nil {
-			break
+		if runErr != nil {
+			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
+				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": runErr.Error()})
+			return
 		}
-		if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
-			h.persistEinoAgentTraceForResume(prep.ConversationID, result)
+		if h.tryContinueOnEinoEmptyResponse(taskCtx, &h.config.MultiAgent.EinoMiddleware, prep.ConversationID, result, &emptyResponseContinueAttempt, &curHist, &curMsg, false, progressCallback) {
+			continue
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": runErr.Error()})
-		return
+		decision = h.decideAgentRunForDeliveryWithPolicy(prep.ConversationID, prep.AssistantMessageID, "eino_single", result, result.MCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+		if h.tryAutoContinueAfterFinalization(taskCtx, prep.ConversationID, result, decision, &finalizationAutoContinueAttempt, &curHist, &curMsg, progressCallback) {
+			continue
+		}
+		break
 	}
 
-	if prep.AssistantMessageID != "" {
-		_ = h.db.UpdateAssistantMessageFinalize(prep.AssistantMessageID, result.Response, result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput))
-	}
+	h.persistFinalizationDecision(prep.ConversationID, prep.AssistantMessageID, "eino_single", result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		_ = h.db.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput)
 	}
 
+	responseText := decision.FinalText
+	if !decision.Finalizable {
+		responseText = finalizationBlockedMessage(decision)
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"response":           result.Response,
-		"conversationId":     prep.ConversationID,
-		"mcpExecutionIds":    result.MCPExecutionIDs,
-		"assistantMessageId": prep.AssistantMessageID,
-		"agentMode":          "eino_single",
+		"response":            responseText,
+		"finalized":           decision.Finalized,
+		"finalizable":         decision.Finalizable,
+		"status":              decision.Status,
+		"completionReason":    decision.CompletionReason,
+		"missingChecks":       decision.MissingChecks,
+		"pendingExecutionIds": decision.PendingExecutionIDs,
+		"conversationId":      prep.ConversationID,
+		"mcpExecutionIds":     result.MCPExecutionIDs,
+		"assistantMessageId":  prep.AssistantMessageID,
+		"agentMode":           "eino_single",
 	})
 }

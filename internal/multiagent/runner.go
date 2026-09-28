@@ -43,6 +43,17 @@ type RunResult struct {
 	MCPExecutionIDs      []string
 	LastAgentTraceInput  string // 已序列化的消息带（JSON）：原生循环或 Eino 均写入，供续跑/攻击链等恢复上下文
 	LastAgentTraceOutput string // 本轮助手侧对外展示文本（摘要或最终回复）
+
+	// 以下为终态字段：Response 只是「候选文本」，只有在 agentfinalizer.Decide 判定
+	// Finalizable=true 后才允许提升为最终回复并写入 messages.content。
+	// 由 agentfinalizer.FromRunResult 回填，供 handler 与 SSE 收尾统一使用。
+	Finalized           bool     // 是否已通过最终回复门禁
+	Status              string   // completed | in_progress | blocked | failed | cancelled | awaiting_hitl
+	CompletionReason    string   // verified | pending_tool_executions | empty_response | ...
+	EvidenceVerified    bool     // 证据是否已校验
+	EvidenceRefs        []string // 证据引用（如 mcp_execution:<id>）
+	PendingExecutionIDs []string // 仍在 queued/running 的工具执行 ID
+	MissingChecks       []string // 阻断 final 的缺失项说明
 }
 
 // toolCallPendingInfo tracks a tool_call emitted to the UI so we can later
