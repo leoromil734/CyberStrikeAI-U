@@ -4,16 +4,108 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/openai"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/flow/retriever/multiquery"
+	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
+
+// defaultMultiQueryRewritePrompt 与 Eino multiquery 的内置默认模板一致，仅把查询变量改为格式化占位。
+const defaultMultiQueryRewritePrompt = `You are an helpful assistant.
+	Your role is to create three different versions of the user query to retrieve relevant documents from store.
+    Your goal is to improve the performance of similarity search by generating text from different perspectives based on the user query.
+	Only provide the generated queries and separate them by newlines. 
+	user query: %s`
+
+// 查询改写模型常把推理过程混在正文里（<think>…</think>、沉思段落）并夹带空行/列表符号，
+// 而 Eino multiquery 默认按 "\n" 切分且不做任何过滤：空字符串会被当成一条查询送进向量检索器，
+// 触发「查询不能为空」使整次检索直接失败。这里先剥离推理块，再逐行清洗。
+var (
+	rewriteThinkBlockRe = regexp.MustCompile(`(?is)<(think|thinking|reasoning)>.*?</(think|thinking|reasoning)>`)
+	rewriteOpenThinkRe  = regexp.MustCompile(`(?is)<(think|thinking|reasoning)>.*$`)
+	rewriteListMarkRe   = regexp.MustCompile(`^\s*(?:[-*•‣·]|\(?\d{1,2}\)?\s*[.、)）])\s*`)
+)
+
+// buildMultiQueryRewritePrompt 组装改写提示词，保持与 Eino 默认模板同义。
+func buildMultiQueryRewritePrompt(query string) string {
+	return fmt.Sprintf(defaultMultiQueryRewritePrompt, query)
+}
+
+// sanitizeRewriteQueries 把改写模型的输出清洗成可用的检索变体。
+// 返回值可能为空，调用方需在此情况下回退到原始查询。
+func sanitizeRewriteQueries(content string) []string {
+	cleaned := rewriteThinkBlockRe.ReplaceAllString(content, "")
+	// 未闭合的推理块只可能出现在正文之前，整段丢弃，避免半截思考文本被当成查询。
+	cleaned = rewriteOpenThinkRe.ReplaceAllString(cleaned, "")
+
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 4)
+	for _, raw := range strings.Split(cleaned, "\n") {
+		line := strings.TrimSpace(rewriteListMarkRe.ReplaceAllString(raw, ""))
+		line = strings.TrimSpace(strings.Trim(line, "\"'“”‘’`"))
+		if line == "" || !hasQueryRune(line) {
+			continue
+		}
+		// 冒号结尾多是改写模型的自述小标题（如「Three different perspectives:」），不是查询。
+		if strings.HasSuffix(line, ":") || strings.HasSuffix(line, "：") {
+			continue
+		}
+		key := strings.ToLower(line)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, line)
+	}
+	return out
+}
+
+// hasQueryRune 过滤 ```、---、** 这类只由符号构成的行。
+func hasQueryRune(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// newRewriteHandler 包装改写模型：清洗输出，异常或产出为空时回退原始查询，保证检索不会整体失败。
+func newRewriteHandler(logger *zap.Logger, rewriteLLM model.ChatModel) func(ctx context.Context, query string) ([]string, error) {
+	return func(ctx context.Context, query string) ([]string, error) {
+		q := strings.TrimSpace(query)
+		if q == "" {
+			return nil, fmt.Errorf("查询不能为空")
+		}
+		msg, err := rewriteLLM.Generate(ctx, []*schema.Message{schema.UserMessage(buildMultiQueryRewritePrompt(q))})
+		if err != nil {
+			if logger != nil {
+				logger.Warn("知识库查询改写失败，回退原始查询", zap.Error(err))
+			}
+			return []string{q}, nil
+		}
+		if msg == nil {
+			return []string{q}, nil
+		}
+		queries := sanitizeRewriteQueries(msg.Content)
+		if len(queries) == 0 {
+			if logger != nil {
+				logger.Warn("知识库查询改写未产出可用变体，回退原始查询", zap.Int("contentLen", len(msg.Content)))
+			}
+			return []string{q}, nil
+		}
+		return queries, nil
+	}
+}
 
 // WireRetrieverPipeline builds Eino MultiQuery + HTTP rerank + post-process pipeline on r.
 // Call once after NewRetriever; UpdateConfig re-invokes when wireOpenAI is set.
@@ -60,9 +152,11 @@ func WireRetrieverPipeline(ctx context.Context, r *Retriever, openAI *config.Ope
 
 	vec := NewVectorEinoRetriever(r)
 	mq, err := multiquery.NewRetriever(ctx, &multiquery.Config{
-		RewriteLLM:    rewriteLLM,
-		MaxQueriesNum: r.config.MultiQuery.MaxQueriesEffective(),
-		OrigRetriever: vec,
+		// 用自定义 RewriteHandler 取代 Eino 默认的「按 \n 裸切分」解析：默认解析不剥离推理块、
+		// 也不过滤空行，模型一旦输出空行就会产出空查询，整次检索直接失败。
+		RewriteHandler: newRewriteHandler(r.logger, rewriteLLM),
+		MaxQueriesNum:  r.config.MultiQuery.MaxQueriesEffective(),
+		OrigRetriever:  vec,
 	})
 	if err != nil {
 		return fmt.Errorf("multi_query: %w", err)
