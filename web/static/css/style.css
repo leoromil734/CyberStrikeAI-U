@@ -43803,3 +43803,243 @@ html[data-theme="dark"] .webshell-ai-timeline-finalization_check {
     border-left-color: #fbbf24;
     background: linear-gradient(90deg, rgba(251, 191, 36, 0.08), rgba(17, 24, 39, 0.12));
 }
+
+/* ==========================================================================
+   目标历史页面（#page-targets）
+   ========================================================================== */
+.targets-subtitle {
+    margin: 0 0 6px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+.targets-backfill-hint {
+    margin: 0 0 16px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+.targets-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.targets-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 280px;
+    max-width: 420px;
+}
+.targets-search-icon {
+    position: absolute;
+    left: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+.targets-search-wrap input[type="search"] {
+    width: 100%;
+    padding: 8px 12px 8px 34px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--input-bg, var(--bg-primary));
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+.targets-search-wrap input[type="search"]:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+}
+.targets-total {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.targets-table-body {
+    overflow-x: auto;
+}
+.targets-table .targets-domain {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', monospace;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    word-break: break-all;
+}
+.targets-row.is-expanded td {
+    background: var(--bg-secondary);
+}
+.targets-runs {
+    font-variant-numeric: tabular-nums;
+}
+.targets-muted {
+    color: var(--text-muted);
+}
+.targets-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+}
+.targets-btn {
+    padding: 5px 10px;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+}
+.targets-btn-danger {
+    color: var(--error-color);
+    border-color: var(--error-color);
+}
+.targets-btn-danger:hover {
+    background: rgba(220, 53, 69, 0.08);
+}
+.targets-detail-row > td {
+    background: var(--bg-secondary);
+    padding: 12px 16px;
+}
+.targets-detail-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.targets-events {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.targets-event {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+}
+.targets-event-time {
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.targets-event-title {
+    flex: 1 1 auto;
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.targets-event-open {
+    flex: 0 0 auto;
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--accent-color);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+.targets-event-open:hover {
+    color: var(--accent-hover);
+}
+.targets-state {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+.targets-state-inline {
+    padding: 12px 4px;
+    text-align: left;
+}
+.targets-error {
+    color: var(--error-color);
+}
+html[data-theme="dark"] .targets-row.is-expanded td,
+html[data-theme="dark"] .targets-detail-row > td {
+    background: #0b1120;
+}
+html[data-theme="dark"] .targets-table .targets-domain {
+    background: #1f2937;
+    border-color: #263244;
+}
+
+/* ==========================================================================
+   重复目标提醒横幅（chat.js / tasks.js 共用，勿改类名）
+   ========================================================================== */
+.target-reminder {
+    margin: 12px 0;
+    padding: 12px 16px;
+    border: 1px solid #f5c26b;
+    border-radius: 10px;
+    background: linear-gradient(90deg, rgba(245, 194, 107, 0.16), rgba(245, 194, 107, 0.06));
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    box-shadow: var(--shadow-sm);
+}
+.target-reminder-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #b45309;
+    margin-bottom: 8px;
+}
+.target-reminder-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 0 8px;
+    padding: 0;
+    list-style: none;
+}
+.target-reminder-list > li {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.target-reminder-domain {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', monospace;
+    font-weight: 700;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+.target-reminder-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.target-reminder-open {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--accent-color);
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+.target-reminder-open:hover {
+    color: var(--accent-hover);
+}
+.target-reminder-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+}
+html[data-theme="dark"] .target-reminder {
+    border-color: rgba(251, 191, 36, 0.45);
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.12), rgba(17, 24, 39, 0.4));
+    box-shadow: var(--shadow-md);
+}
+html[data-theme="dark"] .target-reminder-head {
+    color: #fbbf24;
+}

@@ -128,6 +128,19 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	monitorRetention.PurgeExpired()
 	monitor.StartRetentionLoop(monitorRetention, log.Logger)
 
+	// 目标历史迁移：把历史上真正跑过的目标（口径 = 对话标题）登记进 target_runs，
+	// 供发起对话/批量任务时提示「这个目标跑过」。幂等，每次启动都会重算聚合。
+	if backfill, bErr := db.BackfillTargetRunsFromConversations(); bErr != nil {
+		log.Logger.Warn("回填目标历史失败", zap.Error(bErr))
+	} else {
+		log.Logger.Info("目标历史回填完成",
+			zap.Int("conversations", backfill.Conversations),
+			zap.Int("withTargets", backfill.WithTargets),
+			zap.Int("eventsInserted", backfill.EventsInserted),
+			zap.Int("targets", backfill.Targets),
+		)
+	}
+
 	if err := handler.NewHITLManager(db, log.Logger).EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化 HITL 表失败", zap.Error(err))
 	}
@@ -1006,6 +1019,12 @@ func setupRoutes(
 		protected.POST("/batch-tasks/:queueId/tasks/:taskId/run", agentHandler.RunSingleBatchTask)
 		protected.POST("/batch-tasks/:queueId/tasks", agentHandler.AddBatchTask)
 		protected.DELETE("/batch-tasks/:queueId/tasks/:taskId", agentHandler.DeleteBatchTask)
+
+		// 目标历史（跑过的目标登记）：发起对话/任务时的重复目标提示与历史页
+		protected.POST("/targets/check", agentHandler.CheckRunTargets)
+		protected.GET("/targets", agentHandler.ListRunTargets)
+		protected.GET("/targets/:target/events", agentHandler.ListRunTargetEvents)
+		protected.DELETE("/targets/:target", agentHandler.DeleteRunTarget)
 
 		// 对话历史
 		protected.POST("/conversations", conversationHandler.CreateConversation)

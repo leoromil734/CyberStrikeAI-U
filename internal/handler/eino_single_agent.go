@@ -159,6 +159,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		return
 	}
 	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
+	h.recordRunTargets(conversationID, req.Message)
 
 	var result *multiagent.RunResult
 	var runErr error
@@ -437,6 +438,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		return
 	}
 	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
+	h.recordRunTargets(prep.ConversationID, prep.FinalMessage)
 
 	curHist := prep.History
 	curMsg := prep.FinalMessage

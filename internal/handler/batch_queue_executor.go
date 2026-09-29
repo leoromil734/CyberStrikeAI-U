@@ -257,6 +257,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	}
 	h.tasks.SetTaskAgentMode(conversationID, batchMode)
 	h.recordConversationAIChannel(conversationID, task.AIChannelID)
+	h.recordRunTargets(conversationID, task.Message)
 
 	runCfg := h.batchTaskRunConfig(task.AIChannelID)
 	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)

@@ -891,6 +891,7 @@ async function showBatchImportModal() {
     const executeNowCheckbox = document.getElementById('batch-queue-execute-now');
     if (modal && input) {
         input.value = '';
+        batchTargetReminderReset();
         if (titleInput) {
             titleInput.value = '';
         }
@@ -1009,6 +1010,7 @@ document.addEventListener('DOMContentLoaded', function() {
         input.addEventListener('input', function() {
             updateBatchImportStats(this.value);
             syncBatchTaskModelRows(this.value);
+            batchTargetReminderHandleInput();
         });
     }
     const concurrencyInput = document.getElementById('batch-queue-concurrency');
@@ -1021,6 +1023,174 @@ document.addEventListener('DOMContentLoaded', function() {
 
 let batchAIChannels = {};
 let batchTaskModelByIndex = [];
+
+// ===== 重复目标提醒（新建任务弹窗） =====
+// 命中历史跑过的目标时，在任务文本域上方展示告警横幅，并在提交创建前二次确认。
+const BATCH_TARGET_REMINDER_MIN_LEN = 6;
+const BATCH_TARGET_REMINDER_DEBOUNCE = 600;
+let batchTargetReminderTimer = null;
+let batchTargetReminderHits = [];
+let batchTargetReminderLastText = '';
+// 用户已确认「仍然继续」的原文，避免同一段输入反复提示/弹窗
+let batchTargetReminderAcknowledgedText = '';
+
+/** RFC3339 → MM-DD HH:mm */
+function batchTargetReminderFormatTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    return pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+/** 懒创建横幅容器：插在弹窗内、任务文本域上方 */
+function batchTargetReminderEl() {
+    let el = document.getElementById('batch-target-reminder');
+    if (el) return el;
+    const textarea = document.getElementById('batch-tasks-input');
+    if (!textarea) return null;
+    const group = textarea.closest('.form-group');
+    const container = (group && group.parentElement) ? group.parentElement : textarea.parentElement;
+    if (!container) return null;
+    el = document.createElement('div');
+    el.id = 'batch-target-reminder';
+    el.className = 'target-reminder';
+    el.style.display = 'none';
+    if (group && group.parentElement === container) {
+        container.insertBefore(el, group);
+    } else {
+        container.insertBefore(el, textarea);
+    }
+    return el;
+}
+
+function batchTargetReminderHide() {
+    const el = document.getElementById('batch-target-reminder');
+    if (el) el.style.display = 'none';
+}
+
+/** 打开/创建成功后复位提醒状态与横幅 */
+function batchTargetReminderReset() {
+    if (batchTargetReminderTimer) {
+        clearTimeout(batchTargetReminderTimer);
+        batchTargetReminderTimer = null;
+    }
+    batchTargetReminderHits = [];
+    batchTargetReminderLastText = '';
+    batchTargetReminderAcknowledgedText = '';
+    batchTargetReminderHide();
+}
+
+/** 调用检查接口；成功返回 hits 数组，失败返回 null（静默降级，不阻断创建） */
+async function batchTargetReminderFetch(text) {
+    const raw = String(text || '');
+    if (raw.trim().length < BATCH_TARGET_REMINDER_MIN_LEN) return [];
+    try {
+        const response = await apiFetch('/api/targets/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: raw })
+        });
+        if (!response.ok) {
+            console.warn('目标重复检查失败:', response.status);
+            return null;
+        }
+        const data = await response.json();
+        return Array.isArray(data && data.hits) ? data.hits : [];
+    } catch (error) {
+        console.warn('目标重复检查失败:', error);
+        return null;
+    }
+}
+
+function batchTargetReminderRender(hits) {
+    const el = batchTargetReminderEl();
+    if (!el) return;
+    const list = Array.isArray(hits) ? hits : [];
+    const items = list.map(function (hit) {
+        const domain = escapeHtml(hit && hit.target ? hit.target : '');
+        const runs = Number(hit && hit.runCount) || 1;
+        let meta = _tPlain('targets.reminderRuns', { count: runs });
+        const lastTime = batchTargetReminderFormatTime(hit && hit.lastRunAt);
+        if (lastTime) {
+            meta += ' · ' + _tPlain('targets.reminderLast', { time: lastTime });
+        }
+        return '<li>'
+            + '<span class="target-reminder-domain">' + domain + '</span>'
+            + '<span class="target-reminder-meta">' + escapeHtml(meta) + '</span>'
+            + '</li>';
+    }).join('');
+    const head = escapeHtml(_t('targets.reminderTitle')) + ' · ' + escapeHtml(_t('targets.reminderTasksLead'));
+    el.innerHTML = ''
+        + '<div class="target-reminder-head">' + head + '</div>'
+        + '<ul class="target-reminder-list">' + items + '</ul>'
+        + '<div class="target-reminder-actions">'
+        + '<button type="button" class="btn-secondary" data-target-reminder="cancel">'
+        + escapeHtml(_t('targets.reminderCancel')) + '</button>'
+        + '<button type="button" class="btn-primary" data-target-reminder="continue">'
+        + escapeHtml(_t('targets.reminderContinue')) + '</button>'
+        + '</div>';
+    const cancelBtn = el.querySelector('[data-target-reminder="cancel"]');
+    if (cancelBtn) cancelBtn.addEventListener('click', batchTargetReminderHide);
+    const continueBtn = el.querySelector('[data-target-reminder="continue"]');
+    if (continueBtn) {
+        continueBtn.addEventListener('click', function () {
+            const input = document.getElementById('batch-tasks-input');
+            batchTargetReminderAcknowledgedText = input ? input.value.trim() : '';
+            batchTargetReminderHide();
+        });
+    }
+    el.style.display = 'block';
+}
+
+async function batchTargetReminderRunCheck(text) {
+    const hits = await batchTargetReminderFetch(text);
+    if (!hits) {
+        batchTargetReminderHide();
+        return;
+    }
+    const input = document.getElementById('batch-tasks-input');
+    const current = input ? input.value.trim() : '';
+    if (current !== text) return; // 输入已变化，丢弃过期结果
+    batchTargetReminderHits = hits;
+    batchTargetReminderLastText = text;
+    if (hits.length > 0) {
+        batchTargetReminderRender(hits);
+    } else {
+        // 未命中：隐藏横幅并清除已确认标志
+        batchTargetReminderAcknowledgedText = '';
+        batchTargetReminderHide();
+    }
+}
+
+/** 输入防抖（600ms）：命中历史目标时实时提示 */
+function batchTargetReminderHandleInput() {
+    const input = document.getElementById('batch-tasks-input');
+    const text = input ? input.value : '';
+    if (batchTargetReminderTimer) {
+        clearTimeout(batchTargetReminderTimer);
+        batchTargetReminderTimer = null;
+    }
+    const trimmed = String(text || '').trim();
+    if (trimmed.length < BATCH_TARGET_REMINDER_MIN_LEN) {
+        // 输入为空：隐藏横幅并清除已确认标志
+        batchTargetReminderHits = [];
+        batchTargetReminderLastText = '';
+        batchTargetReminderAcknowledgedText = '';
+        batchTargetReminderHide();
+        return;
+    }
+    if (trimmed === batchTargetReminderAcknowledgedText) {
+        // 这段输入已经确认过，不再提示
+        batchTargetReminderHide();
+        return;
+    }
+    batchTargetReminderTimer = setTimeout(function () {
+        batchTargetReminderTimer = null;
+        void batchTargetReminderRunCheck(trimmed);
+    }, BATCH_TARGET_REMINDER_DEBOUNCE);
+}
+// ===== 重复目标提醒结束 =====
 
 async function ensureBatchAIChannels() {
     if (Object.keys(batchAIChannels).length > 0) return batchAIChannels;
@@ -1166,6 +1336,31 @@ async function createBatchQueue() {
         return;
     }
 
+    // 重复目标二次确认：当前输入命中历史目标且尚未确认时，先让用户确认再创建
+    if (text && text !== batchTargetReminderAcknowledgedText) {
+        let hits = null;
+        if (batchTargetReminderLastText === text && Array.isArray(batchTargetReminderHits)) {
+            hits = batchTargetReminderHits;
+        } else {
+            hits = await batchTargetReminderFetch(text);
+        }
+        if (hits && hits.length > 0) {
+            const detail = hits.map(function (hit) {
+                const name = hit && hit.target ? hit.target : '';
+                const runs = Number(hit && hit.runCount) || 1;
+                return name + '（' + _tPlain('targets.reminderRuns', { count: runs }) + '）';
+            }).join('\n');
+            if (!window.confirm(_tPlain('targets.reminderTasksLead') + '\n\n' + detail)) {
+                return;
+            }
+            batchTargetReminderAcknowledgedText = text;
+        }
+        if (hits) {
+            batchTargetReminderHits = hits;
+            batchTargetReminderLastText = text;
+        }
+    }
+
     try {
         const response = await apiFetch('/api/batch-tasks', {
             method: 'POST',
@@ -1193,6 +1388,8 @@ async function createBatchQueue() {
         
         const result = await response.json();
         closeBatchImportModal();
+        // 创建成功：清除已确认标志与横幅
+        batchTargetReminderReset();
         
         // 显示队列详情
         showBatchQueueDetail(result.queueId);

@@ -166,6 +166,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		return
 	}
 	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
+	h.recordRunTargets(conversationID, req.Message)
 	effectiveOrchestration := config.NormalizeMultiAgentOrchestration(runCfg.MultiAgent.Orchestration)
 	if orch != "" {
 		effectiveOrchestration = config.NormalizeMultiAgentOrchestration(orch)
@@ -452,6 +453,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		return
 	}
 	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
+	h.recordRunTargets(prep.ConversationID, prep.FinalMessage)
 
 	curHist := prep.History
 	curMsg := prep.FinalMessage

@@ -306,6 +306,39 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 	);`
 
+	// 目标运行登记表：按「归一化域名」聚合，用于发起任务/对话时提示「这个目标跑过」。
+	// run_count 按对话去重计数（同一对话里的多轮追问不重复计一次渗透）。
+	createTargetRunsTable := `
+	CREATE TABLE IF NOT EXISTS target_runs (
+		target TEXT PRIMARY KEY,
+		run_count INTEGER NOT NULL DEFAULT 0,
+		first_run_at DATETIME,
+		last_run_at DATETIME,
+		last_conversation_id TEXT,
+		last_conversation_title TEXT,
+		last_project_id TEXT,
+		updated_at DATETIME NOT NULL
+	);`
+
+	// 目标-对话明细：一次对话对一个目标只登记一行（幂等回填依赖 UNIQUE）。
+	// 故意不加 conversations 外键：删对话不应抹掉「这个目标跑过」的历史。
+	createTargetRunEventsTable := `
+	CREATE TABLE IF NOT EXISTS target_run_events (
+		id TEXT PRIMARY KEY,
+		target TEXT NOT NULL,
+		conversation_id TEXT NOT NULL,
+		conversation_title TEXT,
+		project_id TEXT,
+		started_at DATETIME NOT NULL,
+		UNIQUE(target, conversation_id)
+	);`
+
+	createTargetRunEventsIndex := `
+	CREATE INDEX IF NOT EXISTS idx_target_run_events_target ON target_run_events(target);`
+
+	createTargetRunsLastRunIndex := `
+	CREATE INDEX IF NOT EXISTS idx_target_runs_last_run_at ON target_runs(last_run_at);`
+
 	// 机器人会话绑定表（用于跨重启保持「平台+租户+用户」到 conversation 的映射）
 	createRobotUserSessionsTable := `
 	CREATE TABLE IF NOT EXISTS robot_user_sessions (
@@ -826,6 +859,18 @@ func (db *DB) initTables() error {
 	}
 	if _, err := db.Exec(createConversationAIChannelTable); err != nil {
 		return fmt.Errorf("创建conversation_ai_channels表失败: %w", err)
+	}
+	if _, err := db.Exec(createTargetRunsTable); err != nil {
+		return fmt.Errorf("创建target_runs表失败: %w", err)
+	}
+	if _, err := db.Exec(createTargetRunEventsTable); err != nil {
+		return fmt.Errorf("创建target_run_events表失败: %w", err)
+	}
+	if _, err := db.Exec(createTargetRunEventsIndex); err != nil {
+		return fmt.Errorf("创建target_run_events索引失败: %w", err)
+	}
+	if _, err := db.Exec(createTargetRunsLastRunIndex); err != nil {
+		return fmt.Errorf("创建target_runs索引失败: %w", err)
 	}
 	if _, err := db.Exec(createRobotUserSessionsTable); err != nil {
 		return fmt.Errorf("创建robot_user_sessions表失败: %w", err)

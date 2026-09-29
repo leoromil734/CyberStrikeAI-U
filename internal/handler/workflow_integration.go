@@ -60,6 +60,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	if req != nil {
 		userMessage = req.Message
 	}
+	h.recordRunTargets(conversationID, userMessage)
 
 	taskStatus := "completed"
 	taskOwned := false
@@ -207,6 +208,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	if req != nil {
 		userMessage = req.Message
 	}
+	h.recordRunTargets(conversationID, userMessage)
 
 	taskStatus := "completed"
 	taskOwned := false

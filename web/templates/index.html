@@ -256,6 +256,15 @@
                             <span data-i18n="nav.tasks">任务管理</span>
                         </div>
                     </div>
+                    <div class="nav-item" data-page="targets" data-require-permission-any="target:read">
+                        <div class="nav-item-content" data-title="目标历史" onclick="switchPage('targets')" data-i18n="nav.targets" data-i18n-attr="data-title" data-i18n-skip-text="true">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="9"></circle>
+                                <path d="M12 7v5l3 2"></path>
+                            </svg>
+                            <span data-i18n="nav.targets">目标历史</span>
+                        </div>
+                    </div>
                     <div class="nav-item" data-page="workflows">
                         <div class="nav-item-content" data-title="工作流" onclick="switchPage('workflows')" data-i18n="nav.workflows" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2794,6 +2803,34 @@
                                 <div id="batch-queues-pagination" class="pagination-container"></div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- 目标历史页面 -->
+                <div id="page-targets" class="page">
+                    <div class="page-header">
+                        <h2 data-i18n="targets.title">目标历史</h2>
+                        <div class="page-header-actions">
+                            <button class="btn-secondary" onclick="refreshTargetsPage()" data-i18n="common.refresh">刷新</button>
+                        </div>
+                    </div>
+                    <div class="page-content">
+                        <p class="targets-subtitle" data-i18n="targets.subtitle">登记历史上真正跑过的目标（按对话去重），发起新任务或新对话时用于重复提示。</p>
+                        <p class="targets-backfill-hint" data-i18n="targets.backfillHint">服务启动时会自动从历史对话回填，无需手工导入。</p>
+                        <div class="targets-toolbar">
+                            <label class="targets-search-wrap">
+                                <svg class="targets-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <circle cx="11" cy="11" r="7"></circle>
+                                    <path d="M20 20L16 16"></path>
+                                </svg>
+                                <input type="search" id="targets-search" autocomplete="off"
+                                    data-i18n="targets.searchPlaceholder" data-i18n-attr="placeholder"
+                                    placeholder="搜索域名，例如 hfm.com" />
+                            </label>
+                            <span class="targets-total" id="targets-total"></span>
+                        </div>
+                        <div id="targets-table-body" class="targets-table-body"></div>
+                        <div id="targets-pagination" class="pagination-container pagination-fixed"></div>
                     </div>
                 </div>
 
@@ -6714,6 +6751,7 @@
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js"></script>
+    <script src="/static/js/targets.js?v=20260929-1"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>
     <script src="/static/js/roles.js"></script>

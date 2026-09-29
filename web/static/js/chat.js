@@ -63,6 +63,14 @@ const DRAFT_STORAGE_KEY = 'cyberstrike-chat-draft';
 let draftSaveTimer = null;
 const DRAFT_SAVE_DELAY = 500; // 500ms防抖延迟
 
+// 重复目标提醒（POST /api/targets/check）：命中历史目标时先提示、发送前二次确认
+const CHAT_TARGET_REMINDER_MIN_LEN = 6;
+const CHAT_TARGET_REMINDER_DEBOUNCE = 600;
+let chatTargetReminderTimer = null;
+// 用户已确认「仍然继续」的原文，避免同一段输入反复弹提醒
+let chatTargetReminderAcknowledgedText = '';
+let chatTargetReminderHits = [];
+
 // 对话文件上传相关（后端会拼接路径与内容发给大模型，前端不再重复发文件列表）
 const MAX_CHAT_FILES = 10;
 const CHAT_FILE_DEFAULT_PROMPT = '请根据上传的文件内容进行分析。';
@@ -1275,6 +1283,205 @@ function adjustTextareaHeight(textarea) {
     }
 }
 
+// ===== 重复目标提醒（聊天页） =====
+// 命中历史跑过的目标时，在输入框上方展示告警横幅，并在发送前打断一次等用户确认。
+function chatTargetReminderT(key, opts, fallback) {
+    if (typeof window.t === 'function') {
+        return window.t(key, opts);
+    }
+    return typeof fallback === 'string' ? fallback : key;
+}
+
+/** 转义接口/历史数据里的文本后再插入 HTML（域名、标题都可能不可信） */
+function chatTargetReminderEscape(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+/** RFC3339 → MM-DD HH:mm */
+function chatTargetReminderFormatTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    return pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+/** 懒创建横幅容器：插在输入区容器内、输入框上方 */
+function chatTargetReminderEl() {
+    let el = document.getElementById('chat-target-reminder');
+    if (el) return el;
+    const input = document.getElementById('chat-input');
+    if (!input) return null;
+    const field = input.closest('.chat-input-field');
+    const container = (field && field.parentElement) ? field.parentElement : input.parentElement;
+    if (!container) return null;
+    el = document.createElement('div');
+    el.id = 'chat-target-reminder';
+    el.className = 'target-reminder';
+    el.style.display = 'none';
+    if (field && field.parentElement === container) {
+        container.insertBefore(el, field);
+    } else {
+        container.insertBefore(el, input);
+    }
+    return el;
+}
+
+function chatTargetReminderHide() {
+    const el = document.getElementById('chat-target-reminder');
+    if (el) el.style.display = 'none';
+}
+
+/** 调用检查接口；成功返回 hits 数组，失败返回 null（静默降级，不阻断发送） */
+async function chatTargetReminderFetch(text) {
+    const raw = String(text || '');
+    if (raw.trim().length < CHAT_TARGET_REMINDER_MIN_LEN) return [];
+    try {
+        const response = await apiFetch('/api/targets/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: raw })
+        });
+        if (!response.ok) {
+            console.warn('目标重复检查失败:', response.status);
+            return null;
+        }
+        const data = await response.json();
+        return Array.isArray(data && data.hits) ? data.hits : [];
+    } catch (error) {
+        console.warn('目标重复检查失败:', error);
+        return null;
+    }
+}
+
+function chatTargetReminderRender(hits) {
+    const el = chatTargetReminderEl();
+    if (!el) return;
+    const list = Array.isArray(hits) ? hits : [];
+    const canOpen = typeof window.navigateToConversation === 'function';
+    const items = list.map(function (hit) {
+        const domain = chatTargetReminderEscape(hit && hit.target ? hit.target : '');
+        const runs = Number(hit && hit.runCount) || 1;
+        let meta = chatTargetReminderT('targets.reminderRuns', { count: runs }, '跑过 ' + runs + ' 次');
+        const lastTime = chatTargetReminderFormatTime(hit && hit.lastRunAt);
+        if (lastTime) {
+            meta += ' · ' + chatTargetReminderT('targets.reminderLast', { time: lastTime }, '最近 ' + lastTime);
+        }
+        const convId = hit && hit.lastConversationId ? String(hit.lastConversationId) : '';
+        const openBtn = (canOpen && convId)
+            ? '<button type="button" class="target-reminder-open" data-conversation-id="' + chatTargetReminderEscape(convId) + '">'
+                + chatTargetReminderEscape(chatTargetReminderT('targets.reminderOpen', null, '查看')) + '</button>'
+            : '';
+        return '<li>'
+            + '<span class="target-reminder-domain">' + domain + '</span>'
+            + '<span class="target-reminder-meta">' + chatTargetReminderEscape(meta) + '</span>'
+            + openBtn
+            + '</li>';
+    }).join('');
+    const head = chatTargetReminderEscape(chatTargetReminderT('targets.reminderTitle', null, '以下目标历史上已经跑过'))
+        + ' · ' + chatTargetReminderEscape(chatTargetReminderT('targets.reminderChatLead', null, '本次输入的目标历史上跑过，继续会重复消耗时间与额度。'));
+    el.innerHTML = ''
+        + '<div class="target-reminder-head">' + head + '</div>'
+        + '<ul class="target-reminder-list">' + items + '</ul>'
+        + '<div class="target-reminder-actions">'
+        + '<button type="button" class="btn-secondary" data-target-reminder="cancel">'
+        + chatTargetReminderEscape(chatTargetReminderT('targets.reminderCancel', null, '取消')) + '</button>'
+        + '<button type="button" class="btn-primary" data-target-reminder="continue">'
+        + chatTargetReminderEscape(chatTargetReminderT('targets.reminderContinue', null, '仍然继续')) + '</button>'
+        + '</div>';
+    el.querySelectorAll('.target-reminder-open').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const cid = btn.getAttribute('data-conversation-id');
+            if (cid && typeof window.navigateToConversation === 'function') {
+                window.navigateToConversation(cid);
+            }
+            chatTargetReminderHide();
+        });
+    });
+    const cancelBtn = el.querySelector('[data-target-reminder="cancel"]');
+    if (cancelBtn) cancelBtn.addEventListener('click', chatTargetReminderHide);
+    const continueBtn = el.querySelector('[data-target-reminder="continue"]');
+    if (continueBtn) continueBtn.addEventListener('click', chatTargetReminderContinue);
+    el.style.display = 'block';
+}
+
+/** 用户点「仍然继续」：记录已确认原文后重新走一遍发送流程 */
+function chatTargetReminderContinue() {
+    const input = document.getElementById('chat-input');
+    chatTargetReminderAcknowledgedText = input ? input.value.trim() : '';
+    chatTargetReminderHide();
+    void sendMessage();
+}
+
+/** 发送前检查：命中且未确认时返回 false 并展示横幅，调用方应中断发送 */
+async function chatTargetReminderConfirmBeforeSend(text) {
+    const raw = String(text || '');
+    if (!raw) {
+        chatTargetReminderHide();
+        return true;
+    }
+    if (chatTargetReminderAcknowledgedText && chatTargetReminderAcknowledgedText === raw) {
+        chatTargetReminderHide();
+        return true;
+    }
+    const hits = await chatTargetReminderFetch(raw);
+    if (!hits || hits.length === 0) {
+        chatTargetReminderHide();
+        return true;
+    }
+    chatTargetReminderHits = hits;
+    chatTargetReminderRender(hits);
+    return false;
+}
+
+async function chatTargetReminderRunCheck(text) {
+    const hits = await chatTargetReminderFetch(text);
+    if (!hits) {
+        chatTargetReminderHide();
+        return;
+    }
+    const input = document.getElementById('chat-input');
+    const current = input ? input.value.trim() : '';
+    if (current !== text) return; // 输入已变化，丢弃过期结果
+    chatTargetReminderHits = hits;
+    if (hits.length > 0) {
+        chatTargetReminderRender(hits);
+    } else {
+        chatTargetReminderHide();
+    }
+}
+
+/** 输入防抖（600ms）：命中历史目标时实时提示 */
+function chatTargetReminderHandleInput() {
+    const input = document.getElementById('chat-input');
+    const text = input ? input.value : '';
+    if (chatTargetReminderTimer) {
+        clearTimeout(chatTargetReminderTimer);
+        chatTargetReminderTimer = null;
+    }
+    const trimmed = String(text || '').trim();
+    if (trimmed.length < CHAT_TARGET_REMINDER_MIN_LEN) {
+        // 输入为空：隐藏横幅并复位提醒状态
+        chatTargetReminderHits = [];
+        chatTargetReminderAcknowledgedText = '';
+        chatTargetReminderHide();
+        return;
+    }
+    if (trimmed === chatTargetReminderAcknowledgedText) {
+        // 这段输入已经确认过，不再提示
+        chatTargetReminderHide();
+        return;
+    }
+    chatTargetReminderTimer = setTimeout(function () {
+        chatTargetReminderTimer = null;
+        void chatTargetReminderRunCheck(trimmed);
+    }, CHAT_TARGET_REMINDER_DEBOUNCE);
+}
+// ===== 重复目标提醒结束 =====
+
 // 发送消息
 async function sendMessage() {
     const input = document.getElementById('chat-input');
@@ -1313,6 +1520,14 @@ async function sendMessage() {
         message = CHAT_FILE_DEFAULT_PROMPT;
     }
 
+    // 重复目标提醒：命中历史目标且用户尚未确认时，先中断发送，等用户点「仍然继续」
+    if (message) {
+        const mayProceed = await chatTargetReminderConfirmBeforeSend(message);
+        if (!mayProceed) {
+            return;
+        }
+    }
+
     // 显示用户消息（含附件名，便于用户确认）
     const displayMessage = hasAttachments
         ? message + '\n' + chatAttachments.map(a => '📎 ' + a.fileName).join('\n')
@@ -1344,6 +1559,11 @@ async function sendMessage() {
     input.value = '';
     // 强制重置输入框高度为初始高度（40px）
     input.style.height = '40px';
+
+    // 本条输入已确认并进入发送流程：复位提醒状态与横幅
+    chatTargetReminderAcknowledgedText = '';
+    chatTargetReminderHits = [];
+    chatTargetReminderHide();
 
     // 构建请求体（含附件）
     const body = {
@@ -3359,6 +3579,7 @@ const chatInput = document.getElementById('chat-input');
 if (chatInput) {
     chatInput.addEventListener('keydown', handleChatInputKeydown);
     chatInput.addEventListener('input', handleChatInputInput);
+    chatInput.addEventListener('input', chatTargetReminderHandleInput);
     chatInput.addEventListener('click', handleChatInputClick);
     chatInput.addEventListener('focus', handleChatInputClick);
     // IME输入法事件监听，用于跟踪输入法状态
@@ -4819,6 +5040,10 @@ async function prefetchLastAssistantProcessDetails() {
 }
 
 async function loadConversation(conversationId) {
+    // 切换对话时收起重复目标提醒，并清除已确认标记（避免跨对话误抑制提示）
+    chatTargetReminderHide();
+    chatTargetReminderAcknowledgedText = '';
+    chatTargetReminderHits = [];
     const seq = ++loadConversationRequestSeq;
     try {
         const cachedConversation = getConversationLiteFromCache(conversationId);
