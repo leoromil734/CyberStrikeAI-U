@@ -330,6 +330,73 @@ func TestBuildCommandArgs_NmapSkipsEmptyOptionalFlags(t *testing.T) {
 	}
 }
 
+// 回归：scan_type 曾被插到「最后一个非 - 开头的参数」之前。
+// 当 additional_args 以数值结尾（--min-rate 1500）时，-sT 会插进 flag 与取值之间，
+// nmap 直接以 "Argument to --min-rate must be a positive floating-point number / QUITTING!" 失败。
+func TestBuildCommandArgs_NmapScanTypeDoesNotSplitAdditionalArgs(t *testing.T) {
+	pos1 := 1
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name:    "nmap",
+		Command: "nmap",
+		Args:    []string{"-sT", "-sV", "-sC"},
+		Parameters: []config.ParameterConfig{
+			{Name: "target", Type: "string", Required: true, Position: &pos1, Format: "positional"},
+			{Name: "ports", Type: "string", Flag: "-p", Format: "flag"},
+			{Name: "timing", Type: "string", Template: "-T{value}", Format: "template"},
+			{Name: "nse_scripts", Type: "string", Flag: "--script", Format: "flag"},
+			{Name: "os_detection", Type: "bool", Flag: "-O", Format: "flag", Default: false},
+			{Name: "aggressive", Type: "bool", Flag: "-A", Format: "flag", Default: false},
+			{Name: "scan_type", Type: "string", Format: "template", Template: "{value}"},
+			{Name: "additional_args", Type: "string", Format: "positional"},
+		},
+	}
+	// 与线上真实调用一致（hfm.com 会话 11:57 那次的 nmap 参数）。
+	args := map[string]interface{}{
+		"target":          "demo.webterminal-hfm.com",
+		"ports":           "1-65535",
+		"timing":          "4",
+		"scan_type":       "-sT",
+		"additional_args": "-Pn -T4 --min-rate 1500",
+	}
+
+	cmdArgs := executor.buildCommandArgs("nmap", toolConfig, args)
+	joined := strings.Join(cmdArgs, " ")
+
+	if strings.Contains(joined, "--min-rate -sT") {
+		t.Fatalf("scan_type 不得插进 --min-rate 与取值之间，got: %v", cmdArgs)
+	}
+	if !strings.Contains(joined, "--min-rate 1500") {
+		t.Fatalf("--min-rate 必须紧跟取值，got: %v", cmdArgs)
+	}
+	if len(cmdArgs) == 0 || cmdArgs[0] != "-sT" {
+		t.Fatalf("scan_type 应替换默认扫描类型并紧跟在命令后，got: %v", cmdArgs)
+	}
+	if strings.Contains(joined, "-sV") || strings.Contains(joined, "-sC") {
+		t.Fatalf("指定 scan_type 后不应再带默认的 -sV -sC，got: %v", cmdArgs)
+	}
+}
+
+// 回归：terrascan/zap 的 scan_type 是带 flag 的值，必须发出 --scan-type <value>。
+func TestBuildCommandArgs_ScanTypeWithFlagKeepsFlagName(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	toolConfig := &config.ToolConfig{
+		Name:    "terrascan",
+		Command: "terrascan",
+		Parameters: []config.ParameterConfig{
+			{Name: "scan_type", Type: "string", Flag: "--scan-type", Format: "flag", Default: "all"},
+			{Name: "iac_dir", Type: "string", Flag: "-d", Format: "flag"},
+		},
+	}
+	args := map[string]interface{}{"scan_type": "all", "iac_dir": "./tf"}
+
+	cmdArgs := executor.buildCommandArgs("terrascan", toolConfig, args)
+	joined := strings.Join(cmdArgs, " ")
+	if !strings.Contains(joined, "--scan-type all") {
+		t.Fatalf("scan_type 必须带 flag 发出，got: %v", cmdArgs)
+	}
+}
+
 func TestBuildCommandArgs_DNSXDomainUsesStdin(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
 	toolConfig := &config.ToolConfig{

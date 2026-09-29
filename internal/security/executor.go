@@ -296,11 +296,15 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			zap.Int("exitCode", getExitCodeValue(err)),
 			zap.String("output", string(output)),
 		)
+		failureText := fmt.Sprintf("工具执行失败: %v\n输出: %s", err, string(output))
+		if hint := CommandArgumentErrorHint(toolName, string(output)); hint != "" {
+			failureText += "\n" + hint
+		}
 		return &mcp.ToolResult{
 			Content: []mcp.Content{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("工具执行失败: %v\n输出: %s", err, string(output)),
+					Text: failureText,
 				},
 			},
 			IsError: true,
@@ -499,6 +503,11 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 		} else {
 			cmdArgs = append(cmdArgs, toolConfig.Args...)
 		}
+		// scan_type 固定插在「默认参数之后、其余 flag 之前」：nmap 在此替换默认扫描类型，
+		// trivy 的 position 0 子命令（image/fs）也在此归位。
+		// 早期实现改成「插到最后一个非 - 开头的参数之前」，一旦 additional_args 以数值结尾
+		// （如 --min-rate 1500）就会插进 flag 与取值之间，nmap 直接以参数错误 QUITTING。
+		scanTypeInsertAt := len(cmdArgs)
 
 		// 按位置参数排序
 		positionalParams := make([]config.ParameterConfig, 0)
@@ -702,27 +711,18 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 			cmdArgs = append(cmdArgs, additionalArgsList...)
 		}
 
-		// 特殊处理：scan_type 参数（需要按空格分割并插入到合适位置）
+		// 特殊处理：scan_type（按参数自身定义拼装：flag / template / 裸值）
 		if hasScanType {
-			scanTypeArgs := e.parseAdditionalArgs(scanTypeValue)
+			scanTypeArgs := e.formatScanTypeArgs(toolConfig, scanTypeValue)
 			if len(scanTypeArgs) > 0 {
-				// 对于 nmap，scan_type 应该替换默认的扫描类型参数
-				// 由于我们已经跳过了默认的 args，现在需要将 scan_type 插入到合适位置
-				// 找到 target 参数的位置（通常是最后一个位置参数）
-				insertPos := len(cmdArgs)
-				for i := len(cmdArgs) - 1; i >= 0; i-- {
-					// target 通常是最后一个非标志参数
-					if !strings.HasPrefix(cmdArgs[i], "-") {
-						insertPos = i
-						break
-					}
+				if scanTypeInsertAt > len(cmdArgs) {
+					scanTypeInsertAt = len(cmdArgs)
 				}
-				// 在 target 之前插入 scan_type 参数
-				newArgs := make([]string, 0, len(cmdArgs)+len(scanTypeArgs))
-				newArgs = append(newArgs, cmdArgs[:insertPos]...)
-				newArgs = append(newArgs, scanTypeArgs...)
-				newArgs = append(newArgs, cmdArgs[insertPos:]...)
-				cmdArgs = newArgs
+				merged := make([]string, 0, len(cmdArgs)+len(scanTypeArgs))
+				merged = append(merged, cmdArgs[:scanTypeInsertAt]...)
+				merged = append(merged, scanTypeArgs...)
+				merged = append(merged, cmdArgs[scanTypeInsertAt:]...)
+				cmdArgs = merged
 			}
 		}
 
@@ -732,7 +732,6 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 	// 如果没有定义参数配置，使用固定参数和通用处理
 	// 添加固定参数
 	cmdArgs = append(cmdArgs, toolConfig.Args...)
-
 	// 通用处理：将参数转换为命令行参数
 	for key, value := range args {
 		if key == "_tool_name" {
@@ -748,6 +747,37 @@ func (e *Executor) buildCommandArgs(toolName string, toolConfig *config.ToolConf
 	}
 
 	return cmdArgs
+}
+
+// formatScanTypeArgs 按 scan_type 参数自身的定义拼装命令行片段：
+//   - 有模板的（nmap 的 "{value}"）套模板；
+//   - 有 flag 的（terrascan/zap 的 --scan-type）带上 flag；
+//   - 都没有时按空格拆成裸参数（trivy 的 image/fs 子命令）。
+//
+// 早期实现直接按空格拆值、不带 flag，导致 terrascan/zap 永远发不出 --scan-type。
+func (e *Executor) formatScanTypeArgs(toolConfig *config.ToolConfig, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || toolConfig == nil {
+		return nil
+	}
+	for i := range toolConfig.Parameters {
+		param := toolConfig.Parameters[i]
+		if param.Name != "scan_type" {
+			continue
+		}
+		if strings.TrimSpace(param.Template) != "" {
+			template := param.Template
+			template = strings.ReplaceAll(template, "{flag}", param.Flag)
+			template = strings.ReplaceAll(template, "{value}", value)
+			template = strings.ReplaceAll(template, "{name}", param.Name)
+			return strings.Fields(template)
+		}
+		if strings.TrimSpace(param.Flag) != "" {
+			return append([]string{param.Flag}, e.parseAdditionalArgs(value)...)
+		}
+		return e.parseAdditionalArgs(value)
+	}
+	return e.parseAdditionalArgs(value)
 }
 
 // parseAdditionalArgs 解析 additional_args 字符串，按空格分割但保留引号内的内容
