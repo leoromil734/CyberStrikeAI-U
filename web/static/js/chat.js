@@ -4846,6 +4846,9 @@ async function loadConversations(searchQuery = '') {
     return loadConversationsWithGroups(searchQuery);
 }
 
+// 注意：本函数当前没有任何调用点（对话列表统一走 createConversationListItemWithMenu）。
+// 保留仅为兼容旧引用；往列表项上加元素请改 createConversationListItemWithMenu，
+// 否则界面上不会生效（模型徽章曾因此只加在这里而完全不显示）。
 function createConversationListItem(conversation) {
     const item = document.createElement('div');
     item.className = 'conversation-item';
@@ -8931,6 +8934,18 @@ function createConversationListItemWithMenu(conversation, isPinned) {
     }
 
     contentWrapper.appendChild(titleWrapper);
+
+    // 该对话最近一次运行使用的 AI 模型（后端 conversation_ai_channels 表提供）。
+    // 注意：对话列表实际由本函数渲染；createConversationListItem 已无调用点（死代码），
+    // 新增列表项元素必须加在这里，否则界面上不会出现。
+    const conversationAIModel = (conversation.aiModel || conversation.ai_model || '').trim();
+    if (conversationAIModel) {
+        const modelBadge = document.createElement('div');
+        modelBadge.className = 'conversation-item-model-badge';
+        modelBadge.textContent = conversationAIModel;
+        modelBadge.title = `AI 模型: ${conversationAIModel}`;
+        contentWrapper.appendChild(modelBadge);
+    }
 
     const time = document.createElement('div');
     time.className = 'conversation-time';
