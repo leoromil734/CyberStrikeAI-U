@@ -2,18 +2,28 @@ package handler
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/agentfinalizer"
+	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 
 	"go.uber.org/zap"
 )
 
-// finalizationAutoContinueMaxAttempts 缺执行证据时最多自动续跑段数；
-// 达到上限仍缺证据才写入 blocked，避免模型「总结代替执行」。
+// finalizationAutoContinueMaxAttempts 最终回复未收敛时最多自动续跑段数；
+// 达到上限仍未收敛才写入 blocked，避免模型「总结代替执行」或「说到一半就停」。
 const finalizationAutoContinueMaxAttempts = 2
+
+// finalizationPendingWaitTimeout 判定为 pending_tool_executions 时，等待后台执行结束的上限。
+// 超过上限仍按阻塞收尾，避免无限期占用 worker。
+const finalizationPendingWaitTimeout = 20 * time.Minute
+
+// finalizationPendingPollInterval pending 工具执行的轮询间隔。
+const finalizationPendingPollInterval = 5 * time.Second
 
 func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int) bool {
 	if d.Finalizable || d.Finalized {
@@ -22,10 +32,63 @@ func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int)
 	if attempt >= finalizationAutoContinueMaxAttempts {
 		return false
 	}
-	return d.CompletionReason == agentfinalizer.ReasonMissingEvidence
+	switch d.CompletionReason {
+	case agentfinalizer.ReasonMissingEvidence,
+		// 有工具执行还在跑：先等它们结束再续跑，而不是直接终止（并把正在跑的工具取消）。
+		agentfinalizer.ReasonPendingTools,
+		// 候选是没说完的半截话：再跑一段，让模型把结论补完。
+		agentfinalizer.ReasonIncompleteCandidate:
+		return true
+	default:
+		return false
+	}
 }
 
-// tryAutoContinueAfterFinalization 在判定为「缺执行证据」时基于已有轨迹续跑一段。
+// hasPendingToolExecution 判断给定执行 ID 中是否仍有 queued/running。
+func (h *AgentHandler) hasPendingToolExecution(ids []string) bool {
+	if h == nil || h.db == nil {
+		return false
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		exec, err := h.db.GetToolExecution(id)
+		if err != nil || exec == nil {
+			continue
+		}
+		switch strings.TrimSpace(exec.Status) {
+		case mcp.ToolExecutionStatusQueued, mcp.ToolExecutionStatusRunning:
+			return true
+		}
+	}
+	return false
+}
+
+// waitFinalizationPendingExecutions 等待 pending 工具执行结束（上限 finalizationPendingWaitTimeout）。
+// 返回 true 表示都已结束（含无法查询的情况），可以安全续跑。
+func (h *AgentHandler) waitFinalizationPendingExecutions(ctx context.Context, ids []string) bool {
+	if !h.hasPendingToolExecution(ids) {
+		return true
+	}
+	deadline := time.Now().Add(finalizationPendingWaitTimeout)
+	for {
+		if !h.hasPendingToolExecution(ids) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(finalizationPendingPollInterval):
+		}
+	}
+}
+
+// tryAutoContinueAfterFinalization 在判定为「缺执行证据 / 有工具执行未结束 / 候选话没说完」时基于已有轨迹续跑一段。
 // 返回 true 表示调用方应 continue 主循环；此时 curHistory / curFinalMessage 已被改写。
 // 注意：续跑只恢复模型已有的可见轨迹，不注入新的 user/system 文案，避免污染上下文。
 func (h *AgentHandler) tryAutoContinueAfterFinalization(
@@ -38,7 +101,32 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	curFinalMessage *string,
 	progressCallback func(eventType, message string, data interface{}),
 ) bool {
-	if !shouldAutoContinueAfterFinalization(decision, *attempt) || result == nil || !multiagent.HasEinoResumeTrace(result) {
+	if !shouldAutoContinueAfterFinalization(decision, *attempt) || result == nil {
+		return false
+	}
+	// pending 工具执行：先等它们结束，再续跑让模型读取结果。
+	if decision.CompletionReason == agentfinalizer.ReasonPendingTools {
+		if progressCallback != nil {
+			progressCallback("finalization_waiting_tools", fmt.Sprintf("仍有 %d 个工具执行在运行，等待其结束后继续…", len(decision.PendingExecutionIDs)), map[string]interface{}{
+				"conversationId":      conversationID,
+				"source":              "finalizer",
+				"status":              decision.Status,
+				"completionReason":    decision.CompletionReason,
+				"pendingExecutionIds": decision.PendingExecutionIDs,
+				"waitTimeoutSeconds":  int(finalizationPendingWaitTimeout / time.Second),
+			})
+		}
+		if !h.waitFinalizationPendingExecutions(taskCtx, decision.PendingExecutionIDs) {
+			if h.logger != nil {
+				h.logger.Warn("等待 pending 工具执行超时，按阻塞收尾",
+					zap.String("conversationId", conversationID),
+					zap.Int("pendingCount", len(decision.PendingExecutionIDs)),
+					zap.Strings("pendingExecutionIds", decision.PendingExecutionIDs))
+			}
+			return false
+		}
+	}
+	if !multiagent.HasEinoResumeTrace(result) {
 		return false
 	}
 	*attempt++

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
@@ -255,42 +256,94 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		}
 	}
 	h.tasks.SetTaskAgentMode(conversationID, batchMode)
+	h.recordConversationAIChannel(conversationID, task.AIChannelID)
 
 	runCfg := h.batchTaskRunConfig(task.AIChannelID)
 	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)
+	// 最终化治理：候选文本先过 finalizer，未收敛时按原因自动续跑（含等待仍在跑的异步工具）。
+	segFinalMessage := finalMessage
+	segHistory := []agent.ChatMessage{}
+	finalizationAutoContinueAttempt := 0
+	upstreamErrorRetries := 0
 	var resultMA *multiagent.RunResult
 	var runErr error
-	for attempt := 0; ; attempt++ {
-		if attempt > 0 {
-			if !h.waitBatchModelRetry(taskCtx, queueID, task, conversationID, assistantMessageID, attempt, maxRetry, runErr) {
-				if taskCtx.Err() != nil {
-					runErr = taskCtx.Err()
+	var decision agentfinalizer.Decision
+	for {
+		resultMA, runErr = nil, nil
+		for attempt := 0; ; attempt++ {
+			if attempt > 0 {
+				if !h.waitBatchModelRetry(taskCtx, queueID, task, conversationID, assistantMessageID, attempt, maxRetry, runErr) {
+					if taskCtx.Err() != nil {
+						runErr = taskCtx.Err()
+					}
+					break
 				}
+			}
+			switch {
+			case useBatchMulti:
+				resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), segFinalMessage, segHistory, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
+			default:
+				if runCfg == nil {
+					runErr = fmt.Errorf("服务器配置未加载")
+				} else {
+					resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), segFinalMessage, segHistory, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
+				}
+			}
+			if runErr == nil || attempt >= maxRetry || !batchModelErrorShouldRetry(baseCtx, taskCtx, runErr) {
 				break
 			}
+			h.logger.Warn("批量任务因模型报错中断，将自动重试",
+				zap.String("queueId", queueID),
+				zap.String("taskId", task.ID),
+				zap.String("conversationId", conversationID),
+				zap.String("aiChannelId", strings.TrimSpace(task.AIChannelID)),
+				zap.Int("attempt", attempt+1),
+				zap.Int("maxRetries", maxRetry),
+				zap.Error(runErr),
+			)
 		}
-		switch {
-		case useBatchMulti:
-			resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
-		default:
-			if runCfg == nil {
-				runErr = fmt.Errorf("服务器配置未加载")
-			} else {
-				resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &h.config.MultiAgent, h.agent, h.db, h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
-			}
-		}
-		if runErr == nil || attempt >= maxRetry || !batchModelErrorShouldRetry(baseCtx, taskCtx, runErr) {
+		if runErr != nil || resultMA == nil {
 			break
 		}
-		h.logger.Warn("批量任务因模型报错中断，将自动重试",
-			zap.String("queueId", queueID),
-			zap.String("taskId", task.ID),
-			zap.String("conversationId", conversationID),
-			zap.String("aiChannelId", strings.TrimSpace(task.AIChannelID)),
-			zap.Int("attempt", attempt+1),
-			zap.Int("maxRetries", maxRetry),
-			zap.Error(runErr),
-		)
+
+		decision = h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, resultMA.MCPExecutionIDs)
+		// 上游网关以 HTTP 200 返回错误正文：不能当成功交付，按可重试的模型错误处理。
+		if decision.CompletionReason == agentfinalizer.ReasonUpstreamErrorText {
+			if upstreamErrorRetries < maxRetry {
+				upstreamErrorRetries++
+				h.logger.Warn("批量任务收到上游错误正文，将自动重试",
+					zap.String("queueId", queueID),
+					zap.String("taskId", task.ID),
+					zap.String("conversationId", conversationID),
+					zap.Int("attempt", upstreamErrorRetries),
+					zap.Int("maxRetries", maxRetry),
+					zap.String("candidateHead", safeTruncateString(decision.FinalText, 120)))
+				if assistantMessageID != "" && h.db != nil {
+					note := fmt.Sprintf("上游返回错误正文，正在第 %d/%d 次自动重试…", upstreamErrorRetries, maxRetry)
+					_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", note, time.Now(), assistantMessageID)
+					_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "retry", note, nil)
+				}
+				select {
+				case <-taskCtx.Done():
+					runErr = taskCtx.Err()
+				case <-time.After(finalizationAutoContinueBackoff(upstreamErrorRetries)):
+				}
+				if runErr != nil {
+					break
+				}
+				continue
+			}
+			runErr = fmt.Errorf("上游网关返回错误正文（已重试 %d 次）: %s", upstreamErrorRetries, safeTruncateString(decision.FinalText, 200))
+			break
+		}
+		// 已可交付，或未收敛但仍有续跑机会（缺证据 / 有工具执行未结束 / 候选话没说完）。
+		if decision.Finalizable {
+			break
+		}
+		if h.tryAutoContinueAfterFinalization(taskCtx, conversationID, resultMA, decision, &finalizationAutoContinueAttempt, &segHistory, &segFinalMessage, progressCallback) {
+			continue
+		}
+		break
 	}
 
 	if runErr != nil {
@@ -314,8 +367,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	lastIn := resultMA.LastAgentTraceInput
 	lastOut := resultMA.LastAgentTraceOutput
 
-	// 最终回复治理：候选文本必须先通过 finalizer 判定。
-	decision := h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, mcpIDs)
+	// 最终回复治理：候选文本必须先通过 finalizer 判定（decision 已在续跑循环内算出）。
 	if !decision.Finalizable {
 		resText = finalizationBlockedMessage(decision)
 	}
@@ -396,7 +448,7 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 	}
 
 	h.logger.Error("批量任务执行失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(runErr))
-	errorMsg := "执行失败: " + runErr.Error()
+	errorMsg := runExecutionErrorMessage(runErr)
 	if assistantMessageID != "" {
 		if _, updateErr := h.db.Exec(
 			"UPDATE messages SET content = ?, updated_at = ? WHERE id = ?",

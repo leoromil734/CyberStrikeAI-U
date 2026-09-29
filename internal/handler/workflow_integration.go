@@ -52,6 +52,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		sendEvent("done", "", map[string]interface{}{"conversationId": prep.ConversationID})
 		return true
 	}
+	h.recordConversationAIChannel(prep.ConversationID, req.AIChannelID)
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
@@ -198,6 +199,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "conversationId": prep.ConversationID})
 		return true
 	}
+	h.recordConversationAIChannel(prep.ConversationID, req.AIChannelID)
 
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID

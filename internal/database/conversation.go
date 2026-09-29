@@ -27,6 +27,10 @@ type Conversation struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Messages  []Message `json:"messages,omitempty"`
+	// AIChannelID / AIModel 不在 conversations 表中，由 conversation_ai_channels 表在列表接口按需附带，
+	// 用于前端在对话列表上显示该对话使用的通道与模型。
+	AIChannelID string `json:"aiChannelId,omitempty"`
+	AIModel     string `json:"aiModel,omitempty"`
 }
 
 // Message 消息
@@ -930,6 +934,76 @@ func (db *DB) GetAgentTrace(conversationID string) (traceInputJSON, assistantOut
 	}
 
 	return traceInputJSON, assistantOutput, nil
+}
+
+// ConversationAIModel 对话最近使用的 AI 通道与模型（列表展示用）。
+type ConversationAIModel struct {
+	ChannelID string
+	Model     string
+}
+
+// SetConversationAIChannel 记录对话最近一次运行使用的 AI 通道/模型；每次运行开始时覆盖。
+func (db *DB) SetConversationAIChannel(conversationID, channelID, model string) error {
+	conversationID = strings.TrimSpace(conversationID)
+	if db == nil || conversationID == "" {
+		return nil
+	}
+	_, err := db.Exec(
+		`INSERT INTO conversation_ai_channels (conversation_id, ai_channel_id, model, updated_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(conversation_id) DO UPDATE SET ai_channel_id = excluded.ai_channel_id, model = excluded.model, updated_at = excluded.updated_at`,
+		conversationID, strings.TrimSpace(channelID), strings.TrimSpace(model), time.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("记录对话 AI 通道失败: %w", err)
+	}
+	return nil
+}
+
+// GetConversationAIModels 批量读取对话的 AI 通道/模型，返回 conversationID → 通道/模型。
+// 任一步查询失败都只返回已取到的部分，不阻断列表接口。
+func (db *DB) GetConversationAIModels(conversationIDs []string) map[string]ConversationAIModel {
+	out := make(map[string]ConversationAIModel)
+	if db == nil || len(conversationIDs) == 0 {
+		return out
+	}
+	ids := make([]string, 0, len(conversationIDs))
+	seen := make(map[string]struct{}, len(conversationIDs))
+	for _, id := range conversationIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]interface{}, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := db.Query(
+		"SELECT conversation_id, ai_channel_id, COALESCE(model, '') FROM conversation_ai_channels WHERE conversation_id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var convID, channelID, model string
+		if scanErr := rows.Scan(&convID, &channelID, &model); scanErr != nil {
+			continue
+		}
+		out[strings.TrimSpace(convID)] = ConversationAIModel{ChannelID: strings.TrimSpace(channelID), Model: strings.TrimSpace(model)}
+	}
+	return out
 }
 
 // ConversationHasToolProcessDetails 对话是否存在已落库的工具调用/结果（用于多代理等场景下 MCP execution id 未汇总时的攻击链判定）。

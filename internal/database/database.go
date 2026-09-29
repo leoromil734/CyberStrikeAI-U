@@ -296,6 +296,16 @@ func (db *DB) initTables() error {
 		UNIQUE(conversation_id, group_id)
 	);`
 
+	// 对话最近使用的 AI 通道/模型（用于对话列表展示）；每次运行开始时 upsert。
+	createConversationAIChannelTable := `
+	CREATE TABLE IF NOT EXISTS conversation_ai_channels (
+		conversation_id TEXT PRIMARY KEY,
+		ai_channel_id TEXT NOT NULL,
+		model TEXT,
+		updated_at DATETIME NOT NULL,
+		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+	);`
+
 	// 机器人会话绑定表（用于跨重启保持「平台+租户+用户」到 conversation 的映射）
 	createRobotUserSessionsTable := `
 	CREATE TABLE IF NOT EXISTS robot_user_sessions (
@@ -813,6 +823,9 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createConversationGroupMappingsTable); err != nil {
 		return fmt.Errorf("创建conversation_group_mappings表失败: %w", err)
+	}
+	if _, err := db.Exec(createConversationAIChannelTable); err != nil {
+		return fmt.Errorf("创建conversation_ai_channels表失败: %w", err)
 	}
 	if _, err := db.Exec(createRobotUserSessionsTable); err != nil {
 		return fmt.Errorf("创建robot_user_sessions表失败: %w", err)

@@ -76,6 +76,12 @@ func isEinoTransientRunError(err error) bool {
 		"unexpected eof",
 		`": eof`, // net/http: Post "url": EOF (often wraps io.EOF)
 		"unexpected end of json",
+		// 流式响应被上游网关截断/污染时的解码错误（SSE 负载不是合法 JSON）：
+		// 例如 "failed to receive stream chunk: invalid character 'd' after array element"。
+		"failed to receive stream chunk",
+		"after array element",
+		"looking for beginning of value",
+		"invalid character",
 		"模型繁忙",
 		"服务繁忙",
 		"系统繁忙",

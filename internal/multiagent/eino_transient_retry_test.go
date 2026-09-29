@@ -34,6 +34,8 @@ func TestIsEinoTransientRunError(t *testing.T) {
 		{"rate limit", errors.New(`{"error":"rate limit exceeded"}`), true},
 		{"connection reset", errors.New("read tcp: connection reset by peer"), true},
 		{"http2 goaway", errors.New("failed to receive stream chunk: error, http2: server sent GOAWAY and closed the connection; LastStreamID=791, ErrCode=NO_ERROR"), true},
+		{"stream chunk json decode", errors.New("failed to receive stream chunk: invalid character 'd' after array element"), true},
+		{"sse payload decode", errors.New("invalid character 'x' looking for beginning of value"), true},
 		{"unexpected eof", errors.New("unexpected EOF"), true},
 		{"503", errors.New("upstream returned 503"), true},
 		{"iteration limit", errors.New("max iteration reached"), false},

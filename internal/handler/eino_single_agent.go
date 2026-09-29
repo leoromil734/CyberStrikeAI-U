@@ -158,6 +158,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
+	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
 
 	var result *multiagent.RunResult
 	var runErr error
@@ -248,7 +249,6 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			chatReasoningToClientIntent(req.Reasoning),
 			h.agentSessionContextBlock(conversationID),
 		)
-		_ = resolvedAIChannelID
 
 		if result != nil && len(result.MCPExecutionIDs) > 0 {
 			cumulativeMCPExecutionIDs = mergeMCPExecutionIDLists(cumulativeMCPExecutionIDs, result.MCPExecutionIDs)
@@ -353,7 +353,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		h.logger.Error("Eino ADK 单代理执行失败", zap.Error(runErr))
 		taskStatus = "failed"
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
-		errMsg := "执行失败: " + runErr.Error()
+		errMsg := runExecutionErrorMessage(runErr)
 		if assistantMessageID != "" {
 			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), assistantMessageID)
 			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
@@ -431,11 +431,12 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器配置未加载"})
 		return
 	}
-	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	runCfg, resolvedAIChannelID, err := h.configForAIChannel(req.AIChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
 
 	curHist := prep.History
 	curMsg := prep.FinalMessage

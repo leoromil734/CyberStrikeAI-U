@@ -159,12 +159,13 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 
 	stopKeepalive := runSSEKeepalive(c, &sseWriteMu)
 	defer stopKeepalive()
-	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	runCfg, resolvedAIChannelID, err := h.configForAIChannel(req.AIChannelID)
 	if err != nil {
 		sendEvent("error", err.Error(), nil)
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
+	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
 	effectiveOrchestration := config.NormalizeMultiAgentOrchestration(runCfg.MultiAgent.Orchestration)
 	if orch != "" {
 		effectiveOrchestration = config.NormalizeMultiAgentOrchestration(orch)
@@ -367,7 +368,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
 		taskStatus = "failed"
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
-		errMsg := "执行失败: " + runErr.Error()
+		errMsg := runExecutionErrorMessage(runErr)
 		if assistantMessageID != "" {
 			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), assistantMessageID)
 			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
@@ -445,11 +446,12 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 	taskCtx = multiagent.WithHITLToolInterceptor(taskCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
 		return h.interceptHITLForEinoTool(ctx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, nil, toolName, arguments)
 	})
-	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	runCfg, resolvedAIChannelID, err := h.configForAIChannel(req.AIChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
 
 	curHist := prep.History
 	curMsg := prep.FinalMessage
@@ -482,7 +484,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
 			}
 			h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
-			errMsg := "执行失败: " + runErr.Error()
+			errMsg := runExecutionErrorMessage(runErr)
 			if prep.AssistantMessageID != "" {
 				_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), prep.AssistantMessageID)
 			}

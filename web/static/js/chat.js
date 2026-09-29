@@ -4655,6 +4655,16 @@ function createConversationListItem(conversation) {
         }
     }
 
+    // 该对话最近一次运行使用的 AI 模型（后端 conversation_ai_channels 表提供）
+    const conversationAIModel = (conversation.aiModel || conversation.ai_model || '').trim();
+    if (conversationAIModel) {
+        const modelBadge = document.createElement('div');
+        modelBadge.className = 'conversation-item-model-badge';
+        modelBadge.textContent = conversationAIModel;
+        modelBadge.title = `AI 模型: ${conversationAIModel}`;
+        contentWrapper.appendChild(modelBadge);
+    }
+
     const time = document.createElement('div');
     time.className = 'conversation-time';
     time.textContent = conversation._timeText || formatConversationTimestamp(conversation._time || new Date());

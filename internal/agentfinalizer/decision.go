@@ -9,9 +9,12 @@
 //  2. 存在 queued/running 的工具执行时判定 in_progress。
 //  3. 显式要求执行证据（RequireExecutionEvidence）时，必须有 completed 的工具执行记录。
 //  4. 空输出、等待 HITL、非成功 status 一律阻断。
+//  5. 候选文本其实是上游错误说明（HTTP 200 + 错误正文）时判定 failed，不得当结论交付。
+//  6. 短候选文本若是「没说完」的半截话（下一步叙述 / 缺句末标点）判定 in_progress，转自动续跑。
 package agentfinalizer
 
 import (
+	"regexp"
 	"strings"
 
 	"cyberstrike-ai/internal/database"
@@ -34,6 +37,12 @@ const (
 	ReasonFailed          = "failed"
 	ReasonCancelled       = "cancelled"
 	ReasonMissingEvidence = "missing_execution_evidence"
+	// ReasonIncompleteCandidate 候选文本是「没说完」的半截话（下一步叙述或缺少句末标点）。
+	// 与空回复不同：文本非空但明显不是结论，转自动续跑而不是直接交付。
+	ReasonIncompleteCandidate = "incomplete_candidate_response"
+	// ReasonUpstreamErrorText 候选文本其实是上游网关/供应商的错误说明（HTTP 200 + 错误正文），
+	// 不能当作模型结论交付。
+	ReasonUpstreamErrorText = "upstream_error_text"
 )
 
 // Decision is the single contract that may promote an agent run to a final
@@ -157,6 +166,25 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 
+	// 上游网关有时以 HTTP 200 返回错误说明（正文是 "AI provider temporarily unavailable" 之类），
+	// 必须判为失败，否则错误会被当成成功结论交付。
+	if looksLikeUpstreamErrorText(text) {
+		d.Status = StatusFailed
+		d.CompletionReason = ReasonUpstreamErrorText
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, "candidate text is an upstream provider/gateway error message, not an agent answer")
+		return d
+	}
+
+	// 文本非空但明显是半截话（「接下来我去看 X」或缺少句末标点）：不能交付，交给自动续跑再跑一段。
+	if why := incompleteCandidateReason(text); why != "" {
+		d.Status = StatusInProgress
+		d.CompletionReason = ReasonIncompleteCandidate
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, why)
+		return d
+	}
+
 	if in.RequireExecutionEvidence && !hasCompletedEvidence(db, in.MCPExecutionIDs) {
 		d.Status = StatusBlocked
 		d.CompletionReason = ReasonMissingEvidence
@@ -209,6 +237,103 @@ func isEmptyCandidate(s string) bool {
 	}
 	return strings.Contains(s, "no assistant text was captured") ||
 		strings.Contains(s, "未捕获到助手文本输出")
+}
+
+const (
+	// 只对短候选做完整性判定：长报告多为正常交付，误判成本高。
+	incompleteCandidateMaxRunes = 600
+	// 上游错误说明通常很短。
+	upstreamErrorTextMaxRunes = 3000
+)
+
+// incompleteNarrationPattern 匹配「接下来式」叙述的最后一句：
+// 模型说了要做什么却没有真的做（也未调用工具），此时不能当作结论。
+var incompleteNarrationPattern = regexp.MustCompile(`(?i)^(let me|let's|i'll|i will|i am going to|i'm going to|now i|next[,: ]|then i|接下来|下面我|让我|随后|接着|现在我先|我先)`)
+
+// markdownPrefixPattern 去掉行首的 markdown 前缀（标题/引用/列表项）。
+var markdownPrefixPattern = regexp.MustCompile(`^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d{1,2}[.)、]\s+)*`)
+
+// upstreamErrorTextMarkers 上游网关把错误说明写进 assistant 正文时的特征串（HTTP 200 + 错误文案）。
+var upstreamErrorTextMarkers = []string{
+	"ai provider temporarily unavailable",
+	"request exceeded",
+	"temporarily unavailable",
+	"these responses are optimized for",
+	"do not resend the same request",
+	"minimum 1,000 prompt",
+}
+
+// looksLikeUpstreamErrorText 判断候选文本是否其实是上游错误说明而非模型回答。
+// 结构性特征（网关会加 [req_xxx] [model] 前缀）优先；否则要求命中至少两个特征串。
+func looksLikeUpstreamErrorText(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" || len([]rune(t)) > upstreamErrorTextMaxRunes {
+		return false
+	}
+	lower := strings.ToLower(t)
+	if strings.HasPrefix(lower, "[req_") {
+		return true
+	}
+	hits := 0
+	for _, marker := range upstreamErrorTextMarkers {
+		if strings.Contains(lower, marker) {
+			hits++
+		}
+	}
+	return hits >= 2
+}
+
+// incompleteCandidateReason 判断候选最终文本是否是「没说完」的半截话，返回原因（空串表示看起来是完整回复）。
+func incompleteCandidateReason(text string) string {
+	t := strings.TrimSpace(text)
+	if t == "" || len([]rune(t)) > incompleteCandidateMaxRunes {
+		return ""
+	}
+	line := lastVisibleLine(t)
+	if line == "" {
+		return ""
+	}
+	if isNextStepNarration(line) {
+		return "candidate final text ends with a next-step narration instead of a delivered result"
+	}
+	if !hasTerminalPunctuation(line) {
+		return "candidate final text looks cut off (no sentence-ending punctuation)"
+	}
+	return ""
+}
+
+// lastVisibleLine 取最后一行有内容的文本，并去掉 markdown 前缀。
+func lastVisibleLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		return strings.TrimSpace(markdownPrefixPattern.ReplaceAllString(line, ""))
+	}
+	return ""
+}
+
+// isNextStepNarration 判断这一行是否只是「接下来我要做 X」的自述。
+func isNextStepNarration(line string) bool {
+	return incompleteNarrationPattern.MatchString(strings.TrimSpace(line))
+}
+
+// hasTerminalPunctuation 判断行尾是否具备「句子/段落结束」的标点或收尾符号。
+func hasTerminalPunctuation(line string) bool {
+	s := strings.TrimRight(strings.TrimSpace(line), " \t")
+	if s == "" {
+		return false
+	}
+	runes := []rune(s)
+	switch runes[len(runes)-1] {
+	case '。', '！', '？', '.', '!', '?', '…',
+		'）', ')', '】', ']', '》', '」', '』', '"', '\'', '”', '’', '`', '|':
+		return true
+	default:
+		return false
+	}
 }
 
 func evidenceRefs(ids []string) []string {

@@ -186,6 +186,8 @@ func (h *ConversationHandler) ListConversations(c *gin.Context) {
 	if conversations == nil {
 		conversations = []*database.Conversation{}
 	}
+	// 附加「最近使用的 AI 通道/模型」，供前端在对话列表上展示（缓存 TTL 仅 8 秒，切换通道后很快刷新）。
+	attachConversationAIModels(h.db, conversations)
 	payload := gin.H{
 		"conversations": conversations,
 		"total":         total,
