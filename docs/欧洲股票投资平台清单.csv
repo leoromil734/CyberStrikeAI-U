@@ -1,0 +1,172 @@
+编号,中文名,原名/品牌,官网,国家/地区,类型,手机号注册,手机号登录/验证,核实状态,备注,依据链接
+1,Fineco 银行,Fineco Bank,fineco.it,意大利,银行系券商,否,部分,已核实,登录用8位客户号+密码；手机号用于短信PIN/Mobile Code 动态码,
+2,Directa 证券,Directa SIM,directa.it,意大利,专业在线券商,是,部分,已核实,官网开户指南：填写手机号→接收OTP短信确认；登录用客户号+PIN,[Come aprire un Conto Directa Online: La Guida Completa](https://www.directa.it/help-supporto/conto-directa/guida-apertura-conto-directa)
+3,BG Saxo,BG Saxo,bgsaxo.it,意大利,券商（Banca Generali×Saxo）,待实测,待实测,待实测,全数字化开户约5分钟；Saxo 体系一般需手机号做2FA,
+4,萨拉银行,Banca Sella,sella.it,意大利,银行系券商,待实测,部分,推定,Conto Trader 账户；手机号用于 App 推送/短信 OTP,[Avvisi SMS - FAQ   Banca Sella - Help Center](https://www.sella.it/web/helpcenter/servizi-digitali/avvisi-sms)
+5,Widiba 银行,Banca Widiba,widiba.it,意大利,银行系券商,待实测,待实测,待实测,可 SPID 开户，自动附带 deposito titoli,
+6,Youinvest,Youinvest (Banco BPM),youinvest.it,意大利,银行系券商,待实测,待实测,待实测,Banco BPM 在线交易平台,
+7,Webank,Webank,webank.it,意大利,银行系券商,待实测,待实测,待实测,Banco BPM 集团在线银行,[Segui lo stato della pratica di apertura conto - Webank](https://www.webank.it/gestionepratica/)
+8,CheBanca!,CheBanca!,chebanca.it,意大利,银行系券商,待实测,待实测,待实测,Mediobanca 集团,
+9,Fideuram Direct,Fideuram Direct,fideuramdirect.it,意大利,银行系券商,待实测,待实测,待实测,Intesa Sanpaolo 集团，前 IWBank,
+10,Mediolanum 银行,Banca Mediolanum,bancamediolanum.it,意大利,银行系券商,待实测,待实测,待实测,含交易与投资 App,
+11,Credem 银行,Credem,credem.it,意大利,银行系券商,待实测,部分,证据较强,FAQ Mr. Pin Ego: Smarrimento o cambio cellulare - Credem Banca,[FAQ Mr. Pin Ego: Smarrimento o cambio cellulare - Credem Banca](https://www.credem.it/content/credem/it/supporto-e-sicurezza/sistemi-di-pagamento/carte/mr--pin-ego/cosa-succede-se-mi-rubano--perdo-o-cambio-il-cellulare-.html)
+12,BPER 银行,BPER Banca,bper.it,意大利,银行系券商,待实测,待实测,待实测,,
+13,Intesa Sanpaolo,Intesa Sanpaolo,intesasanpaolo.com,意大利,银行系券商,待实测,部分,推定,App 登录用用户ID；手机号用于推送/短信验证码,[Nuova App My Key - Intesa Sanpaolo](https://www.intesasanpaolo.com/it/persone-e-famiglie/tutti-i-giorni/my-key/my-key.html)
+14,UniCredit,UniCredit,unicredit.it,意大利,银行系券商,待实测,部分,推定,,
+15,意大利邮政银行,Poste Italiane (BancoPosta),poste.it,意大利,银行系券商,部分,部分,证据较强,App 登录以账号/实名；手机号用于OTP,[SMS su Cellulare Certificato Costo identificazione: Gratuito - PosteID](https://posteid.poste.it/identificazione/identificazione_smsotp.shtml)
+16,Illimity 银行,Illimity,illimity.com,意大利,数字银行,待实测,待实测,待实测,App 优先,
+17,Tinaba,Tinaba (Banca Profilo),tinaba.com,意大利,App银行+投资,部分,部分,推定,手机App注册；手机号为核心身份标识之一,
+18,Moneyfarm,Moneyfarm,moneyfarm.com,意大利,机器人投顾+自主交易,待实测,部分,待实测,意大利/英国双市场,"[Investire con strumenti automatici, i consigli della SEC   Moneyfarm](https://blog.moneyfarm.com/it/angolo-consulenza/investire-con-strumenti-automatici-i-consigli-della-sec/)"
+19,Gimme5,Gimme5 (AcomeA),gimme5.it,意大利,微投资App,待实测,待实测,待实测,小额自动投资,
+20,Euclidea,Euclidea,euclidea.it,意大利,机器人投顾,待实测,待实测,待实测,现属 Anima 集团；另有 euclidea.xyz,
+21,Hello Bank 意大利,Hello Bank Italia,hellobank.it,意大利,数字银行,待实测,待实测,待实测,BNP/BNL 集团,
+22,ING 意大利,ING Italia,ing.it,意大利,银行系券商,否,部分,证据较强,以证件+税号开户；手机号用于OTP,[Come posso modificare il mio numero di cellulare se non ... - ING](https://www.ing.it/faq/codici-e-dati-anagrafici/cambio-numero-cellulare-area-riservata.html)
+23,Banco BPM,Banco BPM,bancobpm.it,意大利,银行系券商,待实测,待实测,待实测,,
+24,Trade Republic,Trade Republic,traderepublic.com,德国,新经纪商App,是,是,已核实,官方帮助：App 登录=手机号+PIN；开户必须智能手机,[Warum wird meine Handynummer benötigt? - Trade Republic](https://support.traderepublic.com/de-at/735)
+25,Scalable Capital,Scalable Capital,scalable.capital,德国,新经纪商App,部分,部分,已核实,登录邮箱+密码，强制2FA短信验证码；手机号为必备绑定,[How can I change my phone number? - Scalable Capital FAQ](https://help.scalable.capital/en/account-management-f3197dc7/how-can-i-change-my-phone-number-0698af04)
+26,BUX,BUX (Bux Zero),bux.com,荷兰/德国,新经纪商App,是,是,证据较强,手机App开户，需手机号验证；覆盖荷比德法西意奥爱,
+27,Bitpanda,Bitpanda,bitpanda.com,奥地利,投资App(股票/ETF/加密),部分,部分,已核实,支持页有《SMS not received》：手机号用于短信验证（提现/安全）,[Change your email address and phone number - Bitpanda Helpdesk](https://support.bitpanda.com/hc/en-us/articles/22821593933212-Change-your-email-address-and-phone-number)
+28,flatex,flatex,flatex.de,德国,在线券商,否,部分,推定,DEGIRO 母公司；账号+密码登录，短信TAN,[Jetzt Depot eröffnen & online handeln   flatex.de](https://www.flatex.de/depot/)
+29,DEGIRO,DEGIRO,degiro.de,荷兰/德国,在线券商,否,否,已核实,注册用邮箱，登录=用户名+密码+2FA；手机号非账号标识,
+30,ING 德国,ING Deutschland,ing.de,德国,银行系券商,否,部分,推定,Zugangsnummer+PIN 登录；手机号用于 mobileTAN,
+31,DKB 银行,DKB,dkb.de,德国,银行系券商,否,部分,推定,用户名+密码登录；手机/短信用于 TAN/App 推送,
+32,comdirect,comdirect,comdirect.de,德国,银行系券商,否,部分,推定,Zugangsnummer+PIN，photoTAN/mobileTAN；开户用PostIdent,[Wie aktiviere ich mobileTAN bei comdirect?](https://www.comdirect.de/faq/mobiletan-registrierung)
+33,Consorsbank,Consorsbank,consorsbank.de,德国,银行系券商,否,部分,推定,法巴集团；账户+密码登录，短信TAN,
+34,S Broker,S Broker,sbroker.de,德国,银行系券商,否,部分,推定,Sparkasse 证券平台,
+35,Smartbroker+,Smartbroker+,smartbroker.de,德国,在线券商,否,部分,推定,Baader Bank 托管，邮箱注册,
+36,finanzen.net ZERO,finanzen.net ZERO,finanzen.net,德国,在线券商,否,部分,推定,邮箱注册，手机号用于2FA,[Secure TAN App Anleitung - Finanzen.net](https://www.finanzen.net/zero/securetan/)
+37,Traders Place,Traders Place,tradersplace.de,德国,在线券商,待实测,待实测,待实测,,
+38,JustTrade,JustTrade,justtrade.com,德国,在线券商,待实测,待实测,待实测,Börsentalk Podcast Rückblick: Die wichtigsten Finanztrends 2024,[Börsentalk Podcast Rückblick: Die wichtigsten Finanztrends 2024](https://www.justtrade.com/podcast/rueckblick-finanztrends-2024)
+39,ViTrade,ViTrade,vitrade.de,德国,在线券商,待实测,待实测,待实测,,
+40,Lynx Broker,Lynx Broker,lynxbroker.de,德国,在线券商(IBKR白标),否,部分,证据较强,IBKR 账户体系，手机号2FA,[Telefonnummer ändern   Service Center   LYNX Online-Broker](https://www.lynxbroker.de/service/depot-login/persoenliche-daten/telefonnummer-aendern/)
+41,CapTrader,CapTrader,captrader.com,德国,在线券商(IBKR白标),否,部分,推定,IBKR 账户体系,
+42,wikifolio,wikifolio,wikifolio.com,德国,社交投资平台,待实测,待实测,待实测,可交易/复制策略,
+43,Bergfürst,Bergfuerst,bergfuerst.com,德国,在线券商,待实测,待实测,待实测,,
+44,Ginmon,Ginmon,ginmon.de,德国,机器人投顾,待实测,部分,证据较强,My phone number has changed and I no longer have access to my ...,[My phone number has changed and I no longer have access to my ...](https://help.ginmon.de/en/articles/189-my-phone-number-has-changed-and-i-no-longer-have-access-to-my-old-phone-number-how-can-i-change-the-phone-number)
+45,Oskar,Oskar,oskar.de,德国,机器人投顾,待实测,待实测,待实测,,
+46,VisualVest,VisualVest,visualvest.de,德国,机器人投顾,待实测,待实测,待实测,Union Investment 旗下,
+47,Quirion,Quirion,quirion.de,德国,机器人投顾,待实测,待实测,待实测,Quirin Privatbank,
+48,Liqid,Liqid,liqid.de,德国,财富管理App,待实测,待实测,待实测,,
+49,Inyova,Inyova,inyova.de,德国/瑞士,主题投资App,待实测,待实测,待实测,,
+50,Naga,NAGA,naga.com,德国,社交交易App,部分,部分,证据较强,App 支持 Google/Facebook/手机号注册；汉堡总部,
+51,RoboMarkets,RoboMarkets Deutschland,robomarkets.de,德国,CFD/外汇,部分,否,证据较强,有 BaFin 监管实体；CFD 开户KYC需手机号,[I don't have access to my previous mobile phone number. How do I ...](https://www.robomarkets.de/en/about/client/faq/my-office/84/)
+52,FXFlat,FXFlat Bank,fxflat.com,德国,CFD/外汇,部分,否,推定,德国杜塞尔多夫 BaFin 监管银行,
+53,XTB,XTB,xtb.com,波兰,股票/ETF/CFD券商,部分,否,已核实,官方帮助：登录用注册邮箱+密码；开户需手机号联系方式,[How can I change my phone number? - Help center   XTB](https://www.xtb.com/int/help-center/account-setup-amp-personal-data-update-1/how-can-i-change-my-phone-number-1)
+54,Postbank,Postbank,postbank.de,德国,银行系券商,否,部分,推定,,
+55,Targobank,Targobank,targobank.de,德国,银行系券商,否,部分,推定,,
+56,Commerzbank,Commerzbank,commerzbank.de,德国,银行系券商,否,部分,推定,Handy verloren oder gestohlen – was tun? - Commerzbank,[Handy verloren oder gestohlen – was tun? - Commerzbank](https://www.commerzbank.de/hilfe/sicherheit-onlinebanking/handy-verloren-was-tun/)
+57,Deutsche Bank,Deutsche Bank,deutsche-bank.de,德国,银行系券商,否,部分,推定,,
+58,Norisbank,Norisbank,norisbank.de,德国,银行系券商,否,部分,推定,,
+59,OnVista Bank,OnVista Bank,onvista-bank.de,德国,在线券商,否,部分,推定,comdirect 集团,
+60,N26,N26,n26.com,德国,数字银行+投资,部分,部分,已核实,开户全流程在App内；登录邮箱+密码，新设备需短信验证码,[How to pair or unpair my smartphone to my account? - N26](https://support.n26.com/en-es/security/account-protection/how-to-connect-or-disconnect-my-smartphone-to-my-account)
+61,Vivid Money,Vivid Money,vivid.money,德国,数字银行+投资,部分,部分,证据较强,柏林；App注册,[I don't have access to the phone number I used to register in Vivid](https://support.vivid.money/en/articles/8680176-i-don-t-have-access-to-the-phone-number-i-used-to-register-in-vivid)
+62,Bison,Bison (Börse Stuttgart),bisonapp.com,德国,投资App(加密/股票),是,是,证据较强,斯图加特交易所旗下，App 注册以手机号为主,[I need to change my phone number - BISON](https://support.bisonapp.com/hc/en-gb/articles/32283010490653-I-need-to-change-my-phone-number)
+63,Erste George,Erste George,george.at,奥地利,银行App+投资,部分,部分,推定,Erste 集团数字银行App，手机号用于设备绑定,
+64,flatex 奥地利,flatex Austria,flatex.at,奥地利,在线券商,否,部分,推定,,
+65,DADAT,DADAT Bank,dadat.at,奥地利,在线券商,待实测,待实测,待实测,,
+66,easybank,easybank (BAWAG),easybank.at,奥地利,银行系券商,待实测,待实测,待实测,BAWAG 直营银行,
+67,Swissquote,Swissquote,swissquote.com,瑞士,综合券商/银行,否,部分,推定,登录账号+密码+2FA,
+68,Dukascopy,Dukascopy Bank,dukascopy.com,瑞士,外汇/FX银行,部分,待实测,推定,SMSによる通知サービス :: Dukascopy Europe,[SMSによる通知サービス :: Dukascopy Europe](https://www.dukascopy.com/europe/japanese/forex/forex-trading-accounts/sms-notification/)
+69,Yuh,Yuh (Swissquote×PostFinance),yuh.com,瑞士,投资App,部分,部分,推定,手机App注册,
+70,CornèrTrader,CornèrTrader,cornertrader.ch,瑞士,在线券商,待实测,待实测,待实测,,
+71,PostFinance,PostFinance,postfinance.ch,瑞士,银行系券商,否,部分,推定,,
+72,True Wealth,True Wealth,truewealth.ch,瑞士,机器人投顾,待实测,部分,证据较强,I have a new phone number – how can I change it? - True Wealth,[I have a new phone number – how can I change it? - True Wealth](https://www.truewealth.ch/en/faq/my-account/i-have-a-new-phone-number--how-can-i-change-it)
+73,Selma,Selma Finance,selma.ch,瑞士,机器人投顾,待实测,待实测,待实测,,
+74,VIAC,VIAC,viac.ch,瑞士,养老+投资App,待实测,待实测,待实测,,
+75,eToro,eToro,etoro.com,以色列/英国/塞浦路斯,社交投资平台,部分,部分,证据较强,注册需手机号（KYC/2FA）；登录用用户名/邮箱,[Why don't I receive the SMS verification code to log in to my account ](https://help.etoro.com/s/article/why-don-t-i-receive-the-sms-code-to-log-in?language=en_GB)
+76,Trading 212,Trading 212,trading212.com,保加利亚/英国,投资App,待实测,待实测,待实测,免费股票/ETF，欧洲用户量大,[Trading212 Telephone number? - Help - Trading 212 Community](https://community.trading212.com/t/trading212-telephone-number/63416)
+77,Revolut,Revolut,revolut.com,立陶宛/英国,数字银行+投资,是,部分,已核实,官方帮助：必须提供有效手机号；手机号+短信验证码登录,[Change my phone number   Revolut Liechtenstein](https://help.revolut.com/en-LI/help/profile-and-plan/profile-plan/profile-settings/how-do-i-change-my-phone-number/)
+78,Lightyear,Lightyear,lightyear.com,爱沙尼亚/英国,投资App,是,是,已核实,帮助中心：可用邮箱或手机号登录；开户需手机号验证码,
+79,Robinhood 欧洲,Robinhood Europe,robinhood.com,立陶宛,投资App,部分,部分,证据较强,立陶宛央行 A 类牌照，2024 进入欧盟,[Update your phone number - Robinhood](https://robinhood.com/us/en/support/articles/update-your-phone-number/)
+80,Interactive Brokers,Interactive Brokers,interactivebrokers.com,爱尔兰/匈牙利/英国,综合券商,否,部分,推定,用户名+密码，手机号做2FA,[Handy Trader (iOS) Activation Procedure - Interactive Brokers](https://www.interactivebrokers.com/en/handytrader/handy-trader-activation-procedure-ios.php)
+81,Saxo Bank,Saxo Bank,home.saxo,丹麦,综合券商,待实测,待实测,待实测,,
+82,Nordnet,Nordnet,nordnet.se,瑞典/北欧,在线券商,否,部分,推定,北欧常用 BankID/移动认证,
+83,Avanza,Avanza,avanza.se,瑞典,在线券商,否,部分,推定,BankID 登录,
+84,SEB,SEB,seb.se,瑞典,银行系券商,否,部分,推定,,
+85,Skilling,Skilling,skilling.com,瑞典/塞浦路斯,CFD/投资,部分,否,推定,,
+86,Plus500,Plus500,plus500.com,以色列/英国,CFD,部分,否,已核实,官方FAQ：需通过短信/电话验证手机号；登录用邮箱,[How do I verify my phone number? - Plus500](https://www.plus500.com/en-ae/tradingacademy/faq/accountverificationprocess/howverifyphonenumber)
+87,IG Group,IG Group,ig.com,英国,CFD/股票券商,部分,否,推定,,
+88,CMC Markets,CMC Markets,cmcmarkets.com,英国,CFD/券商,部分,否,推定,,
+89,Capital.com,Capital.com,capital.com,塞浦路斯/英国,CFD,部分,否,证据较强,开户需身份证件+联系方式（含手机号）,[How can I change a phone number on the account? - Capital.com](https://help.capital.com/hc/en-us/articles/4403989733650-How-can-I-change-a-phone-number-on-the-account)
+90,AvaTrade,AvaTrade,avatrade.com,爱尔兰,CFD/外汇,部分,否,证据较强,KYC 严格，需手机号,[How do i update my phone number? - Help Centre - Avatrade](https://support.avatrade.com/hc/en-us/articles/360004586818-How-do-i-update-my-phone-number)
+91,Admirals,Admirals (Admiral Markets),admirals.com,爱沙尼亚,CFD/外汇,是,否,已核实,官方条款：开户必须提供邮箱和手机号,
+92,XM,XM Group,xm.com,塞浦路斯,CFD/外汇,部分,否,推定,,
+93,FXPro,FXPro,fxpro.com,塞浦路斯,CFD/外汇,部分,否,推定,,
+94,Exness,Exness,exness.com,塞浦路斯,CFD/外汇,部分,否,推定,,
+95,Tickmill,Tickmill,tickmill.com,塞浦路斯/英国,CFD/外汇,部分,否,推定,,
+96,Pepperstone,Pepperstone,pepperstone.com,英国/塞浦路斯,CFD/外汇,部分,否,推定,,
+97,Vantage,Vantage Markets,vantagemarkets.com,英国/澳洲,CFD/外汇,部分,否,推定,,
+98,Eightcap,Eightcap,eightcap.com,英国/澳洲,CFD/外汇,部分,否,推定,,
+99,FP Markets,FP Markets,fpmarkets.com,塞浦路斯/澳洲,CFD/外汇,部分,否,推定,,
+100,Libertex,Libertex,libertex.com,塞浦路斯,CFD/投资App,部分,部分,推定,,
+101,HFM,HFM (HotForex),hfm.com,塞浦路斯,CFD/外汇,部分,否,证据较强,Arawang Alertong Pang-Trading sa SMS - HFM,[Arawang Alertong Pang-Trading sa SMS - HFM](https://www.hfm.com/su/tl/trading-tools/sms-service)
+102,BDSwiss,BDSwiss,bdswiss.com,塞浦路斯,CFD/外汇,部分,否,推定,合规历史需自行核实,
+103,FXOpen,FXOpen,fxopen.com,塞浦路斯/英国,CFD/外汇,部分,否,证据较强,SMS notifications - Knowledge Base,[SMS notifications - Knowledge Base   Helpdesk and Support   FXOpen](https://support.fxopen.com/portal/en/kb/articles/sms-notifications-5-8-2021)
+104,IC Markets,IC Markets,icmarkets.com,塞浦路斯/澳洲,CFD/外汇,部分,否,推定,,
+105,Axi,Axi,axi.com,英国/澳洲,CFD/外汇,部分,否,证据较强,Why do I need to verify my phone number or use an app like ...,[Why do I need to verify my phone number or use an app like ...](https://help.axi.com/en-US/axiv2--axicorp-prod/article/dezmdXAb-por-que-preciso-verificar-meu-nmero-de-telefone-ou-usar-um-aplicativo-como-o-authenticator)
+106,Orbex,Orbex,orbex.com,塞浦路斯,CFD/外汇,部分,否,证据较强,How do I change the phone number I registered with?,[How do I change the phone number I registered with?](https://support.orbex.com/en/articles/528457-how-do-i-change-the-phone-number-i-registered-with)
+107,IronFX,IronFX,ironfx.com,塞浦路斯,CFD/外汇,部分,否,推定,意大利市场较常见；站点在部分网络不可达,
+108,Trade.com,Trade.com,trade.com,塞浦路斯,CFD/外汇,部分,否,推定,,
+109,AMarkets,AMarkets,amarkets.com,塞浦路斯,CFD/外汇,部分,否,证据较强,站点在部分网络不可达,[I Did Not Receive an SMS Message with the Verification Code](https://www.amarkets.com/research-education/faq/not-working/account-opening/i-did-not-receive-an-sms-message-with-the-verification-code/)
+110,MEXEM,MEXEM,mexem.com,匈牙利,在线券商(IBKR白标),否,部分,证据较强,多语言欧洲版 IBKR,[How can I change my phone number to receive SMS authentication ...](https://www.mexem.com/faqs/how-can-i-change-my-phone-number-to-receive-sms-authentication-messages)
+111,Freedom24,Freedom24,freedom24.com,爱沙尼亚/塞浦路斯,投资App/券商,是,是,已核实,官方FAQ：输入手机号→收6位短信验证码；可手机号/邮箱登录,[Sending SMS for user authorization in the system. - Freedom24](https://freedom24.com/tradernet-api/get-auth-sms?site_lang=en)
+112,WH SelfInvest,WH SelfInvest,whselfinvest.com,卢森堡,CFD/券商,部分,否,证据较强,Trader Workstation TWS app mobile phone and tablet - WH SelfInvest,[Trader Workstation TWS app mobile phone and tablet - WH SelfInvest](https://www.whselfinvest.com/en-fr/investing-best-broker/the-order-platform/tws-version-tablet-and-app)
+113,Bourse Direct,Bourse Direct,boursedirect.fr,法国,在线券商,待实测,待实测,待实测,,
+114,Boursorama,Boursorama Banque,boursorama.com,法国,银行系券商,待实测,待实测,待实测,,
+115,Fortuneo,Fortuneo,fortuneo.fr,法国,银行系券商,待实测,待实测,待实测,,
+116,BforBank,BforBank,bforbank.com,法国,银行系券商,待实测,待实测,待实测,,
+117,Yomoni,Yomoni,yomoni.fr,法国,机器人投顾,待实测,待实测,待实测,,
+118,Ramify,Ramify,ramify.fr,法国,财富管理App,待实测,待实测,待实测,,
+119,Mon Petit Placement,Mon Petit Placement,monpetitplacement.fr,法国,投资App,待实测,待实测,待实测,,
+120,Bolero,Bolero (KBC),bolero.be,比利时,在线券商,待实测,待实测,待实测,,
+121,Keytrade Bank,Keytrade Bank,keytradebank.be,比利时,在线券商,待实测,待实测,待实测,,
+122,MeDirect,MeDirect,medirect.be,比利时,数字银行+投资,待实测,部分,证据较强,帮助中心有《登录时未收到短信验证码》→ 登录环节用短信验证码,[I did not receive an SMS code when I log in to the new ... - MeDirect](https://www.medirect.be/nieuws-research/faqs/i-did-not-receive-an-sms-code-when-i-log-in-to-the-new-website-what-should-i-do/)
+123,Belfius Re=Bel,Belfius (Re=Bel App),belfius.be,比利时,银行系券商/App,待实测,待实测,待实测,Belfius 2021 年推出的自助投资App,
+124,ABN AMRO,ABN AMRO,abnamro.nl,荷兰,银行系券商,否,部分,推定,荷兰常用 DigiD/身份证件开户,
+125,Rabobank,Rabobank,rabobank.nl,荷兰,银行系券商,否,部分,推定,,
+126,Peaks,Peaks,peaks.nl,荷兰,微投资App,待实测,待实测,待实测,,
+127,Semmie,Semmie,semmie.nl,荷兰,机器人投顾,待实测,待实测,待实测,,
+128,Meesman,Meesman,meesman.nl,荷兰,指数投资,待实测,待实测,待实测,,
+129,Brand New Day,Brand New Day,brandnewday.nl,荷兰,投资/养老金,待实测,待实测,待实测,,
+130,Renta 4,Renta 4,renta4.es,西班牙,在线券商,待实测,待实测,待实测,,
+131,MyInvestor,MyInvestor (Andbank),myinvestor.es,西班牙,数字银行+投资,待实测,待实测,待实测,,
+132,Openbank,Openbank (Santander),openbank.es,西班牙,数字银行+投资,待实测,待实测,待实测,,
+133,Indexa Capital,Indexa Capital,indexacapital.com,西班牙,机器人投顾,待实测,待实测,待实测,,
+134,Finizens,Finizens,finizens.com,西班牙,机器人投顾,待实测,待实测,待实测,,
+135,Ninety Nine,Ninety Nine,ninetynine.com,西班牙,投资App,待实测,待实测,待实测,,
+136,HeyTrade,HeyTrade,heytrade.com,西班牙,投资App,待实测,待实测,待实测,,
+137,Singular Bank,Singular Bank,singularbank.es,西班牙,私人银行+券商,待实测,待实测,待实测,原 Self Bank,
+138,BBVA,BBVA Trader,bbva.es,西班牙,银行系券商,待实测,待实测,待实测,Sign on your device without SMS - BBVA,[Sign on your device without SMS - BBVA](https://www.bbva.es/en/personas/banca-online/firma-biometrica.html)
+139,CaixaBank,CaixaBank,caixabank.es,西班牙,银行系券商,待实测,待实测,待实测,,
+140,ActivoBank,ActivoBank,activobank.pt,葡萄牙,银行系券商,待实测,待实测,待实测,Millennium BCP 集团,
+141,Banco Best,Banco Best,bancobest.pt,葡萄牙,在线券商,待实测,待实测,待实测,,
+142,Banco Carregosa,Banco Carregosa (GoBulling),bancocarregosa.com,葡萄牙,在线券商,待实测,待实测,待实测,,
+143,Banco Invest,Banco Invest,bancoinvest.pt,葡萄牙,在线券商,待实测,待实测,待实测,,
+144,Fio banka,Fio banka,fio.cz,捷克,在线券商,待实测,待实测,待实测,,
+145,Portu,Portu,portu.cz,捷克,机器人投顾,待实测,待实测,待实测,,
+146,Purple Trading,Purple Trading,purple-trading.com,捷克,CFD/外汇,部分,否,推定,,
+147,mBank,mBank (eMakler),mbank.pl,波兰,银行系券商,待实测,待实测,待实测,,
+148,DM BOŚ,DM BOŚ (Bossa),bossa.pl,波兰,在线券商,待实测,待实测,待实测,,
+149,PKO BP,PKO BP (iPKO),pkobp.pl,波兰,银行系券商,待实测,待实测,待实测,,
+150,LHV,LHV Pank,lhv.ee,爱沙尼亚,银行系券商,待实测,待实测,待实测,,
+151,Tradeville,Tradeville,tradeville.ro,罗马尼亚,在线券商,待实测,待实测,待实测,,
+152,Random Capital,Random Capital,randomcapital.hu,匈牙利,在线券商,待实测,待实测,待实测,,
+153,Hargreaves Lansdown,Hargreaves Lansdown,hl.co.uk,英国,在线券商,否,部分,证据较强,帮助中心《如何修改手机号》+登录2FA,[How to change your phone number - Hargreaves Lansdown](https://www.hl.co.uk/help/profile-settings/your-profile/change-phone-number)
+154,AJ Bell,AJ Bell,ajbell.co.uk,英国,在线券商,待实测,部分,证据较强,官方帮助：如何设置双重认证,
+155,Interactive Investor,Interactive Investor,ii.co.uk,英国,在线券商,待实测,部分,证据较强,官方安全指南含短信验证,[Updating your mobile phone number - interactive investor](https://www.ii.co.uk/help/using-your-account/your-details/updating-your-mobile-phone-number)
+156,Freetrade,Freetrade,freetrade.io,英国,投资App,待实测,部分,证据较强,支持中心：网页端设置短信验证,[How to Set Up SMS Verification in Freetrade Web - Support](https://help.freetrade.io/en/articles/11864550-how-to-set-up-sms-verification-in-freetrade-web)
+157,InvestEngine,InvestEngine,investengine.com,英国,ETF投资App,待实测,部分,证据较强,官方：含短信的双重认证,[How do I change my phone number? - InvestEngine](https://help.investengine.com/hc/en-gb/articles/16773735664157-How-do-I-change-my-phone-number)
+158,Moneybox,Moneybox,moneyboxapp.com,英国,投资App,待实测,部分,证据较强,账户安全（含短信验证码）,
+159,Plum,Plum,withplum.com,英国,投资App,待实测,待实测,待实测,,
+160,Wealthify,Wealthify,wealthify.com,英国,机器人投顾,待实测,待实测,待实测,,
+161,Nutmeg,Nutmeg (J.P. Morgan),nutmeg.com,英国,机器人投顾,待实测,部分,证据较强,官方帮助：设置两步验证（短信/App）,"[Changing your address, phone, email, or name - Support](https://support.nutmeg.com/?article=115000350491-Changing-your-address-phone-email-or-name)"
+162,Vanguard 英国,Vanguard Investor UK,vanguardinvestor.co.uk,英国,基金/ETF平台,待实测,待实测,待实测,,
+163,Davy,Davy,davy.ie,爱尔兰,财富管理/券商,待实测,待实测,待实测,,
+164,Goodbody,Goodbody,goodbody.ie,爱尔兰,在线券商,待实测,待实测,待实测,,
+165,Shares.io,Shares,shares.io,英国/立陶宛,投资App,待实测,待实测,待实测,主打社交+零佣金，欧洲多国可开,
+166,Trade Republic 泛欧,Trade Republic (EU),traderepublic.com,德国(泛欧),新经纪商App,是,是,已核实,同 Trade Republic 主站，意/法/西/荷等市场通用,[Warum wird meine Handynummer benötigt? - Trade Republic](https://support.traderepublic.com/de-at/735)
+167,InvestoPro,InvestoPro (Intesa Sanpaolo),investopro.com,意大利,在线交易平台,待实测,待实测,待实测,Intesa Sanpaolo 集团自主交易平台,
+168,ActivTrades,ActivTrades,activtrades.com,英国/意大利,CFD/外汇,部分,否,推定,在意大利设分支机构，CONSOB 名单常见,
+169,bevestor,bevestor,bevestor.de,德国,机器人投顾,待实测,待实测,待实测,德意志银行集团旗下,
+170,Companisto,Companisto,companisto.com,德国,股权众筹平台,是,待实测,证据较强,注册页含手机号/第三方登录（需求方原始资料中也出现）,
+171,OANDA,OANDA (EU),oanda.com,英国/马耳他/波兰,CFD/外汇,部分,否,推定,欧洲(含意大利)零售 CFD/外汇，需手机号做KYC,

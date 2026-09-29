@@ -1403,6 +1403,10 @@ func setupRoutes(
 
 	// API文档页面（公开访问，但需要登录后才能使用API）
 	router.GET("/api-docs", func(c *gin.Context) {
+		// HTML 本身禁止缓存：否则浏览器会一直沿用内嵌的旧 ?v=xxx 资源地址，
+		// 前端 JS/CSS 升版后用户长时间看不到更新（Cloudflare 会把静态资源的
+		// 浏览器缓存改写为 4 小时，只能靠 URL 版本号失效）。
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
 		c.HTML(http.StatusOK, "api-docs.html", nil)
 	})
 
@@ -1412,6 +1416,8 @@ func setupRoutes(
 
 	// 前端页面
 	router.GET("/", func(c *gin.Context) {
+		// 同 /api-docs：HTML 不缓存，保证 index.html 里的资源版本号一改就生效。
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
 		version := app.config.Version
 		if version == "" {
 			version = "v1.0.0"
