@@ -115,7 +115,93 @@ type BatchTaskManager struct {
 	taskCancels    map[string]map[string]context.CancelFunc // queueID -> taskID -> 取消函数
 	singleRunTasks map[string]string                        // queueID -> taskID，单条执行完成后暂停队列
 	queueExecutors map[string]struct{}                      // executeBatchQueue 协程活跃标记（与队列 status 解耦）
-	mu             sync.RWMutex
+	mu             sync.RWMutex                             // 仅保护映射；禁止持有时等待队列锁、访问 DB 或执行回调
+	queueOps       map[string]*batchQueueOperation
+}
+
+// 队列操作覆盖“校验 -> DB -> 内存提交”，不同队列互不串行。
+// 引用数含等待者，最后一个调用退出后回收，避免不存在的 ID 无限积累锁。
+type batchQueueOperation struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (m *BatchTaskManager) lockQueue(queueID string) func() {
+	m.mu.Lock()
+	if m.queueOps == nil {
+		m.queueOps = make(map[string]*batchQueueOperation)
+	}
+	op := m.queueOps[queueID]
+	if op == nil {
+		op = &batchQueueOperation{}
+		m.queueOps[queueID] = op
+	}
+	op.refs++
+	m.mu.Unlock()
+	op.mu.Lock()
+	return func() {
+		op.mu.Unlock()
+		m.mu.Lock()
+		op.refs--
+		if op.refs == 0 {
+			delete(m.queueOps, queueID)
+		}
+		m.mu.Unlock()
+	}
+}
+
+// loadedQueue 的返回值仅允许在持有对应队列操作锁时访问，不得对外返回。
+func (m *BatchTaskManager) loadedQueue(queueID string) (*BatchTaskQueue, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	queue, ok := m.queues[queueID]
+	return queue, ok
+}
+
+func cloneBatchTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	v := *t
+	return &v
+}
+
+func cloneBatchTask(task *BatchTask) *BatchTask {
+	if task == nil {
+		return nil
+	}
+	out := *task
+	out.StartedAt = cloneBatchTime(task.StartedAt)
+	out.CompletedAt = cloneBatchTime(task.CompletedAt)
+	return &out
+}
+
+func cloneBatchQueue(queue *BatchTaskQueue) *BatchTaskQueue {
+	if queue == nil {
+		return nil
+	}
+	out := *queue
+	out.NextRunAt = cloneBatchTime(queue.NextRunAt)
+	out.LastScheduleTriggerAt = cloneBatchTime(queue.LastScheduleTriggerAt)
+	out.StartedAt = cloneBatchTime(queue.StartedAt)
+	out.CompletedAt = cloneBatchTime(queue.CompletedAt)
+	if queue.Tasks != nil {
+		out.Tasks = make([]*BatchTask, len(queue.Tasks))
+		for i, task := range queue.Tasks {
+			out.Tasks[i] = cloneBatchTask(task)
+		}
+	}
+	return &out
+}
+
+func (m *BatchTaskManager) loadedQueueIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.queues))
+	for id := range m.queues {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // NewBatchTaskManager 创建批量任务管理器
@@ -147,6 +233,8 @@ func batchQueueExecutionShouldStop(queue *BatchTaskQueue, exists bool) bool {
 
 // TryMarkQueueExecutor 标记队列执行协程已启动；若已有执行协程则返回 false。
 func (m *BatchTaskManager) TryMarkQueueExecutor(queueID string) bool {
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.queueExecutors[queueID]; exists {
@@ -176,7 +264,7 @@ func (m *BatchTaskManager) IsQueueExecutorActive(queueID string) bool {
 	return ok
 }
 
-// SetDB 设置数据库连接
+// SetDB 设置数据库连接。仅在启动阶段、并发使用管理器之前调用；不支持运行时热切换。
 func (m *BatchTaskManager) SetDB(db *database.DB) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -244,10 +332,9 @@ func (m *BatchTaskManager) CreateBatchQueue(
 		return nil, fmt.Errorf("单个队列最多 %d 条任务", MaxBatchTasksPerQueue)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	queueID := time.Now().Format("20060102150405") + "-" + generateShortID()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	queue := &BatchTaskQueue{
 		ID:              queueID,
 		Title:           title,
@@ -256,7 +343,7 @@ func (m *BatchTaskManager) CreateBatchQueue(
 		AgentMode:       config.NormalizeAgentMode(agentMode),
 		ScheduleMode:    normalizeBatchQueueScheduleMode(scheduleMode),
 		CronExpr:        strings.TrimSpace(cronExpr),
-		NextRunAt:       nextRunAt,
+		NextRunAt:       cloneBatchTime(nextRunAt),
 		ScheduleEnabled: true,
 		Concurrency:     resolveBatchQueueConcurrency(concurrency, len(tasks)),
 		ModelRetryMax:   normalizeModelErrorRetryMax(modelRetryMax),
@@ -309,34 +396,32 @@ func (m *BatchTaskManager) CreateBatchQueue(
 			dbTasks,
 		); err != nil {
 			m.logger.Warn("batch queue DB create failed", zap.String("queueId", queueID), zap.Error(err))
+			return nil, fmt.Errorf("创建队列失败: %w", err)
 		}
 	}
 
+	m.mu.Lock()
 	m.queues[queueID] = queue
-	return queue, nil
+	m.mu.Unlock()
+	return cloneBatchQueue(queue), nil
 }
 
 // GetBatchQueue 获取批量任务队列
 func (m *BatchTaskManager) GetBatchQueue(queueID string) (*BatchTaskQueue, bool) {
-	m.mu.RLock()
-	queue, exists := m.queues[queueID]
-	m.mu.RUnlock()
-
-	if exists {
-		return queue, true
-	}
-
-	// 如果内存中不存在，尝试从数据库加载
-	if m.db != nil {
-		if queue := m.loadQueueFromDB(queueID); queue != nil {
-			m.mu.Lock()
-			m.queues[queueID] = queue
-			m.mu.Unlock()
-			return queue, true
+	unlock := m.lockQueue(queueID)
+	defer unlock()
+	queue, exists := m.loadedQueue(queueID)
+	if !exists {
+		// 与同队列删除/更新共用操作锁，避免冷加载把已删除的旧行放回缓存。
+		queue = m.loadQueueFromDB(queueID)
+		if queue == nil {
+			return nil, false
 		}
+		m.mu.Lock()
+		m.queues[queueID] = queue
+		m.mu.Unlock()
 	}
-
-	return nil, false
+	return cloneBatchQueue(queue), true
 }
 
 // loadQueueFromDB 从数据库加载单个队列
@@ -443,44 +528,24 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 	return queue
 }
 
-// GetLoadedQueues 获取内存中已加载的队列（不触发 DB 加载，仅用 RLock）
+// GetLoadedQueues 获取内存快照，不触发 DB 加载。各队列分别加锁，不保证跨队列同一时刻。
 func (m *BatchTaskManager) GetLoadedQueues() []*BatchTaskQueue {
-	m.mu.RLock()
-	result := make([]*BatchTaskQueue, 0, len(m.queues))
-	for _, queue := range m.queues {
-		result = append(result, queue)
+	ids := m.loadedQueueIDs()
+	result := make([]*BatchTaskQueue, 0, len(ids))
+	for _, id := range ids {
+		unlock := m.lockQueue(id)
+		if queue, exists := m.loadedQueue(id); exists {
+			result = append(result, cloneBatchQueue(queue))
+		}
+		unlock()
 	}
-	m.mu.RUnlock()
 	return result
 }
 
-// GetAllQueues 获取所有队列
+// GetAllQueues 获取所有队列，冷加载不占用全局锁。
 func (m *BatchTaskManager) GetAllQueues() []*BatchTaskQueue {
-	m.mu.RLock()
-	result := make([]*BatchTaskQueue, 0, len(m.queues))
-	for _, queue := range m.queues {
-		result = append(result, queue)
-	}
-	m.mu.RUnlock()
-
-	// 如果数据库可用，确保所有数据库中的队列都已加载到内存
-	if m.db != nil {
-		dbQueues, err := m.db.GetAllBatchQueues()
-		if err == nil {
-			m.mu.Lock()
-			for _, queueRow := range dbQueues {
-				if _, exists := m.queues[queueRow.ID]; !exists {
-					if queue := m.loadQueueFromDB(queueRow.ID); queue != nil {
-						m.queues[queueRow.ID] = queue
-						result = append(result, queue)
-					}
-				}
-			}
-			m.mu.Unlock()
-		}
-	}
-
-	return result
+	_ = m.LoadFromDB()
+	return m.GetLoadedQueues()
 }
 
 // ListQueues 列出队列（支持筛选和分页）
@@ -508,32 +573,14 @@ func (m *BatchTaskManager) ListQueuesForAccess(limit, offset int, status, keywor
 		}
 
 		// 加载完整的队列信息（从内存或数据库）
-		m.mu.Lock()
 		for _, queueRow := range queueRows {
-			var queue *BatchTaskQueue
-			// 先从内存查找
-			if cached, exists := m.queues[queueRow.ID]; exists {
-				queue = cached
-			} else {
-				// 从数据库加载
-				queue = m.loadQueueFromDB(queueRow.ID)
-				if queue != nil {
-					m.queues[queueRow.ID] = queue
-				}
-			}
-			if queue != nil {
+			if queue, exists := m.GetBatchQueue(queueRow.ID); exists {
 				queues = append(queues, queue)
 			}
 		}
-		m.mu.Unlock()
 	} else {
-		// 没有数据库，从内存中筛选和分页
-		m.mu.RLock()
-		allQueues := make([]*BatchTaskQueue, 0, len(m.queues))
-		for _, queue := range m.queues {
-			allQueues = append(allQueues, queue)
-		}
-		m.mu.RUnlock()
+		// 没有数据库，从独立快照中筛选和分页。
+		allQueues := m.GetLoadedQueues()
 
 		// 筛选
 		filtered := make([]*BatchTaskQueue, 0)
@@ -593,105 +640,9 @@ func (m *BatchTaskManager) LoadFromDB() error {
 		return err
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	for _, queueRow := range queueRows {
-		if _, exists := m.queues[queueRow.ID]; exists {
-			continue // 已存在，跳过
-		}
-
-		taskRows, err := m.db.GetBatchTasks(queueRow.ID)
-		if err != nil {
-			continue // 跳过加载失败的任务
-		}
-
-		queue := &BatchTaskQueue{
-			ID:           queueRow.ID,
-			AgentMode:    "eino_single",
-			ScheduleMode: "manual",
-			Status:       queueRow.Status,
-			CreatedAt:    queueRow.CreatedAt,
-			CurrentIndex: queueRow.CurrentIndex,
-			Tasks:        make([]*BatchTask, 0, len(taskRows)),
-		}
-
-		if queueRow.Title.Valid {
-			queue.Title = queueRow.Title.String
-		}
-		if queueRow.Role.Valid {
-			queue.Role = queueRow.Role.String
-		}
-		if queueRow.AgentMode.Valid {
-			queue.AgentMode = config.NormalizeAgentMode(queueRow.AgentMode.String)
-		}
-		if queueRow.ScheduleMode.Valid {
-			queue.ScheduleMode = normalizeBatchQueueScheduleMode(queueRow.ScheduleMode.String)
-		}
-		if queueRow.CronExpr.Valid && queue.ScheduleMode == "cron" {
-			queue.CronExpr = strings.TrimSpace(queueRow.CronExpr.String)
-		}
-		if queueRow.NextRunAt.Valid && queue.ScheduleMode == "cron" {
-			t := queueRow.NextRunAt.Time
-			queue.NextRunAt = &t
-		}
-		queue.ScheduleEnabled = true
-		if queueRow.ScheduleEnabled.Valid && queueRow.ScheduleEnabled.Int64 == 0 {
-			queue.ScheduleEnabled = false
-		}
-		if queueRow.LastScheduleTriggerAt.Valid {
-			t := queueRow.LastScheduleTriggerAt.Time
-			queue.LastScheduleTriggerAt = &t
-		}
-		if queueRow.LastScheduleError.Valid {
-			queue.LastScheduleError = strings.TrimSpace(queueRow.LastScheduleError.String)
-		}
-		if queueRow.LastRunError.Valid {
-			queue.LastRunError = strings.TrimSpace(queueRow.LastRunError.String)
-		}
-		if queueRow.ProjectID.Valid {
-			queue.ProjectID = strings.TrimSpace(queueRow.ProjectID.String)
-		}
-		queue.Concurrency = batchQueueConcurrencyFromRow(queueRow)
-		queue.ModelRetryMax = batchQueueModelRetryFromRow(queueRow)
-		if queueRow.StartedAt.Valid {
-			queue.StartedAt = &queueRow.StartedAt.Time
-		}
-		if queueRow.CompletedAt.Valid {
-			queue.CompletedAt = &queueRow.CompletedAt.Time
-		}
-
-		for _, taskRow := range taskRows {
-			task := &BatchTask{
-				ID:      taskRow.ID,
-				Message: taskRow.Message,
-				Status:  taskRow.Status,
-			}
-			if taskRow.ConversationID.Valid {
-				task.ConversationID = taskRow.ConversationID.String
-			}
-			if taskRow.StartedAt.Valid {
-				task.StartedAt = &taskRow.StartedAt.Time
-			}
-			if taskRow.CompletedAt.Valid {
-				task.CompletedAt = &taskRow.CompletedAt.Time
-			}
-			if taskRow.Error.Valid {
-				task.Error = taskRow.Error.String
-			}
-			if taskRow.Result.Valid {
-				task.Result = taskRow.Result.String
-			}
-			if taskRow.AIChannelID.Valid {
-				task.AIChannelID = strings.TrimSpace(taskRow.AIChannelID.String)
-			}
-			if taskRow.RetryCount.Valid {
-				task.RetryCount = int(taskRow.RetryCount.Int64)
-			}
-			queue.Tasks = append(queue.Tasks, task)
-		}
-
-		m.queues[queueRow.ID] = queue
+		// 只使用列表行的 ID；在操作锁内重新读取，避免过期列表覆盖新状态。
+		m.GetBatchQueue(queueRow.ID)
 	}
 
 	return nil
@@ -704,10 +655,10 @@ func (m *BatchTaskManager) UpdateTaskStatus(queueID, taskID, status string, resu
 
 // UpdateTaskStatusWithConversationID 更新任务状态（包含conversationId）
 func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, status string, result, errorMsg, conversationID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
@@ -749,10 +700,10 @@ func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, s
 
 // UpdateQueueStatus 更新队列状态
 func (m *BatchTaskManager) UpdateQueueStatus(queueID, status string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
@@ -778,28 +729,28 @@ func (m *BatchTaskManager) UpdateQueueStatus(queueID, status string) {
 
 // UpdateQueueSchedule 更新队列调度配置
 func (m *BatchTaskManager) UpdateQueueSchedule(queueID, scheduleMode, cronExpr string, nextRunAt *time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
 
-	queue.ScheduleMode = normalizeBatchQueueScheduleMode(scheduleMode)
-	if queue.ScheduleMode == "cron" {
-		queue.CronExpr = strings.TrimSpace(cronExpr)
-		queue.NextRunAt = nextRunAt
-	} else {
-		queue.CronExpr = ""
-		queue.NextRunAt = nil
+	scheduleMode = normalizeBatchQueueScheduleMode(scheduleMode)
+	cronExpr = strings.TrimSpace(cronExpr)
+	nextRunAt = cloneBatchTime(nextRunAt)
+	if scheduleMode != "cron" {
+		cronExpr = ""
+		nextRunAt = nil
 	}
-
 	if m.db != nil {
-		if err := m.db.UpdateBatchQueueSchedule(queueID, queue.ScheduleMode, queue.CronExpr, queue.NextRunAt); err != nil {
+		if err := m.db.UpdateBatchQueueSchedule(queueID, scheduleMode, cronExpr, nextRunAt); err != nil {
 			m.logger.Warn("batch queue DB schedule update failed", zap.String("queueId", queueID), zap.Error(err))
+			return
 		}
 	}
+	queue.ScheduleMode, queue.CronExpr, queue.NextRunAt = scheduleMode, cronExpr, nextRunAt
 }
 
 // batchQueueConcurrencyFromRow 从数据库行读取并发数（缺省为 1）。
@@ -825,10 +776,10 @@ func (m *BatchTaskManager) UpdateQueueMetadata(queueID, title, role, agentMode s
 	if utf8.RuneCountInString(role) > MaxBatchQueueRoleLen {
 		return fmt.Errorf("角色名不能超过 %d 个字符", MaxBatchQueueRoleLen)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return fmt.Errorf("队列不存在")
 	}
@@ -843,91 +794,103 @@ func (m *BatchTaskManager) UpdateQueueMetadata(queueID, title, role, agentMode s
 		agentMode = queue.AgentMode
 	}
 
-	queue.Title = title
-	queue.Role = role
-	queue.AgentMode = agentMode
+	nextConcurrency := queue.Concurrency
 	if concurrency != nil {
-		queue.Concurrency = normalizeBatchQueueConcurrency(*concurrency)
+		nextConcurrency = normalizeBatchQueueConcurrency(*concurrency)
 	}
-
 	if m.db != nil {
-		if err := m.db.UpdateBatchQueueMetadata(queueID, title, role, agentMode, queue.Concurrency); err != nil {
-			m.logger.Warn("batch queue DB metadata update failed", zap.String("queueId", queueID), zap.Error(err))
+		if err := m.db.UpdateBatchQueueMetadata(queueID, title, role, agentMode, nextConcurrency); err != nil {
+			return fmt.Errorf("更新队列信息失败: %w", err)
 		}
 	}
+	queue.Title, queue.Role, queue.AgentMode = title, role, agentMode
+	queue.Concurrency = nextConcurrency
 	return nil
 }
 
 // SetScheduleEnabled 暂停/恢复 Cron 自动调度（不影响手工执行）
 func (m *BatchTaskManager) SetScheduleEnabled(queueID string, enabled bool) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return false
 	}
-	queue.ScheduleEnabled = enabled
 	if m.db != nil {
-		_ = m.db.UpdateBatchQueueScheduleEnabled(queueID, enabled)
+		if err := m.db.UpdateBatchQueueScheduleEnabled(queueID, enabled); err != nil {
+			m.logger.Warn("batch queue DB schedule enabled update failed", zap.Error(err))
+			return false
+		}
 	}
+	queue.ScheduleEnabled = enabled
 	return true
 }
 
 // RecordScheduledRunStart Cron 触发成功、即将执行子任务时调用
 func (m *BatchTaskManager) RecordScheduledRunStart(queueID string) {
 	now := time.Now()
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
+	if m.db != nil {
+		if err := m.db.RecordBatchQueueScheduledTriggerStart(queueID, now); err != nil {
+			m.logger.Warn("batch queue DB scheduled trigger update failed", zap.Error(err))
+			return
+		}
+	}
 	queue.LastScheduleTriggerAt = &now
 	queue.LastScheduleError = ""
-	if m.db != nil {
-		_ = m.db.RecordBatchQueueScheduledTriggerStart(queueID, now)
-	}
 }
 
 // SetLastScheduleError 调度层失败（未成功开始执行）
 func (m *BatchTaskManager) SetLastScheduleError(queueID, msg string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
-	queue.LastScheduleError = strings.TrimSpace(msg)
+	msg = strings.TrimSpace(msg)
 	if m.db != nil {
-		_ = m.db.SetBatchQueueLastScheduleError(queueID, queue.LastScheduleError)
+		if err := m.db.SetBatchQueueLastScheduleError(queueID, msg); err != nil {
+			m.logger.Warn("batch queue DB schedule error update failed", zap.Error(err))
+			return
+		}
 	}
+	queue.LastScheduleError = msg
 }
 
 // SetLastRunError 最近一轮批量执行中的失败摘要
 func (m *BatchTaskManager) SetLastRunError(queueID, msg string) {
 	msg = strings.TrimSpace(msg)
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
-	queue.LastRunError = msg
 	if m.db != nil {
-		_ = m.db.SetBatchQueueLastRunError(queueID, msg)
+		if err := m.db.SetBatchQueueLastRunError(queueID, msg); err != nil {
+			m.logger.Warn("batch queue DB run error update failed", zap.Error(err))
+			return
+		}
 	}
+	queue.LastRunError = msg
 }
 
 // ResetQueueForRerun 重置队列与子任务状态，供 cron 下一轮执行
 func (m *BatchTaskManager) ResetQueueForRerun(queueID string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return false
 	}
@@ -962,10 +925,10 @@ func (m *BatchTaskManager) ResetQueueForRerun(queueID string) bool {
 
 // UpdateTaskMessage 更新任务消息（队列空闲时可改；任务需非 running）
 func (m *BatchTaskManager) UpdateTaskMessage(queueID, taskID, message string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return fmt.Errorf("队列不存在")
 	}
@@ -980,13 +943,12 @@ func (m *BatchTaskManager) UpdateTaskMessage(queueID, taskID, message string) er
 			if task.Status == BatchTaskStatusRunning {
 				return fmt.Errorf("执行中的任务不能编辑")
 			}
-			task.Message = message
-
 			if m.db != nil {
 				if err := m.db.UpdateBatchTaskMessage(queueID, taskID, message); err != nil {
 					return fmt.Errorf("更新任务消息失败: %w", err)
 				}
 			}
+			task.Message = message
 			return nil
 		}
 	}
@@ -996,10 +958,10 @@ func (m *BatchTaskManager) UpdateTaskMessage(queueID, taskID, message string) er
 
 // UpdateTaskChannel 更新子任务模型通道。空字符串表示跟随系统默认通道。
 func (m *BatchTaskManager) UpdateTaskChannel(queueID, taskID, aiChannelID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return fmt.Errorf("队列不存在")
 	}
@@ -1014,12 +976,12 @@ func (m *BatchTaskManager) UpdateTaskChannel(queueID, taskID, aiChannelID string
 		if task.Status == BatchTaskStatusRunning {
 			return fmt.Errorf("执行中的任务不能编辑")
 		}
-		task.AIChannelID = aiChannelID
 		if m.db != nil {
 			if err := m.db.UpdateBatchTaskChannel(queueID, taskID, aiChannelID); err != nil {
 				return fmt.Errorf("更新任务模型失败: %w", err)
 			}
 		}
+		task.AIChannelID = aiChannelID
 		return nil
 	}
 	return fmt.Errorf("任务不存在")
@@ -1027,9 +989,9 @@ func (m *BatchTaskManager) UpdateTaskChannel(queueID, taskID, aiChannelID string
 
 // NoteTaskModelRetry 记录模型报错后的自动重试，任务保持运行中。
 func (m *BatchTaskManager) NoteTaskModelRetry(queueID, taskID string, retryCount int, errText string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	queue, exists := m.queues[queueID]
+	unlock := m.lockQueue(queueID)
+	defer unlock()
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
@@ -1037,6 +999,7 @@ func (m *BatchTaskManager) NoteTaskModelRetry(queueID, taskID string, retryCount
 	if m.db != nil {
 		if err := m.db.UpdateBatchTaskRetry(queueID, taskID, retryCount, note); err != nil {
 			m.logger.Warn("batch task retry note failed", zap.String("queueId", queueID), zap.String("taskId", taskID), zap.Error(err))
+			return
 		}
 	}
 	for _, task := range queue.Tasks {
@@ -1059,10 +1022,10 @@ func trimBatchRetryNote(s string) string {
 
 // AddTaskToQueue 添加任务到队列（队列空闲时可添加：含 cron 本轮 completed、手动暂停后等）
 func (m *BatchTaskManager) AddTaskToQueue(queueID, message, aiChannelID string) (*BatchTask, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return nil, fmt.Errorf("队列不存在")
 	}
@@ -1084,103 +1047,92 @@ func (m *BatchTaskManager) AddTaskToQueue(queueID, message, aiChannelID string) 
 		AIChannelID: strings.TrimSpace(aiChannelID),
 	}
 
-	// 添加到内存队列
-	queue.Tasks = append(queue.Tasks, task)
-
-	// 同步到数据库
+	// DB 成功后再发布新任务。
 	if m.db != nil {
 		if err := m.db.AddBatchTask(queueID, taskID, message, task.AIChannelID); err != nil {
-			// 如果数据库保存失败，从内存中移除
-			queue.Tasks = queue.Tasks[:len(queue.Tasks)-1]
 			return nil, fmt.Errorf("添加任务失败: %w", err)
 		}
 	}
-
-	return task, nil
+	queue.Tasks = append(queue.Tasks, task)
+	return cloneBatchTask(task), nil
 }
 
 // PrepareSingleTaskRun 准备单条执行：重置目标任务（若已有结果）并定位队列索引
 func (m *BatchTaskManager) PrepareSingleTaskRun(queueID, taskID string) error {
-	var siblingRunningIDs []string
-
-	m.mu.Lock()
-	queue, exists := m.queues[queueID]
+	unlock := m.lockQueue(queueID)
+	var cancelFuncs []context.CancelFunc
+	defer func() {
+		unlock()
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
-		m.mu.Unlock()
 		return fmt.Errorf("队列不存在")
 	}
-
 	var task *BatchTask
 	taskIndex := -1
 	for i, t := range queue.Tasks {
-		if t.ID == taskID {
-			taskIndex = i
-			task = t
+		if t != nil && t.ID == taskID {
+			task, taskIndex = t, i
 			break
 		}
 	}
 	if task == nil {
-		m.mu.Unlock()
 		return fmt.Errorf("任务不存在")
 	}
-
 	if !queueAllowsSingleTaskRunLocked(queue, task) {
-		m.mu.Unlock()
 		return fmt.Errorf("队列正在执行或未就绪，无法单条执行")
 	}
-
-	// 暂停态：中止在途子任务并收口仍标记 running 的其它子任务，以便单条执行非冲突项
-	var cancelFuncs []context.CancelFunc
+	var siblings []*BatchTask
 	if queue.Status == BatchQueueStatusPaused {
-		cancelFuncs = m.drainTaskCancelsLocked(queueID)
 		for _, t := range queue.Tasks {
 			if t != nil && t.ID != taskID && t.Status == BatchTaskStatusRunning {
-				siblingRunningIDs = append(siblingRunningIDs, t.ID)
+				siblings = append(siblings, t)
 			}
 		}
 	}
-
 	needsReset := task.Status != BatchTaskStatusPending
 	resumeQueue := queue.Status == BatchQueueStatusCompleted || queue.Status == BatchQueueStatusCancelled
-	m.mu.Unlock()
-
-	for _, c := range cancelFuncs {
-		if c != nil {
-			c()
-		}
-	}
+	now := time.Now()
 	const staleRunMsg = "为单条执行其它任务，已中止"
-	for _, sid := range siblingRunningIDs {
-		m.UpdateTaskStatus(queueID, sid, BatchTaskStatusCancelled, "", staleRunMsg)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	queue, exists = m.queues[queueID]
-	if !exists {
-		return fmt.Errorf("队列不存在")
-	}
-
-	task = nil
-	taskIndex = -1
-	for i, t := range queue.Tasks {
-		if t.ID == taskID {
-			taskIndex = i
-			task = t
-			break
-		}
-	}
-	if task == nil {
-		return fmt.Errorf("任务不存在")
-	}
-
 	if m.db != nil {
-		if err := m.db.PrepareBatchSingleTaskRun(queueID, taskID, taskIndex, needsReset, resumeQueue); err != nil {
+		// 兄弟任务收口和目标重置在同一事务内，任何失败均不修改内存或取消函数。
+		tx, err := m.db.Begin()
+		if err != nil {
 			return fmt.Errorf("准备单条执行失败: %w", err)
 		}
+		defer tx.Rollback()
+		for _, sibling := range siblings {
+			if _, err = tx.Exec("UPDATE batch_tasks SET status = ?, completed_at = ?, error = ? WHERE queue_id = ? AND id = ?",
+				BatchTaskStatusCancelled, now, staleRunMsg, queueID, sibling.ID); err != nil {
+				return err
+			}
+		}
+		if needsReset {
+			if _, err = tx.Exec("UPDATE batch_tasks SET status = ?, conversation_id = NULL, started_at = NULL, completed_at = NULL, error = NULL, result = NULL, retry_count = 0 WHERE queue_id = ? AND id = ?",
+				BatchTaskStatusPending, queueID, taskID); err != nil {
+				return err
+			}
+		}
+		if resumeQueue {
+			_, err = tx.Exec("UPDATE batch_task_queues SET status = ?, current_index = ?, completed_at = NULL, last_run_error = NULL WHERE id = ?",
+				BatchQueueStatusPaused, taskIndex, queueID)
+		} else {
+			_, err = tx.Exec("UPDATE batch_task_queues SET current_index = ?, last_run_error = NULL WHERE id = ?", taskIndex, queueID)
+		}
+		if err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
 	}
-
+	for _, sibling := range siblings {
+		sibling.Status, sibling.Error = BatchTaskStatusCancelled, staleRunMsg
+		sibling.CompletedAt = &now
+	}
 	if needsReset {
 		task.Status = BatchTaskStatusPending
 		task.ConversationID = ""
@@ -1192,16 +1144,22 @@ func (m *BatchTaskManager) PrepareSingleTaskRun(queueID, taskID string) error {
 	}
 	queue.CurrentIndex = taskIndex
 	queue.LastRunError = ""
+	if queue.Status == BatchQueueStatusPaused {
+		m.mu.Lock()
+		cancelFuncs = m.drainTaskCancelsLocked(queueID)
+		m.mu.Unlock()
+	}
 	if resumeQueue {
 		queue.Status = BatchQueueStatusPaused
 		queue.CompletedAt = nil
 	}
-
 	return nil
 }
 
 // SetSingleRunTask 标记队列仅执行指定子任务，完成后自动暂停
 func (m *BatchTaskManager) SetSingleRunTask(queueID, taskID string) {
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.singleRunTasks == nil {
@@ -1212,6 +1170,8 @@ func (m *BatchTaskManager) SetSingleRunTask(queueID, taskID string) {
 
 // ClearSingleRunTask 清除单条执行标记
 func (m *BatchTaskManager) ClearSingleRunTask(queueID string) {
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.singleRunTasks, queueID)
@@ -1219,6 +1179,8 @@ func (m *BatchTaskManager) ClearSingleRunTask(queueID string) {
 
 // TakeSingleRunTaskIfMatch 若刚完成的子任务为单条执行目标，则清除标记并返回 true
 func (m *BatchTaskManager) TakeSingleRunTaskIfMatch(queueID, taskID string) bool {
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.singleRunTasks == nil {
@@ -1233,10 +1195,10 @@ func (m *BatchTaskManager) TakeSingleRunTaskIfMatch(queueID, taskID string) bool
 
 // DeleteTask 删除任务（队列空闲时可删；执行中任务不可删）
 func (m *BatchTaskManager) DeleteTask(queueID, taskID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return fmt.Errorf("队列不存在")
 	}
@@ -1284,7 +1246,7 @@ func queueHasRunningTaskLocked(queue *BatchTaskQueue) bool {
 	return false
 }
 
-// queueAllowsTaskListMutationLocked 是否允许增删改子任务文案/列表（必须在持有 BatchTaskManager.mu 下调用）
+// queueAllowsTaskListMutationLocked 是否允许增删改子任务文案/列表（必须在持有对应队列操作锁下调用）
 func queueAllowsTaskListMutationLocked(queue *BatchTaskQueue) bool {
 	if queue == nil {
 		return false
@@ -1303,7 +1265,7 @@ func queueAllowsTaskListMutationLocked(queue *BatchTaskQueue) bool {
 	}
 }
 
-// queueAllowsSingleTaskRunLocked 是否允许对指定子任务发起单条执行（必须在持有 BatchTaskManager.mu 下调用）
+// queueAllowsSingleTaskRunLocked 是否允许对指定子任务发起单条执行（必须在持有对应队列操作锁下调用）
 func queueAllowsSingleTaskRunLocked(queue *BatchTaskQueue, task *BatchTask) bool {
 	if queue == nil || task == nil {
 		return false
@@ -1324,10 +1286,10 @@ func queueAllowsSingleTaskRunLocked(queue *BatchTaskQueue, task *BatchTask) bool
 
 // ClaimNextPendingTask 原子领取下一个待执行子任务（并发 worker 安全）。
 func (m *BatchTaskManager) ClaimNextPendingTask(queueID string) (*BatchTask, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists || queue == nil {
 		return nil, false
 	}
@@ -1335,10 +1297,9 @@ func (m *BatchTaskManager) ClaimNextPendingTask(queueID string) (*BatchTask, boo
 		return nil, false
 	}
 
-	onlyTaskID := ""
-	if m.singleRunTasks != nil {
-		onlyTaskID = m.singleRunTasks[queueID]
-	}
+	m.mu.RLock()
+	onlyTaskID := m.singleRunTasks[queueID]
+	m.mu.RUnlock()
 
 	for i, task := range queue.Tasks {
 		if task == nil || task.Status != BatchTaskStatusPending {
@@ -1349,16 +1310,16 @@ func (m *BatchTaskManager) ClaimNextPendingTask(queueID string) (*BatchTask, boo
 		}
 		task.Status = BatchTaskStatusRunning
 		queue.CurrentIndex = i
-		return task, true
+		return cloneBatchTask(task), true
 	}
 	return nil, false
 }
 
 // HasRunningTasks 队列是否仍有 running 状态的子任务。
 func (m *BatchTaskManager) HasRunningTasks(queueID string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	queue, exists := m.queues[queueID]
+	unlock := m.lockQueue(queueID)
+	defer unlock()
+	queue, exists := m.loadedQueue(queueID)
 	if !exists || queue == nil {
 		return false
 	}
@@ -1372,9 +1333,9 @@ func (m *BatchTaskManager) HasRunningTasks(queueID string) bool {
 
 // HasPendingOrRunningTasks 队列是否仍有未完成的子任务。
 func (m *BatchTaskManager) HasPendingOrRunningTasks(queueID string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	queue, exists := m.queues[queueID]
+	unlock := m.lockQueue(queueID)
+	defer unlock()
+	queue, exists := m.loadedQueue(queueID)
 	if !exists || queue == nil {
 		return false
 	}
@@ -1407,10 +1368,10 @@ func (m *BatchTaskManager) drainTaskCancelsLocked(queueID string) []context.Canc
 
 // GetNextTask 获取下一个待执行的任务（串行兼容，优先使用 ClaimNextPendingTask）
 func (m *BatchTaskManager) GetNextTask(queueID string) (*BatchTask, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return nil, false
 	}
@@ -1419,7 +1380,7 @@ func (m *BatchTaskManager) GetNextTask(queueID string) (*BatchTask, bool) {
 		task := queue.Tasks[i]
 		if task.Status == BatchTaskStatusPending {
 			queue.CurrentIndex = i
-			return task, true
+			return cloneBatchTask(task), true
 		}
 	}
 
@@ -1428,26 +1389,27 @@ func (m *BatchTaskManager) GetNextTask(queueID string) (*BatchTask, bool) {
 
 // MoveToNextTask 移动到下一个任务
 func (m *BatchTaskManager) MoveToNextTask(queueID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return
 	}
 
-	queue.CurrentIndex++
-
-	// 同步到数据库
 	if m.db != nil {
-		if err := m.db.UpdateBatchQueueCurrentIndex(queueID, queue.CurrentIndex); err != nil {
+		if err := m.db.UpdateBatchQueueCurrentIndex(queueID, queue.CurrentIndex+1); err != nil {
 			m.logger.Warn("batch queue DB index update failed", zap.String("queueId", queueID), zap.Error(err))
+			return
 		}
 	}
+	queue.CurrentIndex++
 }
 
 // SetTaskCancel 设置子任务的取消函数
 func (m *BatchTaskManager) SetTaskCancel(queueID, taskID string, cancel context.CancelFunc) {
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cancel == nil {
@@ -1467,106 +1429,96 @@ func (m *BatchTaskManager) SetTaskCancel(queueID, taskID string, cancel context.
 
 // PauseQueue 暂停队列
 func (m *BatchTaskManager) PauseQueue(queueID string) bool {
+	unlock := m.lockQueue(queueID)
 	var cancelFuncs []context.CancelFunc
-
-	m.mu.Lock()
-	queue, exists := m.queues[queueID]
-	if !exists {
-		m.mu.Unlock()
+	defer func() {
+		unlock()
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
+	queue, exists := m.loadedQueue(queueID)
+	if !exists || queue.Status != BatchQueueStatusRunning {
 		return false
 	}
-
-	if queue.Status != BatchQueueStatusRunning {
-		m.mu.Unlock()
-		return false
-	}
-
-	// DB 优先：先持久化，成功后再更新内存
 	if m.db != nil {
 		if err := m.db.UpdateBatchQueueStatus(queueID, BatchQueueStatusPaused); err != nil {
 			m.logger.Warn("batch queue DB pause update failed, skipping memory update",
 				zap.String("queueId", queueID), zap.Error(err))
-			m.mu.Unlock()
 			return false
 		}
 	}
-
 	queue.Status = BatchQueueStatusPaused
+	m.mu.Lock()
 	cancelFuncs = m.drainTaskCancelsLocked(queueID)
 	m.mu.Unlock()
-
-	for _, c := range cancelFuncs {
-		c()
-	}
-
 	return true
 }
 
 // CancelQueue 取消队列（保留此方法以保持向后兼容，但建议使用PauseQueue）
 func (m *BatchTaskManager) CancelQueue(queueID string) bool {
-	now := time.Now()
+	unlock := m.lockQueue(queueID)
 	var cancelFuncs []context.CancelFunc
-
-	m.mu.Lock()
-	queue, exists := m.queues[queueID]
-	if !exists {
-		m.mu.Unlock()
+	defer func() {
+		unlock()
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
+	queue, exists := m.loadedQueue(queueID)
+	if !exists || queue.Status == BatchQueueStatusCompleted || queue.Status == BatchQueueStatusCancelled {
 		return false
 	}
-
-	if queue.Status == BatchQueueStatusCompleted || queue.Status == BatchQueueStatusCancelled {
-		m.mu.Unlock()
-		return false
-	}
-
-	// DB 优先：先持久化，成功后再更新内存
+	now := time.Now()
 	if m.db != nil {
-		if err := m.db.CancelPendingBatchTasks(queueID, now); err != nil {
-			m.logger.Warn("batch task DB batch cancel failed, skipping memory update",
-				zap.String("queueId", queueID), zap.Error(err))
-			m.mu.Unlock()
-			return false
-		}
-		if err := m.db.UpdateBatchQueueStatus(queueID, BatchQueueStatusCancelled); err != nil {
-			m.logger.Warn("batch queue DB cancel update failed, skipping memory update",
-				zap.String("queueId", queueID), zap.Error(err))
-			m.mu.Unlock()
+		if err := m.persistQueueCancellation(queueID, now); err != nil {
+			m.logger.Warn("batch queue DB cancel failed, skipping memory update", zap.String("queueId", queueID), zap.Error(err))
 			return false
 		}
 	}
-
 	queue.Status = BatchQueueStatusCancelled
 	queue.CompletedAt = &now
-
-	// 内存中批量标记所有 pending 任务为 cancelled
 	for _, task := range queue.Tasks {
-		if task.Status == BatchTaskStatusPending {
+		if task != nil && task.Status == BatchTaskStatusPending {
 			task.Status = BatchTaskStatusCancelled
 			task.CompletedAt = &now
 		}
 	}
-
+	m.mu.Lock()
 	cancelFuncs = m.drainTaskCancelsLocked(queueID)
 	m.mu.Unlock()
-
-	for _, c := range cancelFuncs {
-		c()
-	}
-
 	return true
+}
+
+// 队列和 pending 子任务必须一起提交，避免第二条 SQL 失败留下半取消状态。
+func (m *BatchTaskManager) persistQueueCancellation(queueID string, now time.Time) error {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE batch_tasks SET status = ?, completed_at = ? WHERE queue_id = ? AND status = ?",
+		BatchTaskStatusCancelled, now, queueID, BatchTaskStatusPending); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE batch_task_queues SET status = ?, completed_at = ? WHERE id = ?",
+		BatchQueueStatusCancelled, now, queueID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteQueue 删除队列。执行协程活跃或 status 为 running 时拒绝删除，避免 executeBatchQueue 空指针 panic。
 func (m *BatchTaskManager) DeleteQueue(queueID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlock := m.lockQueue(queueID)
+	defer unlock()
 
-	queue, exists := m.queues[queueID]
+	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return ErrBatchQueueNotFound
 	}
 
-	if _, exec := m.queueExecutors[queueID]; exec {
+	if m.IsQueueExecutorActive(queueID) {
 		return ErrBatchQueueExecutorActive
 	}
 
@@ -1575,17 +1527,16 @@ func (m *BatchTaskManager) DeleteQueue(queueID string) error {
 		return ErrBatchQueueStillRunning
 	}
 
-	// 清理取消函数
-	delete(m.taskCancels, queueID)
-
-	// 从数据库删除
 	if m.db != nil {
 		if err := m.db.DeleteBatchQueue(queueID); err != nil {
-			m.logger.Warn("batch queue DB delete failed", zap.String("queueId", queueID), zap.Error(err))
+			return fmt.Errorf("删除队列失败: %w", err)
 		}
 	}
-
+	m.mu.Lock()
+	delete(m.taskCancels, queueID)
+	delete(m.singleRunTasks, queueID)
 	delete(m.queues, queueID)
+	m.mu.Unlock()
 	return nil
 }
 

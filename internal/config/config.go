@@ -1392,8 +1392,8 @@ type ParameterConfig struct {
 	Format        string      `yaml:"format,omitempty"`         // 参数格式: "flag", "positional", "combined", "template", "stdin"
 	Template      string      `yaml:"template,omitempty"`       // 模板字符串，如 "{flag} {value}" 或 "{value}"
 	Options       []string    `yaml:"options,omitempty"`        // 可选值列表（用于枚举）
-	ExistingFile  bool        `yaml:"existing_file,omitempty"`  // true 时执行前校验值指向已存在的普通文件
-	FallbackPaths []string    `yaml:"fallback_paths,omitempty"` // 未显式传值时，按顺序选择第一个存在的文件
+	ExistingFile  bool        `yaml:"existing_file,omitempty"`  // true 时执行前校验值指向已存在的普通文件；显式路径无效且候选存在时回退并提示
+	FallbackPaths []string    `yaml:"fallback_paths,omitempty"` // 候选文件路径：未显式传值或显式值无效时，按顺序选择第一个存在的文件
 }
 
 func Load(path string) (*Config, error) {

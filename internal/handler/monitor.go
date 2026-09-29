@@ -95,8 +95,9 @@ type MonitorResponse struct {
 
 // StatsResponse 统计信息响应（Dashboard 等）
 type StatsResponse struct {
-	Summary  *MonitorStatsSummary `json:"summary"`
-	TopTools []*mcp.ToolStats     `json:"topTools"`
+	Summary      *MonitorStatsSummary  `json:"summary"`
+	TopTools     []*mcp.ToolStats      `json:"topTools"`
+	DatabasePool *database.PoolMetrics `json:"databasePool,omitempty"`
 }
 
 // Monitor 获取监控信息
@@ -726,9 +727,15 @@ func (h *MonitorHandler) GetStats(c *gin.Context) {
 		}
 	}
 	summary, topTools := h.loadStatsSummary(topN)
+	var pool *database.PoolMetrics
+	if h.db != nil && notificationAccessFromContext(c).Scope == database.RBACScopeAll {
+		metrics := h.db.PoolMetrics()
+		pool = &metrics
+	}
 	c.JSON(http.StatusOK, StatsResponse{
-		Summary:  summary,
-		TopTools: topTools,
+		Summary:      summary,
+		TopTools:     topTools,
+		DatabasePool: pool,
 	})
 }
 

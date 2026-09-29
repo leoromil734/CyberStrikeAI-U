@@ -70,7 +70,7 @@ func modeLifecycleSection(mode PromptMode) string {
 func EvidenceLoopSection() string {
 	return `## 证据闭环
 
-按 Surface → Hypothesize → Verify → Record/Negate 推进。扫描、版本匹配和 nuclei 只入候选队列；队列非空时下一条必须验证队首，禁止再开一轮同类扫描。每个新 Web/API 入口按适用项测完才算覆盖：去掉或替换身份后再请求、替换对象 ID、参数单引号或模板差分、上传/路径/内网 URL、备份/swagger/.git/报错栈。未测不得写成已排除。可复现才 confirmed。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。同类方法连续三次无进展则换入口或风险族。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。低价值面见下一节，不在此覆盖要求内。`
+按 Surface → Hypothesize → Verify → Record/Negate 推进。扫描、版本匹配和 nuclei 只入候选队列；队列非空时下一条必须验证队首，禁止再开一轮同类扫描。每个新 Web/API 入口先打有危害面：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传；适用项测完才算覆盖：去掉或替换身份后再请求、替换对象 ID、有差分面的参数探针、上传是否读到敏感文件或可执行、内网 URL、备份/swagger/.git/报错栈。只回「请登录」且没有业务字段的口不喷注入。未测不得写成已排除。可复现才 confirmed。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。同类方法连续三次无进展则换入口或风险族。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。低价值面见下一节，不在此覆盖要求内。`
 }
 
 // SkipLowValueSection 列出不测的低价值面，避免把时间花在没有实际危害的探针上。
@@ -100,7 +100,7 @@ func ExecutionRecoverySection() string {
 func SkillsRoutingSection() string {
 	return `## Skill 路由
 
-按 name/description 选最小集合再加载正文/references。出现 SRC、漏洞赏金、白帽、挖集团/品牌/站点或中文 SRC 报告语境时，优先加载 'src-hunting'；同一 SRC 任务后续即使只出现越权、接口、注入、上传、WAF、JS 等单类词，也继续使用其 'references/routing-index.md'，不切去通用 Web/API Skill。登录、撞库、手机号口令再加 'credential-stuffing'，SRC 任务改读其 references/credential-stuffing.md。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
+按 name/description 选最小集合再加载正文/references。出现 SRC、漏洞赏金、白帽、挖集团/品牌/站点或中文 SRC 报告语境时，优先加载 'src-hunting'；同一 SRC 任务后续即使只出现越权、接口、注入、上传、WAF、JS 等单类词，也继续使用其 'references/routing-index.md'，不切去通用 Web/API Skill。登录、撞库、手机号口令再加 'credential-stuffing'，SRC 任务改读其 references/credential-stuffing.md。管理面、数据库、中间件暴露时做一次产品默认口（空密码、admin/admin、nacos/nacos 一类），验证码或锁定即停，进了有影响的权限才记漏洞。通常最多 1 个扫描模式、1 个领域、1 个验证 Skill；深度≠编排模式，未指定用 standard。源码可用时先白盒再闭合动态 PoC。`
 }
 
 func ComprehensiveAssessmentSection() string {
@@ -113,7 +113,8 @@ func ComprehensiveAssessmentSection() string {
 - Deep 根域至少跑 subfinder、oneforall、dnsx，并尝试证书/历史、品牌与测绘来源。每来源 upsert recon/source/{tool}/{target}，body 含 status、raw、unique、incremental、error、alt_tried；缺任一类 source fact 时 recon_sources 不得 passed。
 - HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；优先 jsluice 写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
 - 范围内自助注册/登录时创建最少测试账号，覆盖匿名、认证态及可行双主体；为验证相关缺陷可按复现所需力度推进。无法建身份只阻断对应结论，未建号≠已覆盖。
-- 侦察/信息收集不得 record_vulnerability；扫描命中仅 tentative。侦察摘要是阶段交接。收尾若仍列范围内可执行“下一步”或未验证高价值候选，须继续执行或委派。`
+- 侦察/信息收集不得 record_vulnerability；扫描命中仅 tentative。侦察摘要是阶段交接。收尾若仍列范围内可执行“下一步”或未验证高价值候选，须继续执行或委派。
+- 有数据或管理功能的资产（含有关联证据的疑似下游）在缺口复核前，给六类有危害面各一个终态：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传。终态只能是测完、有证据的 blocked，或引用能力证据的 N/A。低价值面仍直接 N/A，不占这六类。`
 }
 
 // ConciseBlackboardSection 是运行时必需的最小记录契约；详细字段模板由 Skill 按需提供。
@@ -137,7 +138,7 @@ func CompletionContractSection() string {
 
 仅在目标与阶段门禁有证据支撑，或到达范围/时间/权限/可达性/工具边界且替代路径用尽，或用户要求停止时收尾。全面任务须交付覆盖账本与 Source Coverage；blocked/gap 不得写成已覆盖。
 
-Deep/全面收尾硬闸门（缺一则只输出进度，禁止结案）：(1) recon/source 含 subfinder、oneforall 或等价异构子域、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 已分析或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段。口头“已全覆盖”无效。
+Deep/全面收尾硬闸门（缺一则只输出进度，禁止结案）：(1) recon/source 含 subfinder、oneforall 或等价异构子域、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 已分析或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段；(4) 有数据或管理功能的资产上，未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传均有测完、blocked 或有能力证据的 N/A。口头“已全覆盖”无效。
 
 草稿若仍列范围内可执行动作，它只是进度更新：继续执行/路由/委派，不得包装成“后续建议”。最终限制只保留越界或替代路径用尽的 blocked；最终报告不保留可执行的 high-value tentative/gap。
 

@@ -24,7 +24,7 @@ description: |
   - 先用 2–3 个随机路径建立 catch-all 基线，再运行 ffuf
   - 默认启用自动校准并匹配全部状态码，避免漏掉 405/500 等高价值差分
   - 优先小字典快速覆盖；只有发现技术栈、命名规律或高价值入口后才升级大字典
-  - 若传入自定义字典，必须是执行环境内真实存在的文件
+  - 调用时优先省略 wordlist，由执行器自动选择存在的字典；显式传入不存在的路径会自动回退并在结果中提示
 parameters:
   - name: "url"
     type: "string"
@@ -34,17 +34,17 @@ parameters:
     format: "flag"
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径；省略时按候选路径选择第一个真实存在的文件"
+    description: "字典文件路径；建议省略，执行器按候选路径选择第一个真实存在的文件；显式路径不存在时自动回退到候选字典并在结果中给出提示"
     required: false
     existing_file: true
     fallback_paths:
       - "/opt/cyberstrike/wordlists/raft-small-directories.txt"
-      - "/opt/SecLists/Discovery/Web-Content/raft-small-directories.txt"
+      - "/opt/cyberstrike/wordlists/raft-medium-directories.txt"
       - "/usr/share/seclists/Discovery/Web-Content/raft-small-directories.txt"
       - "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
-      - "/usr/share/dirb/wordlists/common.txt"
-      - "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt"
+      - "/opt/pipx/venvs/dirsearch/lib/python3.10/site-packages/dirsearch/db/dicc.txt"
       - "/usr/share/wordlists/dirb/common.txt"
+      - "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt"
     flag: "-w"
     format: "flag"
   - name: "match_codes"

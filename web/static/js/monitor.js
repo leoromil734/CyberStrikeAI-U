@@ -511,8 +511,8 @@ function shouldReuseMainResponseStream(progressId, prevStream, responseData, str
         return false;
     }
     const streamId = responseData && responseData.streamId != null ? String(responseData.streamId).trim() : '';
-    if (streamId && prevStream.streamId === streamId) {
-        return true;
+    if (streamId && prevStream.streamId) {
+        return prevStream.streamId === streamId;
     }
     const orch = String(streamOrch != null ? streamOrch : '').trim();
     if (orch === 'plan_execute') {
@@ -843,7 +843,44 @@ function mergeStreamBuffer(current, delta, data) {
     if (acc !== null) {
         return acc;
     }
+    // 新协议 message 是纯增量，不能用前缀猜测累计全文（例如连续两个相同词）。
+    if (data && Number.isInteger(data.streamSeq) && data.streamSeq > 0) {
+        return String(current || '') + String(delta || '');
+    }
     return normalizeStreamingDeltaJs(current, delta)[0];
+}
+
+// 序号属于 streamId，不属于事件类型；start/delta/终态共用一个游标。
+const streamSequenceStateByProgressId = new Map();
+function clearStreamSequenceState(progressId) {
+    streamSequenceStateByProgressId.delete(progressId);
+}
+window.clearStreamSequenceState = clearStreamSequenceState;
+
+function acceptSequencedStreamEvent(progressId, event) {
+    const d = event && event.data;
+    if (!d || !d.streamId || !Number.isInteger(d.streamSeq) || d.streamSeq < 1) {
+        if (d && streamBufferFromAccumulated(d) !== null && /^(response|thinking|reasoning_chain|eino_agent_reply_stream_end)$/.test(event.type)) {
+            return Object.assign({}, event, { message: String(d.accumulated) });
+        }
+        return event;
+    }
+    let streams = streamSequenceStateByProgressId.get(progressId);
+    if (!streams) {
+        streams = new Map();
+        streamSequenceStateByProgressId.set(progressId, streams);
+    }
+    const previous = streams.get(d.streamId) || { seq: 0, waitingSnapshot: false };
+    if (d.streamSeq <= previous.seq) return null;
+    const hasSnapshot = streamBufferFromAccumulated(d) !== null;
+    const waitingSnapshot = !hasSnapshot && (previous.waitingSnapshot || d.streamSeq !== previous.seq + 1);
+    streams.set(d.streamId, { seq: d.streamSeq, waitingSnapshot });
+    if (waitingSnapshot) return null;
+    // 终态全文同样以 accumulated 为准，兼容旧协议的 message 全文。
+    if (hasSnapshot && !/_delta$|_start$/.test(event.type)) {
+        return Object.assign({}, event, { message: String(d.accumulated) });
+    }
+    return event;
 }
 
 if (typeof window !== 'undefined') {
@@ -1080,6 +1117,7 @@ function markProgressCancelling(progressId) {
 }
 
 function finalizeProgressTask(progressId, finalLabel) {
+    clearStreamSequenceState(progressId);
     const stopBtn = document.getElementById(`${progressId}-stop-btn`);
     if (stopBtn) {
         stopBtn.disabled = true;
@@ -1474,6 +1512,48 @@ function integrateProgressToMCPSection(progressId, assistantMessageId, mcpExecut
 
 const PROCESS_DETAILS_PAGE_SIZE = 50;
 const processDetailsAutoLoadObservers = new WeakMap();
+const processDetailsSummaryCache = new WeakMap();
+
+/** 每个详情容器至多请求一次摘要；跨页工具终态和工具定位复用同一 Promise。 */
+function fetchProcessDetailsSummaryOnce(assistantId, backendId, options) {
+    const container = document.getElementById('process-details-' + assistantId);
+    if (!container || !backendId) return Promise.resolve({});
+    const cached = processDetailsSummaryCache.get(container);
+    if (cached) return cached.promise;
+    const state = { tools: [], promise: null };
+    state.promise = (async () => {
+        try {
+            const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?summary=1', {
+                signal: options && options.signal
+            });
+            const payload = await res.json();
+            if (!res.ok) return {};
+            state.tools = payload.summary && Array.isArray(payload.summary.toolExecutions) ? payload.summary.toolExecutions : [];
+            return payload;
+        } catch (_) { return {}; }
+    })();
+    processDetailsSummaryCache.set(container, state);
+    return state.promise;
+}
+window.fetchProcessDetailsSummaryOnce = fetchProcessDetailsSummaryOnce;
+
+function applyProcessDetailsToolSummary(container, tools) {
+    const statuses = new Map((tools || []).filter(t => t && t.processDetailId).map(t => [String(t.processDetailId), t.status]));
+    container.querySelectorAll('.timeline-item-tool_call[data-process-detail-id]').forEach(item => {
+        const status = statuses.get(item.dataset.processDetailId);
+        if (status !== 'completed' && status !== 'failed') return;
+        // 新鲜实时结果优先，旧摘要不能覆盖已展示的终态或后台任务结果。
+        if (item.dataset.toolResultMerged === '1' || item.classList.contains('tool-call-completed') || item.classList.contains('tool-call-failed')) return;
+        item.classList.remove('tool-call-running', 'tool-call-incomplete');
+        item.classList.add(status === 'completed' ? 'tool-call-completed' : 'tool-call-failed');
+        item.dataset.toolDisplayStatus = status;
+        item.dataset.toolSuccess = status === 'completed' ? '1' : '0';
+        item.title = '';
+        if (typeof getToolCallDetailState === 'function' && typeof setToolCallDetailState === 'function') {
+            setToolCallDetailState(item, Object.assign({}, getToolCallDetailState(item), { pending: false }));
+        }
+    });
+}
 
 function processDetailsContinuousLabel(kind) {
     if (kind === 'older') {
@@ -1658,16 +1738,25 @@ function updateProcessDetailsPaginationButtons(assistantMessageId, backendMessag
 }
 
 /**
- * 分页加载过程详情并增量渲染。默认全量加载供恢复流程使用；
- * 用户手动展开时由任务状态选择首个历史页或最新页，滚动到边界后自动加载相邻页。
+ * 分页加载过程详情，默认只加载最新 50 条；更早记录在上滚时按需获取。
+ * autoLoadAll 仅供显式调用，恢复流程不遍历全量历史。
  */
 async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId, options) {
     if (!assistantMessageId || !backendMessageId || typeof apiFetch !== 'function' || typeof renderProcessDetails !== 'function') {
         return;
     }
     const opts = options || {};
-    const autoLoadAll = opts.autoLoadAll !== false;
+    const autoLoadAll = opts.autoLoadAll === true;
     const detailsContainer = document.getElementById('process-details-' + assistantMessageId);
+    const messageElement = document.getElementById(assistantMessageId);
+    const viewGeneration = typeof loadConversationRequestSeq === 'number' ? loadConversationRequestSeq : 0;
+    const isCurrent = () => (!opts.isCurrent || opts.isCurrent()) &&
+        !(opts.signal && opts.signal.aborted) &&
+        (typeof loadConversationRequestSeq !== 'number' || loadConversationRequestSeq === viewGeneration) &&
+        document.getElementById(assistantMessageId) === messageElement &&
+        document.getElementById('process-details-' + assistantMessageId) === detailsContainer;
+    if (!messageElement || !detailsContainer || !isCurrent()) return [];
+    const loadedDetails = [];
     const PAGE = PROCESS_DETAILS_PAGE_SIZE;
     const existingNextOffset = detailsContainer && detailsContainer.dataset.nextOffset
         ? parseInt(detailsContainer.dataset.nextOffset, 10) || 0
@@ -1679,55 +1768,60 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
         ? parseInt(detailsContainer.dataset.nextOffset, 10) || 0
         : 0;
     const anchorId = opts.anchorId != null ? String(opts.anchorId).trim() : '';
-    if (opts.initialLatest && !prepend && !opts.append && !anchorId) {
-        if (detailsContainer) {
-            // 初页渲染完成前禁止顶部哨兵抢先触发；定位到底部后再开放自动加载。
-            detailsContainer.dataset.autoLoadSuspended = '1';
-        }
-        const summaryRes = await apiFetch(
-            '/api/messages/' + encodeURIComponent(String(backendMessageId)) + '/process-details?summary=1'
-        );
-        const summaryJSON = await summaryRes.json().catch(() => ({}));
-        if (!summaryRes.ok) {
-            throw new Error((summaryJSON && summaryJSON.error) ? summaryJSON.error : String(summaryRes.status));
-        }
-        const total = summaryJSON && summaryJSON.summary && Number(summaryJSON.summary.total);
-        offset = Number.isFinite(total) ? Math.max(0, total - PAGE) : 0;
-    }
+    const initialLatest = !autoLoadAll && !prepend && !opts.append && !anchorId && !opts.initialStart;
+    if (initialLatest) detailsContainer.dataset.autoLoadSuspended = '1';
     let isFirst = !opts.append;
-    while (true) {
+    while (isCurrent()) {
         const params = new URLSearchParams();
+        if (initialLatest && isFirst) params.set('latest', '1');
         params.set('limit', String(PAGE));
+        params.set('include_summary', 'false');
         if (anchorId && !opts.append && !prepend) {
             params.set('anchorId', anchorId);
-        } else {
+        } else if (!initialLatest || !isFirst) {
             params.set('offset', String(offset));
         }
         const res = await apiFetch(
             '/api/messages/' + encodeURIComponent(String(backendMessageId)) +
-            '/process-details?' + params.toString()
+            '/process-details?' + params.toString(), { signal: opts.signal }
         );
         const j = await res.json().catch(() => ({}));
+        if (!isCurrent()) return [];
         if (!res.ok) {
+            delete detailsContainer.dataset.autoLoadSuspended;
             throw new Error((j && j.error) ? j.error : String(res.status));
         }
         const details = (j && Array.isArray(j.processDetails)) ? j.processDetails : [];
-        const toolExecutions = (j && Array.isArray(j.toolExecutions)) ? j.toolExecutions : [];
+        loadedDetails.push(...details);
+        const cachedSummary = processDetailsSummaryCache.get(detailsContainer);
+        const toolExecutions = (j && Array.isArray(j.toolExecutions)) ? j.toolExecutions : (cachedSummary ? cachedSummary.tools : []);
+        const pairedDetails = typeof coalesceProcessDetailsToolPairs === 'function' ? coalesceProcessDetailsToolPairs(details) : details;
+        const needsToolSummary = pairedDetails.some(detail => detail.eventType === 'tool_call' && !(detail.data && detail.data._mergedResult));
+        // 摘要不阻塞历史首屏，也不随翻页重复拉取。
+        const summaryPromise = needsToolSummary
+            ? fetchProcessDetailsSummaryOnce(assistantMessageId, backendMessageId, { signal: opts.signal }) : null;
         const hasMore = !!(j && j.hasMore);
         renderProcessDetails(assistantMessageId, details, {
             append: !isFirst || opts.append,
             prepend: prepend,
             markLoaded: autoLoadAll ? !hasMore : true,
-            toolExecutions: toolExecutions
+            toolExecutions: toolExecutions,
+            isCurrent: isCurrent
         });
         // renderProcessDetails 对大页分帧渲染；等待一帧后再放置顶部/底部哨兵，
         // 避免哨兵被后续批次插到时间线中间。
         await new Promise((resolve) => requestAnimationFrame(resolve));
+        if (!isCurrent()) return [];
+        if (summaryPromise) void summaryPromise.then(payload => {
+            if (isCurrent()) applyProcessDetailsToolSummary(detailsContainer, payload.summary && payload.summary.toolExecutions);
+        });
         const responseOffset = j && typeof j.offset === 'number' ? j.offset : offset;
         const total = j && typeof j.total === 'number' ? j.total : responseOffset + details.length;
+        const pageNextOffset = Number.isInteger(j.nextOffset) && j.nextOffset >= responseOffset
+            ? j.nextOffset : responseOffset + details.length;
         const nextOffset = prepend && existingNextOffset > 0
             ? existingNextOffset
-            : responseOffset + details.length;
+            : pageNextOffset;
         const prevOffset = Math.max(0, responseOffset - PAGE);
         offset = nextOffset;
         if (detailsContainer) {
@@ -1741,14 +1835,15 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
             hasPrev: !autoLoadAll && responseOffset > 0,
             hasNext: !autoLoadAll && nextOffset < total
         });
-        if (!hasMore || details.length === 0 || !autoLoadAll) {
+        if (!hasMore || pageNextOffset <= responseOffset || !autoLoadAll) {
             break;
         }
         isFirst = false;
         await new Promise((resolve) => requestAnimationFrame(resolve));
     }
-    if (opts.initialLatest) {
+    if (initialLatest) {
         requestAnimationFrame(function () {
+            if (!isCurrent()) return;
             scrollProcessDetailsToLatest(assistantMessageId, false);
             if (detailsContainer) {
                 delete detailsContainer.dataset.autoLoadSuspended;
@@ -1756,11 +1851,13 @@ async function loadProcessDetailsPaginated(assistantMessageId, backendMessageId,
         });
     } else if (opts.initialStart) {
         requestAnimationFrame(function () {
+            if (!isCurrent()) return;
             const container = document.getElementById('process-details-' + assistantMessageId);
             const timeline = container && container.querySelector('.progress-timeline');
             if (timeline) timeline.scrollTop = 0;
         });
     }
+    return loadedDetails;
 }
 
 window.loadProcessDetailsPaginated = loadProcessDetailsPaginated;
@@ -1775,8 +1872,8 @@ function shouldInitiallyOpenProcessDetailsAtLatest(assistantMessageId, detailsCo
             return true;
         }
     } catch (e) { /* ignore */ }
-    // 其余情况按终态/历史详情处理，从第一条开始，便于顺序复盘。
-    return false;
+    // 初次展开统一定位最新页，旧历史由顶部滚动按需加载。
+    return true;
 }
 
 function resolveEventBackendMessageId(eventData) {
@@ -1965,6 +2062,12 @@ function applyBackendMessageIdToLastUser(backendMessageId) {
     }
 }
 
+function captureChatViewGuard(conversationId) {
+    const generation = typeof loadConversationRequestSeq === 'number' ? loadConversationRequestSeq : 0;
+    return () => window.currentConversationId === conversationId &&
+        (typeof loadConversationRequestSeq !== 'number' || loadConversationRequestSeq === generation);
+}
+
 function taskReplayProgressId(conversationId) {
     return 'task-ev-' + String(conversationId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
 }
@@ -2109,6 +2212,8 @@ function handleStreamEvent(event, progressElement, progressId,
             return;
         }
     }
+    event = acceptSequencedStreamEvent(progressId, event);
+    if (!event) return;
     const streamScrollWasPinned = typeof window.captureScrollPinState === 'function'
         ? window.captureScrollPinState()
         : (typeof window.isChatMessagesPinnedToBottom === 'function' ? window.isChatMessagesPinnedToBottom() : true);
@@ -2126,6 +2231,28 @@ function handleStreamEvent(event, progressElement, progressId,
     const timeline = resolveStreamTimeline(progressId);
     const canHandleWithoutTimeline = ['conversation', 'response', 'error', 'cancelled', 'done'].includes(String(event.type || ''));
     if (!timeline && !canHandleWithoutTimeline) return;
+
+    // 补流可能从任意 delta 开始，首个可用快照无需等待 start 就能恢复展示。
+    const streamData = event.data || {};
+    const streamStarts = {
+        thinking_stream_delta: ['thinking_stream_start', thinkingStreamStateByProgressId],
+        reasoning_chain_stream_delta: ['reasoning_chain_stream_start', thinkingStreamStateByProgressId],
+        eino_agent_reply_stream_delta: ['eino_agent_reply_stream_start', einoAgentReplyStreamStateByProgressId],
+        eino_agent_reply_stream_end: ['eino_agent_reply_stream_start', einoAgentReplyStreamStateByProgressId],
+        response_delta: ['response_start', responseStreamStateByProgressId]
+    };
+    const start = streamStarts[event.type];
+    if (start && streamData.streamId) {
+        const state = start[1].get(progressId);
+        const exists = event.type === 'response_delta'
+            ? state && state.streamId === streamData.streamId && state.itemId
+            : state && state.has(streamData.streamId);
+        if (!exists) {
+            handleStreamEvent({ type: start[0], message: '', data: Object.assign({}, streamData, {
+                streamSeq: undefined, accumulated: undefined
+            }) }, progressElement, progressId, getAssistantId, setAssistantId, getMcpIds, setMcpIds, options);
+        }
+    }
 
     // 终态事件（error/cancelled）优先复用现有助手消息，避免重复追加相同报错
     const upsertTerminalAssistantMessage = (message, preferredMessageId = null) => {
@@ -2435,18 +2562,7 @@ function handleStreamEvent(event, progressElement, progressId,
                 thinkingStreamStateByProgressId.set(progressId, state);
             }
             // 同一 streamId 重复 start：复用已有条目，避免孤儿卡片 + 新条目重复收 delta
-            if (state.has(streamId)) {
-                const ex = state.get(streamId);
-                ex.buffer = '';
-                const existingItem = document.getElementById(ex.itemId);
-                if (existingItem) {
-                    const contentEl = existingItem.querySelector('.timeline-item-content');
-                    if (contentEl) {
-                        setTimelineItemContentStreamPlain(contentEl, '');
-                    }
-                }
-                break;
-            }
+            if (state.has(streamId)) break;
             const labelBase = typeof window.t === 'function'
                 ? window.t(timelineType === 'reasoning_chain' ? 'chat.reasoningChain' : 'chat.aiThinking')
                 : (timelineType === 'reasoning_chain' ? '推理过程' : 'AI思考');
@@ -2454,10 +2570,10 @@ function handleStreamEvent(event, progressElement, progressId,
             const title = timelineAgentBracketPrefix(d) + emoji + ' ' + labelBase;
             const itemId = addTimelineItem(timeline, timelineType, {
                 title: title,
-                message: ' ',
+                message: streamBufferFromAccumulated(d) || ' ',
                 data: d
             });
-            state.set(streamId, { itemId, buffer: '' });
+            state.set(streamId, { itemId, buffer: streamBufferFromAccumulated(d) || '' });
             break;
         }
 
@@ -2757,27 +2873,16 @@ function handleStreamEvent(event, progressElement, progressId,
                 stateMap = new Map();
                 einoAgentReplyStreamStateByProgressId.set(progressId, stateMap);
             }
-            if (stateMap.has(streamId)) {
-                const ex = stateMap.get(streamId);
-                ex.buffer = '';
-                const existingItem = document.getElementById(ex.itemId);
-                if (existingItem) {
-                    let contentEl = existingItem.querySelector('.timeline-item-content');
-                    if (contentEl) {
-                        setTimelineItemContentStreamPlain(contentEl, '');
-                    }
-                }
-                break;
-            }
+            if (stateMap.has(streamId)) break;
             const streamingLabel = typeof window.t === 'function' ? window.t('timeline.running') : '执行中...';
             const replyTitleBase = typeof window.t === 'function' ? window.t('chat.einoAgentReplyTitle') : '子代理回复';
             const itemId = addTimelineItem(timeline, 'eino_agent_reply', {
                 title: timelineAgentBracketPrefix(d) + '💬 ' + replyTitleBase + ' · ' + streamingLabel,
-                message: ' ',
+                message: streamBufferFromAccumulated(d) || ' ',
                 data: d,
                 expanded: false
             });
-            stateMap.set(streamId, { itemId, buffer: '' });
+            stateMap.set(streamId, { itemId, buffer: streamBufferFromAccumulated(d) || '' });
             break;
         }
 
@@ -2960,13 +3065,13 @@ function handleStreamEvent(event, progressElement, progressId,
             const title = einoMainStreamPlanningTitle(responseData);
             const itemId = addTimelineItem(timeline, 'thinking', {
                 title: title,
-                message: ' ',
+                message: streamBufferFromAccumulated(responseData) || ' ',
                 data: Object.assign({}, responseData, { responseStreamPlaceholder: true })
             });
             responseStreamStateByProgressId.set(progressId, {
                 progressId: progressId,
                 itemId: itemId,
-                buffer: '',
+                buffer: streamBufferFromAccumulated(responseData) || '',
                 streamMeta: responseData,
                 streamIdentity: streamIdentity,
                 streamId: responseData.streamId != null ? String(responseData.streamId).trim() : ''
@@ -3672,6 +3777,7 @@ function findWorkflowHitlTimelineItem(detailsContainer, runId) {
  * 刷新或切换会话后：根据 workflow_runs(awaiting_hitl) 恢复工作流内联审批入口。
  */
 async function restoreWorkflowHitlInlineForConversation(conversationId) {
+    const isCurrentView = captureChatViewGuard(conversationId);
     if (!conversationId || typeof apiFetch !== 'function') return;
     if (typeof window.currentConversationId === 'string' && window.currentConversationId !== conversationId) {
         return;
@@ -3680,6 +3786,7 @@ async function restoreWorkflowHitlInlineForConversation(conversationId) {
         const resp = await apiFetch('/api/workflows/runs/pending?conversationId=' + encodeURIComponent(conversationId));
         if (!resp.ok) return;
         const data = await resp.json().catch(function () { return {}; });
+        if (!isCurrentView()) return;
         const runs = Array.isArray(data.runs) ? data.runs : [];
         if (!runs.length) return;
 
@@ -3702,8 +3809,9 @@ async function restoreWorkflowHitlInlineForConversation(conversationId) {
                 detailsContainer.dataset.loading = '1';
                 if (typeof loadProcessDetailsPaginated === 'function') {
                     await loadProcessDetailsPaginated(clientMsgId, backendMsgId);
+                    if (!isCurrentView()) return;
                 } else if (typeof apiFetch === 'function' && backendMsgId) {
-                    const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?full=1');
+                    const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?latest=1&limit=50&include_summary=false');
                     const j = await res.json().catch(function () { return {}; });
                     if (res.ok && typeof renderProcessDetails === 'function') {
                         renderProcessDetails(clientMsgId, (j && Array.isArray(j.processDetails)) ? j.processDetails : []);
@@ -3803,6 +3911,7 @@ function findLastAssistantMessageElInChat() {
  * 刷新或切换会话后：根据待审批记录恢复时间线里的内联审批入口，并展开详情区。
  */
 async function restoreHitlInlineForConversation(conversationId) {
+    const isCurrentView = captureChatViewGuard(conversationId);
     if (!conversationId || typeof apiFetch !== 'function') return;
     if (typeof window.currentConversationId === 'string' && window.currentConversationId !== conversationId) {
         return;
@@ -3811,6 +3920,7 @@ async function restoreHitlInlineForConversation(conversationId) {
         const resp = await apiFetch('/api/hitl/pending?conversationId=' + encodeURIComponent(conversationId) + '&status=pending&pageSize=50');
         if (!resp.ok) return;
         const data = await resp.json().catch(function () { return {}; });
+        if (!isCurrentView()) return;
         const items = Array.isArray(data.items) ? data.items : [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
@@ -3834,8 +3944,9 @@ async function restoreHitlInlineForConversation(conversationId) {
                     detailsContainer.dataset.loading = '1';
                     if (typeof loadProcessDetailsPaginated === 'function') {
                         await loadProcessDetailsPaginated(clientMsgId, backendMsgId);
+                        if (!isCurrentView()) return;
                     } else {
-                        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?full=1');
+                        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details?latest=1&limit=50&include_summary=false');
                         const j = await res.json().catch(function () { return {}; });
                         if (!res.ok) throw new Error((j && j.error) ? j.error : String(res.status));
                         const details = (j && Array.isArray(j.processDetails)) ? j.processDetails : [];
@@ -3885,6 +3996,14 @@ async function restoreHitlInlineForConversation(conversationId) {
             if (!hitlItemEl) {
                 hitlItemEl = detailsContainer.querySelector('[data-hitl-interrupt-id="' + hitlEscapeAttrSelector(String(item.id)) + '"]');
             }
+            if (!hitlItemEl) {
+                // 审批对应工具可能在未加载的旧页，保留审批入口而不强迫加载全部历史。
+                const timeline = detailsContainer.querySelector('.progress-timeline');
+                if (timeline) {
+                    const id = addTimelineItem(timeline, 'hitl_interrupt', { title: '等待审批', message: item.toolName || '', data: hitlData });
+                    hitlItemEl = document.getElementById(id);
+                }
+            }
             if (!hitlItemEl) continue;
             renderInlineHitlApproval(hitlItemEl.id, hitlData);
         }
@@ -3916,13 +4035,12 @@ async function refreshLastAssistantProcessDetails(conversationId) {
         wasExpanded = !!(tl && tl.classList.contains('expanded'));
     }
     try {
-        // 恢复流程必须遍历全部分页。直接请求无参数接口只会返回最早 50 条，
-        // 长任务刷新后会表现为“旧轮次 → 当前实时轮次”的中间历史缺失。
+        // 恢复只读取最新页；旧历史由用户上滚按需加载。
         if (typeof loadProcessDetailsPaginated === 'function') {
             await loadProcessDetailsPaginated(clientId, backendId);
         } else {
             const res = await apiFetch(
-                '/api/messages/' + encodeURIComponent(backendId) + '/process-details?full=1'
+                '/api/messages/' + encodeURIComponent(backendId) + '/process-details?latest=1&limit=50&include_summary=false'
             );
             const j = await res.json().catch(function () { return {}; });
             if (!res.ok) return;
@@ -3941,161 +4059,265 @@ async function refreshLastAssistantProcessDetails(conversationId) {
 
 window.refreshLastAssistantProcessDetails = refreshLastAssistantProcessDetails;
 
+/** 历史等待至多 5 秒、256 帧或约 1 MiB。达到任一上限即转实时，保留全部已缓冲帧。 */
+function createTaskReplayHistoryGate(dispatch, onFallback, options) {
+    const opts = options || {};
+    const maxEvents = opts.maxEvents || 256;
+    const maxBytes = opts.maxBytes || 1024 * 1024;
+    let pending = [];
+    let bytes = 0;
+    let resolveSettled;
+    const settled = new Promise(resolve => { resolveSettled = resolve; });
+    let timer;
+    const release = consumer => {
+        if (pending === null) return;
+        const events = pending;
+        pending = null;
+        bytes = 0;
+        clearTimeout(timer);
+        try { events.forEach(event => {
+            try { consumer(event); } catch (error) { console.warn('处理已缓冲事件失败', error); }
+        }); } finally { resolveSettled(); }
+    };
+    const fallback = () => {
+        if (pending === null) return;
+        try { onFallback(); } finally { release(dispatch); }
+    };
+    timer = setTimeout(fallback, opts.timeoutMs || 5000);
+    return {
+        settled,
+        isPending: () => pending !== null,
+        receive(event) {
+            if (pending === null) { dispatch(event); return; }
+            const size = JSON.stringify(event).length * 2;
+            if (pending.length >= maxEvents || bytes + size > maxBytes) {
+                fallback();
+                dispatch(event);
+                return;
+            }
+            pending.push(event);
+            bytes += size;
+        },
+        complete: consumer => release(consumer || dispatch),
+        fallback,
+        cancel: () => release(() => {})
+    };
+}
+
 const taskEventReplayAttachState = {
     conversationId: null,
-    inFlightPromise: null
+    inFlightPromise: null,
+    session: null
 };
+
+/** 只取消浏览器展示订阅，不调用后端任务终止接口。先移交所有权，旧 finally 无权清理新订阅。 */
+function cancelTaskEventReplaySubscription() {
+    const session = taskEventReplayAttachState.session;
+    taskEventReplayAttachState.session = null;
+    taskEventReplayAttachState.conversationId = null;
+    taskEventReplayAttachState.inFlightPromise = null;
+    if (session) {
+        if (session.historyGate) session.historyGate.cancel();
+        if (session.historyController) session.historyController.abort();
+        session.controller.abort();
+        if (session.reader) Promise.resolve(session.reader.cancel()).catch(() => {});
+        progressTaskState.delete(session.progressId);
+        thinkingStreamStateByProgressId.delete(session.progressId);
+        responseStreamStateByProgressId.delete(session.progressId);
+        einoAgentReplyStreamStateByProgressId.delete(session.progressId);
+        streamSequenceStateByProgressId.delete(session.progressId);
+    }
+    clearCsTaskReplay();
+    if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamEnd === 'function') {
+        window.CyberStrikeChatScroll.onTaskEventStreamEnd();
+    }
+}
+window.cancelTaskEventReplaySubscription = cancelTaskEventReplaySubscription;
+window.addEventListener('pagehide', cancelTaskEventReplaySubscription);
+
+/** 用稳定 ID 对齐历史和订阅建立期间的事件；无 ID 的旧协议仅在缓冲窗口内按次数去重。 */
+function taskReplayHistoryKey(type, message, data) {
+    const d = data || {};
+    if (d.processDetailId) return 'id:' + d.processDetailId;
+    return JSON.stringify([type, message || '', d.iteration, d.einoAgent, d.toolCallId, d.executionId, d.interruptId]);
+}
+
+function seedTaskReplayHistory(progressId, assistantId, details) {
+    const keys = new Map();
+    const timeline = document.getElementById('process-details-' + assistantId + '-timeline');
+    for (const detail of details || []) {
+        const d = detail.data || {};
+        const key = taskReplayHistoryKey(detail.eventType, detail.message, d);
+        keys.set(key, (keys.get(key) || 0) + 1);
+        if (detail.id) keys.set('id:' + detail.id, 1);
+        if (!d.streamId || !timeline) continue;
+        const item = Array.from(timeline.querySelectorAll('[data-stream-id]')).find(el => el.dataset.streamId === String(d.streamId));
+        if (!item) continue;
+        const s = { itemId: item.id, buffer: String(detail.message != null ? detail.message : (d.accumulated || '')), streamId: d.streamId, streamMeta: d, progressId };
+        if (detail.eventType === 'planning') {
+            responseStreamStateByProgressId.set(progressId, s);
+        } else {
+            const map = detail.eventType === 'eino_agent_reply' ? einoAgentReplyStreamStateByProgressId : thinkingStreamStateByProgressId;
+            if (!map.has(progressId)) map.set(progressId, new Map());
+            map.get(progressId).set(d.streamId, s);
+        }
+        if (Number.isInteger(d.streamSeq)) {
+            if (!streamSequenceStateByProgressId.has(progressId)) streamSequenceStateByProgressId.set(progressId, new Map());
+            streamSequenceStateByProgressId.get(progressId).set(d.streamId, { seq: d.streamSeq, waitingSnapshot: false });
+        }
+    }
+    return keys;
+}
 
 /**
  * 订阅运行中任务的 SSE 镜像（GET /api/agent-loop/task-events），用于 HITL 通过后主连接已断开时接续 UI。
  */
 async function attachRunningTaskEventStream(conversationId) {
     if (!conversationId || typeof apiFetch !== 'function') return false;
-    if (
-        taskEventReplayAttachState.inFlightPromise &&
-        taskEventReplayAttachState.conversationId === conversationId
-    ) {
+    if (taskEventReplayAttachState.session && taskEventReplayAttachState.conversationId === conversationId) {
         return taskEventReplayAttachState.inFlightPromise;
     }
-    if (shouldSkipTaskEventReplayAttach(conversationId)) {
-        return false;
-    }
-
+    if (shouldSkipTaskEventReplayAttach(conversationId)) return false;
+    cancelTaskEventReplaySubscription();
+    const session = { controller: new AbortController(), historyController: new AbortController(), reader: null, progressId: taskReplayProgressId(conversationId) };
+    const isCurrent = () => taskEventReplayAttachState.session === session &&
+        !session.controller.signal.aborted && window.currentConversationId === conversationId;
+    taskEventReplayAttachState.session = session;
+    taskEventReplayAttachState.conversationId = conversationId;
     const attachPromise = (async function () {
         try {
-            const check = await apiFetch('/api/agent-loop/tasks');
-            if (!check.ok) return false;
-            const j = await check.json().catch(function () { return {}; });
-            const active = (j.tasks || []).some(function (t) {
-                return t && t.conversationId === conversationId && (t.status === 'running' || t.status === 'cancelling');
-            });
-            if (!active) return false;
-
+            const check = await apiFetch('/api/agent-loop/tasks', { signal: session.controller.signal });
+            if (!isCurrent() || !check.ok) return false;
+            const j = await check.json().catch(() => ({}));
+            if (!isCurrent()) return false;
+            const active = (j.tasks || []).some(t => t && t.conversationId === conversationId && (t.status === 'running' || t.status === 'cancelling'));
             const asEl = findLastAssistantMessageElInChat();
             if (!asEl || !asEl.id) return false;
             const backendId = asEl.dataset && asEl.dataset.backendMessageId;
-            if (backendId && typeof renderProcessDetails === 'function') {
-                // 运行中会话可能远超默认 50 条；完整补齐数据库历史后再接实时事件。
-                if (typeof loadProcessDetailsPaginated === 'function') {
-                    await loadProcessDetailsPaginated(asEl.id, String(backendId));
-                } else {
-                    const res = await apiFetch(
-                        '/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?full=1'
-                    );
-                    const jd = await res.json().catch(function () { return {}; });
-                    if (res.ok && Array.isArray(jd.processDetails)) {
-                        renderProcessDetails(asEl.id, jd.processDetails);
-                    }
+            const loadLatest = () => backendId && typeof loadProcessDetailsPaginated === 'function'
+                ? loadProcessDetailsPaginated(asEl.id, String(backendId), { signal: session.historyController.signal, isCurrent })
+                : Promise.resolve([]);
+            const restoreApproval = () => {
+                if (isCurrent() && typeof window.restoreHitlInlineForConversation === 'function') {
+                    void window.restoreHitlInlineForConversation(conversationId).catch(e => console.warn('恢复会话审批入口失败', e));
                 }
-                // 历史重绘会重建时间线节点，需重新挂载 HITL 审批入口。
-                if (typeof window.restoreHitlInlineForConversation === 'function') {
-                    await window.restoreHitlInlineForConversation(conversationId);
-                }
-            }
-            expandProcessDetailsTimeline(asEl.id);
-
-            const progressId = taskReplayProgressId(conversationId);
-            beginCsTaskReplay(progressId, asEl.id, conversationId);
-
-            if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamBegin === 'function') {
-                window.CyberStrikeChatScroll.onTaskEventStreamBegin(conversationId, asEl.id, progressId);
-            }
-
-            const url = '/api/agent-loop/task-events?conversationId=' + encodeURIComponent(conversationId);
-            const response = await apiFetch(url, {
-                method: 'GET',
-                headers: { Accept: 'text/event-stream' }
-            });
-            if (!response.ok) {
-                clearCsTaskReplay();
-                if (progressTaskState.has(progressId)) {
-                    progressTaskState.delete(progressId);
-                }
-                if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamEnd === 'function') {
-                    window.CyberStrikeChatScroll.onTaskEventStreamEnd();
-                }
+            };
+            if (!active) {
+                await loadLatest();
+                restoreApproval();
                 return false;
             }
 
+            // 先订阅、立即消费网络数据，再取最新历史。历史渲染完成前只缓冲，不丢中间事件。
+            const response = await apiFetch('/api/agent-loop/task-events?conversationId=' + encodeURIComponent(conversationId), {
+                method: 'GET', headers: { Accept: 'text/event-stream' }, signal: session.controller.signal
+            });
+            if (!isCurrent()) return false;
+            // 活跃检查后任务可能恰好结束，订阅不存在时仍恢复最新历史和审批入口。
+            if (response.status === 404) {
+                await loadLatest();
+                restoreApproval();
+                return false;
+            }
+            if (!response.ok || !response.body) return false;
+            session.reader = response.body.getReader();
+            const progressId = session.progressId;
+            beginCsTaskReplay(progressId, asEl.id, conversationId);
+            if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamBegin === 'function') {
+                window.CyberStrikeChatScroll.onTaskEventStreamBegin(conversationId, asEl.id, progressId);
+            }
             let mcpIds = [];
-            const assistantDomId = asEl.id;
-            const getAssistantIdFn = function () { return assistantDomId; };
-            const setAssistantIdFn = function () {};
-
-            const reader = response.body.getReader();
+            let replaySawDone = false;
+            const dispatch = eventData => {
+                if (!isCurrent()) return;
+                const eventConvId = eventData && eventData.data && eventData.data.conversationId;
+                if (eventConvId && eventConvId !== conversationId) return;
+                if (eventData && eventData.type === 'done') replaySawDone = true;
+                handleStreamEvent(eventData, null, progressId, () => asEl.id, () => {}, () => mcpIds,
+                    ids => { mcpIds = mergeMcpExecutionIDLists(mcpIds, ids || []); }, { conversationId });
+            };
+            const gate = createTaskReplayHistoryGate(dispatch, () => {
+                session.historyController.abort();
+                if (!isCurrent()) return;
+                // 取消可能只画了一部分的历史，避免它与保留的实时帧重叠；所有实时帧仍按序消费。
+                const container = document.getElementById('process-details-' + asEl.id);
+                const timeline = document.getElementById('process-details-' + asEl.id + '-timeline');
+                if (timeline) timeline.innerHTML = '';
+                thinkingStreamStateByProgressId.delete(progressId);
+                responseStreamStateByProgressId.delete(progressId);
+                einoAgentReplyStreamStateByProgressId.delete(progressId);
+                streamSequenceStateByProgressId.delete(progressId);
+                if (container) {
+                    disconnectProcessDetailsAutoLoader(container);
+                    delete container.dataset.autoLoadSuspended;
+                    container.dataset.lazyNotLoaded = '0';
+                    container.dataset.loaded = 'partial';
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.className = 'process-details-history-retry';
+                    retry.textContent = '历史加载未完成，当前显示实时进度；点击重新加载历史';
+                    retry.onclick = () => { if (isCurrent() && typeof window.loadConversation === 'function') void window.loadConversation(conversationId); };
+                    container.appendChild(retry);
+                }
+                expandProcessDetailsTimeline(asEl.id);
+            });
+            session.historyGate = gate;
+            const receive = eventData => { if (isCurrent()) gate.receive(eventData); };
+            void loadLatest().then(details => {
+                if (!isCurrent() || !gate.isPending()) return;
+                const keys = seedTaskReplayHistory(progressId, asEl.id, details);
+                // 有界队列一次性排空；不在排空时继续增长，也不丢弃任何实时增量。
+                gate.complete(eventData => {
+                    const key = taskReplayHistoryKey(eventData.type, eventData.message, eventData.data);
+                    const count = keys.get(key) || 0;
+                    if (count && !(eventData.data && eventData.data.streamId) && !['done', 'response', 'error', 'cancelled'].includes(eventData.type)) {
+                        keys.set(key, count - 1);
+                    } else {
+                        dispatch(eventData);
+                    }
+                });
+                if (isCurrent()) expandProcessDetailsTimeline(asEl.id);
+                restoreApproval();
+            }).catch(e => {
+                if (!isCurrent() || !gate.isPending()) return;
+                console.warn('加载或合并历史记录失败，继续实时展示', e);
+                gate.fallback();
+            });
             const decoder = new TextDecoder();
             let buffer = '';
-            let replaySawDone = false;
-            const dispatchTaskEvent = function (eventData) {
-                if (eventData && eventData.type === 'done') {
-                    replaySawDone = true;
-                }
-                if (typeof window.currentConversationId === 'string' && window.currentConversationId !== conversationId) {
-                    return;
-                }
-                const eventConvId = eventData && eventData.data && eventData.data.conversationId
-                    ? String(eventData.data.conversationId)
-                    : '';
-                if (eventConvId && eventConvId !== conversationId) {
-                    return;
-                }
-                handleStreamEvent(eventData, null, progressId, getAssistantIdFn, setAssistantIdFn, function () { return mcpIds; }, function (ids) { mcpIds = mergeMcpExecutionIDLists(mcpIds, ids || []); }, { conversationId: conversationId });
-            };
-            while (true) {
-                const chunk = await reader.read();
-                if (chunk.done) break;
+            while (isCurrent()) {
+                const chunk = await session.reader.read();
+                if (!isCurrent() || chunk.done) break;
                 buffer += decoder.decode(chunk.value, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                await processSseDataLinesYielding(lines, dispatchTaskEvent);
+                await processSseDataLinesYielding(lines, receive);
             }
-            // Flush decoder internal buffer to avoid dropping trailing partial UTF-8 bytes.
+            if (!isCurrent()) return false;
             buffer += decoder.decode();
-            if (buffer.trim()) {
-                const lines = buffer.split('\n');
-                await processSseDataLinesYielding(lines, dispatchTaskEvent);
-            }
-            if (window.csTaskReplay && window.csTaskReplay.progressId === progressId) {
-                clearCsTaskReplay();
-            }
+            if (buffer.trim()) await processSseDataLinesYielding(buffer.split('\n'), receive);
+            await gate.settled;
+            if (!isCurrent()) return false;
             if (replaySawDone && progressTaskState.has(progressId)) {
                 finalizeProgressTask(progressId, typeof window.t === 'function' ? window.t('tasks.statusCompleted') : '已完成');
             }
-            if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamEnd === 'function') {
-                window.CyberStrikeChatScroll.onTaskEventStreamEnd();
-            }
             if (typeof loadActiveTasks === 'function') loadActiveTasks();
-            if (replaySawDone && typeof window.loadConversation === 'function' && window.currentConversationId === conversationId) {
-                const replayTimeline = document.getElementById('process-details-' + asEl.id + '-timeline');
-                const keepExpanded = !!(replayTimeline && replayTimeline.classList.contains('expanded'));
+            if (replaySawDone && typeof window.loadConversation === 'function') {
+                // 终态重新读取轻量会话；新加载自行恢复最新页，绝不全量补历史。
                 await window.loadConversation(conversationId);
-                // loadConversation 使用轻量消息接口，会把详情重新置为懒加载状态；
-                // 任务终态再从 DB 全量对账一次，补回订阅建立期间可能错过的事件。
-                await refreshLastAssistantProcessDetails(conversationId);
-                if (keepExpanded) {
-                    const finalAssistant = findLastAssistantMessageElInChat();
-                    if (finalAssistant && finalAssistant.id) {
-                        expandProcessDetailsTimeline(finalAssistant.id);
-                    }
-                }
             }
             return true;
         } catch (e) {
-            console.warn('attachRunningTaskEventStream', e);
-            clearCsTaskReplay();
-            if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.onTaskEventStreamEnd === 'function') {
-                window.CyberStrikeChatScroll.onTaskEventStreamEnd();
-            }
+            if (isCurrent() && e.name !== 'AbortError') console.warn('attachRunningTaskEventStream', e);
             return false;
         } finally {
-            if (taskEventReplayAttachState.inFlightPromise === attachPromise) {
-                taskEventReplayAttachState.inFlightPromise = null;
-                taskEventReplayAttachState.conversationId = null;
+            // 包括 A→B→A：比较订阅对象而不是 conversationId，旧请求不能清除新 A。
+            if (taskEventReplayAttachState.session === session) cancelTaskEventReplaySubscription();
+            if (session.reader && typeof session.reader.releaseLock === 'function') {
+                try { session.reader.releaseLock(); } catch (_) { /* cancel may still be settling */ }
             }
         }
     })();
-
-    taskEventReplayAttachState.conversationId = conversationId;
     taskEventReplayAttachState.inFlightPromise = attachPromise;
     return attachPromise;
 }
@@ -4523,6 +4745,9 @@ function attachToolResultToCall(progressId, toolCallId, data, options) {
             item = findToolCallItemById(progressRoot, toolCallId);
         }
     }
+    if (!item && progressId) {
+        item = findToolCallItemById(resolveStreamTimeline(progressId), toolCallId);
+    }
     if (!item) return false;
     mergeToolResultIntoCallItem(item, data, options);
     return true;
@@ -4760,6 +4985,9 @@ function addTimelineItem(timeline, type, options) {
     }
     // 记录类型与参数，便于 languagechange 时刷新标题文案
     item.dataset.timelineType = type;
+    const detailId = options.processDetailId || (options.data && options.data.processDetailId);
+    if (detailId) item.dataset.processDetailId = String(detailId);
+    if (options.data && options.data.streamId) item.dataset.streamId = String(options.data.streamId);
     if (type === 'iteration') {
         const n = options.iterationN != null ? options.iterationN : (options.data && options.data.iteration != null ? options.data.iteration : 1);
         item.dataset.iterationN = String(n);

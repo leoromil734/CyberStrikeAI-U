@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -58,7 +57,7 @@ func TestCreateProgressCallback_FlushesReasoningOnDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
-	defer os.RemoveAll(tmp)
+	t.Cleanup(func() { _ = db.Close() })
 
 	conv, err := db.CreateConversation("test", database.ConversationCreateMeta{})
 	if err != nil {

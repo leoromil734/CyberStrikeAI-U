@@ -1650,17 +1650,27 @@ func (h *AgentHandler) SubscribeAgentTaskEvents(c *gin.Context) {
 		return
 	}
 
+	sub, ch := h.taskEventBus.Subscribe(conversationID)
+	defer h.taskEventBus.Unsubscribe(conversationID, sub)
+	// The task may finish between the first check and subscription. Recheck
+	// after registering so a completed task cannot leave an orphan SSE stream.
+	if h.tasks.GetTask(conversationID) == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active task for this conversation"})
+		return
+	}
+
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	sub, ch := h.taskEventBus.Subscribe(conversationID)
-	defer h.taskEventBus.Unsubscribe(conversationID, sub)
-
 	flusher, _ := c.Writer.(http.Flusher)
 	ctx := c.Request.Context()
 	var writeMu sync.Mutex
+	// Establish the subscription immediately, even while the task is waiting on
+	// a tool/model. The client can then load its latest history page without
+	// waiting for the next progress event or keepalive tick.
+	c.Writer.Flush()
 	stopKeepalive := runSSEKeepalive(c, &writeMu)
 	defer stopKeepalive()
 

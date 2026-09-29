@@ -1673,15 +1673,35 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 
 // GetProcessDetailsPage 分页获取消息的过程详情（按时间升序）。
 func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]ProcessDetail, int, error) {
+	details, total, _, err := db.getProcessDetailsPage(messageID, limit, offset, false)
+	return details, total, err
+}
+
+// GetLatestProcessDetailsPage obtains the tail offset using COUNT only, without
+// loading or parsing the full-history tool summary.
+func (db *DB) GetLatestProcessDetailsPage(messageID string, limit int) ([]ProcessDetail, int, int, error) {
+	return db.getProcessDetailsPage(messageID, limit, 0, true)
+}
+
+func (db *DB) getProcessDetailsPage(messageID string, limit, offset int, latest bool) ([]ProcessDetail, int, int, error) {
+	if limit < 1 {
+		return nil, 0, 0, fmt.Errorf("limit must be positive")
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	var total int
 	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM process_details WHERE message_id = ?",
 		messageID,
 	).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("统计过程详情失败: %w", err)
+		return nil, 0, offset, fmt.Errorf("统计过程详情失败: %w", err)
+	}
+	if latest {
+		offset = max(0, total-limit)
 	}
 	if total == 0 || offset >= total {
-		return nil, total, nil
+		return nil, total, offset, nil
 	}
 
 	rows, err := db.Query(
@@ -1689,7 +1709,7 @@ func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]Proc
 		messageID, limit, offset,
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询过程详情失败: %w", err)
+		return nil, 0, offset, fmt.Errorf("查询过程详情失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -1699,7 +1719,7 @@ func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]Proc
 		var createdAt string
 
 		if err := rows.Scan(&detail.ID, &detail.MessageID, &detail.ConversationID, &detail.EventType, &detail.Message, &detail.Data, &createdAt); err != nil {
-			return nil, 0, fmt.Errorf("扫描过程详情失败: %w", err)
+			return nil, 0, offset, fmt.Errorf("扫描过程详情失败: %w", err)
 		}
 
 		var parseErr error
@@ -1714,7 +1734,10 @@ func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]Proc
 		details = append(details, detail)
 	}
 
-	return details, total, nil
+	if err := rows.Err(); err != nil {
+		return nil, 0, offset, fmt.Errorf("读取过程详情失败: %w", err)
+	}
+	return details, max(total, offset+len(details)), offset, nil
 }
 
 // GetProcessDetailOffset 返回某条过程详情在所属消息详情流中的零基 offset。

@@ -80,6 +80,8 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"recon/endpoint/",
 		"不得 record_vulnerability",
 		"可执行“下一步”",
+		"六类有危害面",
+		"有作用的上传",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("comprehensive assessment contract missing %q", required)
@@ -101,6 +103,7 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"最终报告不保留可执行的 high-value tentative/gap",
 		"Deep/全面收尾硬闸门",
 		"Source Coverage",
+		"有作用的上传均有测完",
 	} {
 		if !strings.Contains(completion, required) {
 			t.Errorf("completion contract missing premature-exit guard %q", required)

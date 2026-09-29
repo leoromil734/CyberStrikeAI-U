@@ -1,7 +1,7 @@
 package openai
 
-// SSEAccumulatedKey 为 SSE progress 事件 data 中的服务端权威流式全文快照字段。
-// 前端应优先用该字段更新 buffer，避免对 delta 二次 normalize 导致叠字。
+// SSEAccumulatedKey 为 SSE progress 事件 data 中可选的服务端权威全文快照。
+// 有快照时覆盖 buffer；带 streamSeq 的无快照帧按连续序号追加纯增量。
 const SSEAccumulatedKey = "accumulated"
 
 // WithSSEAccumulated 在 progress data 中附带当前流式累计全文（权威快照）。

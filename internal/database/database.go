@@ -56,6 +56,8 @@ type DB struct {
 	checkpointLoopName       string
 	checkpointStop           chan struct{}
 	checkpointDone           chan struct{}
+	poolObserverStop         chan struct{}
+	poolObserverDone         chan struct{}
 	closeOnce                sync.Once
 	closeErr                 error
 	vulnerabilityCreatedHook func(*Vulnerability)
@@ -1867,6 +1869,10 @@ func (db *DB) Close() error {
 		return nil
 	}
 	db.closeOnce.Do(func() {
+		if db.poolObserverStop != nil {
+			close(db.poolObserverStop)
+			<-db.poolObserverDone
+		}
 		if db.checkpointStop != nil {
 			close(db.checkpointStop)
 			if db.checkpointDone != nil {

@@ -28,6 +28,18 @@ func (s *taskEventSub) sendNonBlocking(line []byte) bool {
 	case s.ch <- line:
 		return true
 	default:
+	}
+	// Keep the newest frame when a slow subscriber falls behind. In particular,
+	// never discard the final authoritative snapshot in favour of stale deltas.
+	// A streamSeq gap tells the client to wait for/resync from a snapshot.
+	select {
+	case <-s.ch:
+	default:
+	}
+	select {
+	case s.ch <- line:
+		return true
+	default:
 		return false
 	}
 }
@@ -94,6 +106,9 @@ func (b *TaskEventBus) Publish(conversationID string, line []byte) {
 		subs = append(subs, s)
 	}
 	b.mu.RUnlock()
+	if len(subs) == 0 {
+		return
+	}
 
 	cp := append([]byte(nil), line...)
 	for _, s := range subs {

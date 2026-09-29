@@ -109,6 +109,9 @@ function switchPage(pageId) {
         return;
     }
 
+    if (pageId !== 'chat' && typeof window.invalidateChatView === 'function') {
+        window.invalidateChatView();
+    }
     if (typeof window.syncC2NavOnceFromServer === 'function') {
         void window.syncC2NavOnceFromServer();
     }

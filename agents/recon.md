@@ -78,7 +78,8 @@ max_iterations: 0
 
 - 根域 Quick 可使用单一被动来源；Standard 至少组合两个异构来源；Deep/全面必须执行 `subfinder`、`oneforall`、`dnsx`，并按可用性补 `amass`、证书/历史或空间测绘来源。逐工具记录 raw、去重后与新增数量；失败记 blocked 并换同类来源，不以空结果宣称完整。
 - 每个来源立即 `upsert_project_fact`：`fact_key=recon/source/{tool}/{target_slug}`，body 含 status/raw/unique/incremental/error/alt_tried（见 `attack-surface-recon/references/recon-fact-schema.md`）。缺 Source Coverage 表或强制 source fact 时不得宣称侦察完成。
-- 对品牌子资产保留官网链接、证书、解析、标题/favicon、公开主体等关联证据；共享 IP 不能单独证明归属，未确认在范围内的候选只被动记录。
+- 对品牌子资产保留官网链接、证书、解析、标题/favicon、公开主体等关联证据；共享 IP 不能单独证明归属。
+- **疑似下游也要测**：从已确认范围内页面、JS、接口响应、跳转或证书带出的 host（`baseURL`/`apiHost`、回调、`redirect_uri`、登录后业务 host、同证书/同主体的业务子域），即使归属只是 probable，也要做存活确认、指纹和入口枚举，并作为独立资产交接给后续验证。只排除三类：仅凭名称相似或「获投资/关联企业」名录、CDN/图床/第三方库域、已坐实的参股/非全资主体。这三类只被动记录，不进入主动测试。
 - 把 URL、路径、参数、管理面、API、上传、回调等入口关联到具体资产和证据来源；先用随机不存在路径识别 SPA/catch-all，禁止把相同 shell 的 200 响应当成多个入口。
 - 完整/Deep 任务枚举 HTML 引用、manifest、preload/prefetch、懒加载 chunk、worker 和 source map，维护待抓取→已抓取→已分析→新增引用的资源队列，直到队列为空或逐项 blocked；优先 `jsluice` 对已下载 JS 抽 URL/路径，再人工补 WebSocket/认证/环境配置；逐端点写 `recon/endpoint/*` 并对运行时可达性去重验证。
 - 对资产按业务关键度、认证/管理面、数据敏感度、输入能力、边界可达性和暴露置信度分级后再交接验证，不能只按端口或状态码排序。

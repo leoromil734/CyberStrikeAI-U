@@ -186,7 +186,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	}
 
 	// 文件型参数在启动进程前完成校验和默认路径解析，避免工具因缺失字典输出整页帮助。
-	resolvedArgs, validationErr := e.resolveToolFileArgs(toolConfig, args)
+	resolvedArgs, fileWarnings, validationErr := e.resolveToolFileArgs(toolConfig, args)
 	if validationErr != nil {
 		return &mcp.ToolResult{
 			Content: []mcp.Content{{Type: "text", Text: validationErr.Error()}},
@@ -194,6 +194,12 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		}, nil
 	}
 	args = resolvedArgs
+	for _, warning := range fileWarnings {
+		e.logger.Warn("工具文件参数已回退",
+			zap.String("tool", toolName),
+			zap.String("warning", warning),
+		)
+	}
 
 	// 构建命令 - 根据工具类型使用不同的参数格式
 	cmdArgs := e.buildCommandArgs(toolName, toolConfig, args)
@@ -281,7 +287,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 						Content: []mcp.Content{
 							{
 								Type: "text",
-								Text: string(output),
+								Text: prependFileArgWarnings(fileWarnings, string(output)),
 							},
 						},
 						IsError: false,
@@ -304,7 +310,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			Content: []mcp.Content{
 				{
 					Type: "text",
-					Text: failureText,
+					Text: prependFileArgWarnings(fileWarnings, failureText),
 				},
 			},
 			IsError: true,
@@ -320,7 +326,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		Content: []mcp.Content{
 			{
 				Type: "text",
-				Text: string(output),
+				Text: prependFileArgWarnings(fileWarnings, string(output)),
 			},
 		},
 		IsError: false,
@@ -426,10 +432,14 @@ func (e *Executor) attachToolStdin(cmd *exec.Cmd, toolConfig *config.ToolConfig,
 }
 
 // resolveToolFileArgs validates explicit file arguments and resolves configured fallback files.
-// Explicit invalid paths never silently fall back because that would hide a caller mistake.
-func (e *Executor) resolveToolFileArgs(toolConfig *config.ToolConfig, args map[string]interface{}) (map[string]interface{}, error) {
+// An explicit path that does not exist on the execution host degrades to the configured candidates
+// instead of aborting the call: callers routinely pass conventional paths that are absent on this
+// machine (e.g. /usr/share/wordlists/dirb/common.txt), and a missing dictionary is not a reason to
+// lose the whole tool run. Every substitution is returned as a warning so it stays visible in the
+// tool result instead of being silently swallowed.
+func (e *Executor) resolveToolFileArgs(toolConfig *config.ToolConfig, args map[string]interface{}) (map[string]interface{}, []string, error) {
 	if toolConfig == nil {
-		return args, nil
+		return args, nil, nil
 	}
 
 	resolved := make(map[string]interface{}, len(args)+1)
@@ -437,44 +447,89 @@ func (e *Executor) resolveToolFileArgs(toolConfig *config.ToolConfig, args map[s
 		resolved[key] = value
 	}
 
+	var warnings []string
+
 	for _, param := range toolConfig.Parameters {
 		if !param.ExistingFile {
 			continue
 		}
 
+		candidates := toolFileCandidates(param)
+
 		explicitValue, explicitlyProvided := args[param.Name]
 		explicitPath := strings.TrimSpace(fmt.Sprintf("%v", explicitValue))
+		explicitInvalid := false
 		if explicitlyProvided && explicitValue != nil && explicitPath != "" {
-			if !isRegularFile(explicitPath) {
-				return nil, fmt.Errorf("参数 %s 指定的文件不存在或不是普通文件: %s", param.Name, explicitPath)
+			if isRegularFile(explicitPath) {
+				resolved[param.Name] = explicitPath
+				continue
 			}
-			resolved[param.Name] = explicitPath
-			continue
+			explicitInvalid = true
 		}
 		delete(resolved, param.Name)
 
-		candidates := make([]string, 0, len(param.FallbackPaths)+1)
-		if defaultPath, ok := param.Default.(string); ok && strings.TrimSpace(defaultPath) != "" {
-			candidates = append(candidates, strings.TrimSpace(defaultPath))
-		}
-		candidates = append(candidates, param.FallbackPaths...)
+		selected := ""
 		for _, candidate := range candidates {
-			candidate = strings.TrimSpace(candidate)
-			if candidate != "" && isRegularFile(candidate) {
-				resolved[param.Name] = candidate
+			if isRegularFile(candidate) {
+				selected = candidate
 				break
 			}
 		}
-
-		if selected, ok := resolved[param.Name]; ok && strings.TrimSpace(fmt.Sprintf("%v", selected)) != "" {
+		if selected != "" {
+			resolved[param.Name] = selected
+			if explicitInvalid {
+				warnings = append(warnings, fmt.Sprintf(
+					"参数 %s 指定的文件不存在或不是普通文件: %s；已自动改用 %s",
+					param.Name, explicitPath, selected,
+				))
+			}
 			continue
 		}
+
+		if explicitInvalid {
+			return nil, nil, fmt.Errorf(
+				"参数 %s 指定的文件不存在或不是普通文件: %s；且没有可用候选文件，已检查: %s",
+				param.Name, explicitPath, strings.Join(candidates, ", "),
+			)
+		}
 		if param.Required || len(candidates) > 0 {
-			return nil, fmt.Errorf("参数 %s 没有可用文件；请显式传入有效路径，已检查: %s", param.Name, strings.Join(candidates, ", "))
+			return nil, nil, fmt.Errorf(
+				"参数 %s 没有可用文件；请显式传入执行环境内真实存在的路径，已检查: %s",
+				param.Name, strings.Join(candidates, ", "),
+			)
 		}
 	}
 
-	return resolved, nil
+	return resolved, warnings, nil
+}
+
+// toolFileCandidates 返回文件型参数的候选路径：默认值优先，其后是显式配置的回退路径。
+func toolFileCandidates(param config.ParameterConfig) []string {
+	candidates := make([]string, 0, len(param.FallbackPaths)+1)
+	if defaultPath, ok := param.Default.(string); ok && strings.TrimSpace(defaultPath) != "" {
+		candidates = append(candidates, strings.TrimSpace(defaultPath))
+	}
+	for _, candidate := range param.FallbackPaths {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
+// prependFileArgWarnings 把字典回退提示放在工具输出最前面，使模型与前端都能看到实际使用的文件。
+func prependFileArgWarnings(warnings []string, output string) string {
+	if len(warnings) == 0 {
+		return output
+	}
+	var b strings.Builder
+	for _, warning := range warnings {
+		b.WriteString("提示: ")
+		b.WriteString(warning)
+		b.WriteString("\n")
+	}
+	b.WriteString(output)
+	return b.String()
 }
 
 func isRegularFile(path string) bool {

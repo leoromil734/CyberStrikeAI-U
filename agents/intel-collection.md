@@ -61,7 +61,7 @@ max_iterations: 0
 
 - 聚合证书、DNS、历史 URL、互联网测绘、公开仓库和已公开泄露线索，保存来源与采集时间。
 - 每个来源 `upsert_project_fact` 为 `recon/source/{tool}/{target_slug}`，body 含 status/raw/unique/incremental/error/alt_tried。
-- 对候选资产做归属分层：confirmed、probable、unresolved；只有可证明归属的资产进入主动测试交接。
+- 对候选资产做归属分层：confirmed、probable、unresolved。confirmed 全量交接；**probable 且有关联证据的疑似下游**（范围内页面/JS/接口/跳转/证书带出的 host）也要交接，由 `recon` 做存活确认和入口枚举后再进验证。仅凭名称相似、CDN/第三方库域、或已坐实参股/非全资的 unresolved 只记录不交接。
 - 子域枚举记录不同来源的新增量，优先去重与解析验证；外部 API 不可用时切换公开来源并说明覆盖缺口。
 - 版本、CVE、密钥样式和敏感路径命中均为 tentative；**不得** `record_vulnerability`。
 

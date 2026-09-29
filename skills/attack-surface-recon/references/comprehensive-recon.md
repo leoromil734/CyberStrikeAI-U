@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 被动子域 | `subfinder` + `oneforall`；可用时补 `amass` | raw、去重后、相对前序增量、错误 |
 | 证书/历史 | CT、历史 URL、DNS 历史或公开搜索至少一类 | 来源、首次/末次观察、候选域名 |
-| 品牌关联 | 官网链接、证书 SAN、注册主体、favicon/标题、共享分析标识 | 关联依据、置信度、是否获准主动测试 |
+| 品牌关联 | 官网链接、证书 SAN、注册主体、favicon/标题、共享分析标识，以及范围内页面/JS/接口带出的下游 host | 关联依据、置信度；有关联证据的 probable 下游进入浅测，仅名称相似或参股主体只记录 |
 | 空间测绘 | FOFA/ZoomEye/Quake/Shodan/VirusTotal 中可用来源 | 查询、命中、与品牌/域名的关联证据 |
 | DNS 验证 | `dnsx` + 随机标签通配基线 | A/AAAA/CNAME、解析链、wildcard |
 
@@ -23,7 +23,9 @@ value = business_criticality + auth_or_admin + data_sensitivity
       + input_capability + boundary_reach + exposure_confidence
 ```
 
-优先级示例：管理/控制台、API 网关、账号与支付、上传/导入/回调、代理或远程访问服务、高权限异步任务。共享 IP 或默认证书只增加关联置信度，不自动证明品牌归属或测试授权。
+优先级示例：管理/控制台、API 网关、账号与支付、上传/导入/回调、代理或远程访问服务、高权限异步任务。共享 IP 或默认证书只增加关联置信度，不单独作为入池依据。
+
+**疑似下游入池**：已确认范围内页面、JS、接口响应、跳转参数或证书 SAN 带出的 host（`baseURL`/`apiHost`、回调、`redirect_uri`、登录后业务 host、同证书/同主体业务子域）记为 probable，做存活确认、指纹和入口枚举后交接验证，不因归属未最终坐实而跳过。排除：仅凭名称相似或「获投资/关联企业」名录、CDN/图床/第三方库域、已坐实参股或非全资主体。
 
 ## 3. 服务与入口账本
 

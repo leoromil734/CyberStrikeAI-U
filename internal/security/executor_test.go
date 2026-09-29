@@ -535,17 +535,69 @@ func TestResolveToolFileArgs_UsesExistingFallback(t *testing.T) {
 		FallbackPaths: []string{fallback},
 	}}}
 
-	resolved, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{})
+	resolved, warnings, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("resolve fallback: %v", err)
 	}
 	if got := resolved["wordlist"]; got != fallback {
 		t.Fatalf("expected fallback %q, got %#v", fallback, got)
 	}
+	if len(warnings) != 0 {
+		t.Fatalf("implicit resolution must not warn, got %#v", warnings)
+	}
 }
 
-func TestResolveToolFileArgs_RejectsExplicitMissingFile(t *testing.T) {
+// 显式传入不存在的路径（模型常见幻觉路径）时必须回退到已配置字典，并给出可见提示，而不是让整次调用失败。
+func TestResolveToolFileArgs_ExplicitMissingFileFallsBackWithWarning(t *testing.T) {
 	executor, _ := setupTestExecutor(t)
+	fallback := filepath.Join(t.TempDir(), "wordlist.txt")
+	if err := os.WriteFile(fallback, []byte("admin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	toolConfig := &config.ToolConfig{Parameters: []config.ParameterConfig{{
+		Name:          "wordlist",
+		Type:          "string",
+		ExistingFile:  true,
+		FallbackPaths: []string{fallback},
+	}}}
+
+	resolved, warnings, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{"wordlist": missing})
+	if err != nil {
+		t.Fatalf("resolve explicit missing file: %v", err)
+	}
+	if got := resolved["wordlist"]; got != fallback {
+		t.Fatalf("expected fallback %q, got %#v", fallback, got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], missing) || !strings.Contains(warnings[0], fallback) {
+		t.Fatalf("warning must name both paths, got %#v", warnings)
+	}
+}
+
+func TestResolveToolFileArgs_ExplicitMissingFileWithoutCandidateFails(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	alsoMissing := filepath.Join(t.TempDir(), "absent.txt")
+	toolConfig := &config.ToolConfig{Parameters: []config.ParameterConfig{{
+		Name:          "wordlist",
+		Type:          "string",
+		ExistingFile:  true,
+		FallbackPaths: []string{alsoMissing},
+	}}}
+
+	_, _, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{"wordlist": missing})
+	if err == nil || !strings.Contains(err.Error(), "文件不存在") || !strings.Contains(err.Error(), alsoMissing) {
+		t.Fatalf("expected explicit missing-file error listing candidates, got %v", err)
+	}
+}
+
+// 已存在的显式路径必须原样保留，不能被默认值覆盖。
+func TestResolveToolFileArgs_KeepsExplicitExistingFile(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	explicit := filepath.Join(t.TempDir(), "custom.txt")
+	if err := os.WriteFile(explicit, []byte("admin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	fallback := filepath.Join(t.TempDir(), "wordlist.txt")
 	if err := os.WriteFile(fallback, []byte("admin\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -557,9 +609,25 @@ func TestResolveToolFileArgs_RejectsExplicitMissingFile(t *testing.T) {
 		FallbackPaths: []string{fallback},
 	}}}
 
-	_, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{"wordlist": filepath.Join(t.TempDir(), "missing.txt")})
-	if err == nil || !strings.Contains(err.Error(), "文件不存在") {
-		t.Fatalf("expected explicit missing-file error, got %v", err)
+	resolved, warnings, err := executor.resolveToolFileArgs(toolConfig, map[string]interface{}{"wordlist": explicit})
+	if err != nil {
+		t.Fatalf("resolve explicit existing file: %v", err)
+	}
+	if got := resolved["wordlist"]; got != explicit {
+		t.Fatalf("explicit path must win, got %#v", got)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("no warning expected for valid explicit path, got %#v", warnings)
+	}
+}
+
+func TestPrependFileArgWarnings(t *testing.T) {
+	if got := prependFileArgWarnings(nil, "out"); got != "out" {
+		t.Fatalf("no warnings must leave output untouched, got %q", got)
+	}
+	got := prependFileArgWarnings([]string{"已自动改用 /a.txt"}, "out")
+	if got != "提示: 已自动改用 /a.txt\nout" {
+		t.Fatalf("unexpected prefixed output %q", got)
 	}
 }
 

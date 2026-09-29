@@ -1,6 +1,16 @@
 let currentConversationId = null;
 let loadConversationRequestSeq = 0;
 
+// 同时使会话请求、历史分页和展示订阅过期；不终止服务器上的任务。
+function invalidateChatView() {
+    loadConversationRequestSeq++;
+    if (typeof window.cancelTaskEventReplaySubscription === 'function') {
+        window.cancelTaskEventReplaySubscription();
+    }
+}
+window.invalidateChatView = invalidateChatView;
+window.addEventListener('pagehide', invalidateChatView);
+
 /**
  * 轻量会话 LRU 缓存。
  *
@@ -1709,6 +1719,7 @@ async function sendMessage() {
                 const lines = buffer.split('\n');
                 await processSseLines(lines, dispatchStreamEvent);
             }
+            if (typeof window.clearStreamSequenceState === 'function') window.clearStreamSequenceState(progressId);
             if (!streamSawDone) {
                 if (typeof loadActiveTasks === 'function') {
                     loadActiveTasks();
@@ -1727,6 +1738,7 @@ async function sendMessage() {
                 }
             }
         } finally {
+            if (typeof window.clearStreamSequenceState === 'function') window.clearStreamSequenceState(progressId);
             window.__csAgentLiveStream = { active: false, conversationId: null, progressId: null };
             if (window.CyberStrikeChatScroll) {
                 window.CyberStrikeChatScroll.onStreamEnd();
@@ -2934,22 +2946,27 @@ async function syncAssistantReasoningContentFromServer(backendMessageId, domAssi
     if (!backendMessageId || !domAssistantId || !currentConversationId || typeof apiFetch !== 'function') {
         return;
     }
+    const generation = loadConversationRequestSeq;
+    const messageElement = document.getElementById(domAssistantId);
+    if (!messageElement) return;
+    const isCurrent = () => generation === loadConversationRequestSeq && document.getElementById(domAssistantId) === messageElement;
     try {
         const convRes = await apiFetch(`/api/conversations/${encodeURIComponent(currentConversationId)}?include_process_details=0`);
         const conv = await convRes.json().catch(() => ({}));
-        if (!convRes.ok || !Array.isArray(conv.messages)) return;
+        if (!isCurrent() || !convRes.ok || !Array.isArray(conv.messages)) return;
         const msg = conv.messages.find((m) => m && String(m.id) === String(backendMessageId));
         if (!msg || !msg.reasoningContent) return;
         setMessageReasoningContent(domAssistantId, msg.reasoningContent);
-        // 最终回复到达后同样必须完整恢复过程详情；无参数接口默认仅返回前 50 条，
-        // 否则这里会把 task-events 恢复出的完整时间线再次覆盖成第一页。
+        if (window.csTaskReplay && window.csTaskReplay.assistantDomId === domAssistantId) return;
+        // 最终回复仅恢复最新一页；更早过程记录继续按需加载。
         if (typeof window.loadProcessDetailsPaginated === 'function') {
             await window.loadProcessDetailsPaginated(domAssistantId, String(backendMessageId));
         } else {
             const pdRes = await apiFetch(
-                `/api/messages/${encodeURIComponent(String(backendMessageId))}/process-details?full=1`
+                `/api/messages/${encodeURIComponent(String(backendMessageId))}/process-details?latest=1&limit=50&include_summary=false`
             );
             const pdJson = await pdRes.json().catch(() => ({}));
+            if (!isCurrent()) return;
             const details = pdRes.ok && Array.isArray(pdJson.processDetails) ? pdJson.processDetails : [];
             if (typeof renderProcessDetails === 'function') {
                 renderProcessDetails(domAssistantId, details);
@@ -3163,16 +3180,13 @@ function renderProcessDetails(messageId, processDetails, options) {
         timeline.innerHTML = '<div class="progress-timeline-empty">' + lazyHint + '</div>';
         bindProcessDetailsLazyHint(timeline, messageId);
         timeline.classList.remove('expanded');
-        prefetchProcessDetailsSummaryHint(messageId, messageElement);
+        // 折叠态不预取全量摘要；展开时直接请求最新页。
         return;
     }
     if (isLazyNotLoaded) {
         detailsContainer.dataset.lazyNotLoaded = '1';
         detailsContainer.dataset.loaded = '0';
         processDetails = [];
-        if (!appendMode) {
-            prefetchProcessDetailsSummaryHint(messageId, messageElement);
-        }
     } else if (markLoaded) {
         detailsContainer.dataset.lazyNotLoaded = '0';
         detailsContainer.dataset.loaded = '1';
@@ -3298,6 +3312,7 @@ function renderProcessDetails(messageId, processDetails, options) {
     }
 
     function renderOneProcessDetail(detail) {
+        if ((appendMode || prependMode) && detail.id && Array.from(timeline.querySelectorAll('[data-process-detail-id]')).some(el => el.dataset.processDetailId === String(detail.id))) return;
         const eventType = detail.eventType || '';
         const title = detail.message || '';
         const data = detail.data || {};
@@ -3443,7 +3458,12 @@ function renderProcessDetails(messageId, processDetails, options) {
             }
         }
         if (!timelineOpts.toolStatus && eventType === 'tool_call' && detail.id && toolStatusByProcessDetailId.has(String(detail.id))) {
-            timelineOpts.toolStatus = toolStatusByProcessDetailId.get(String(detail.id));
+            const status = toolStatusByProcessDetailId.get(String(detail.id));
+            timelineOpts.toolStatus = status === 'completed' || status === 'failed' ? status : 'result_missing';
+        }
+        // 历史页未带结果不等于工具仍在运行；等待一次摘要或实时结果确认终态。
+        if (eventType === 'tool_call' && !data._mergedResult && !timelineOpts.toolStatus) {
+            timelineOpts.toolStatus = 'result_missing';
         }
         const itemId = addTimelineItem(timeline, eventType, timelineOpts);
         if (prependMode && itemId) {
@@ -3467,6 +3487,7 @@ function renderProcessDetails(messageId, processDetails, options) {
 
     const TIMELINE_RENDER_BATCH = 40;
     const renderTimelineBatch = (startIdx) => {
+        if ((renderOpts.isCurrent && !renderOpts.isCurrent()) || document.getElementById(messageId) !== messageElement) return;
         const endIdx = Math.min(startIdx + TIMELINE_RENDER_BATCH, processDetails.length);
         for (let i = startIdx; i < endIdx; i++) {
             renderOneProcessDetail(processDetails[i]);
@@ -4069,9 +4090,14 @@ async function resolveToolExecutionSummaryForFocus(messageElement, executionId, 
         : '';
     if (!backendId || typeof apiFetch !== 'function') return item || null;
     try {
-        const res = await apiFetch('/api/messages/' + encodeURIComponent(backendId) + '/process-details?summary=1');
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok || !payload.summary || !Array.isArray(payload.summary.toolExecutions)) {
+        let payload;
+        if (typeof window.fetchProcessDetailsSummaryOnce === 'function') {
+            payload = await window.fetchProcessDetailsSummaryOnce(messageElement.id, backendId);
+        } else {
+            const res = await apiFetch('/api/messages/' + encodeURIComponent(backendId) + '/process-details?summary=1');
+            payload = res.ok ? await res.json().catch(() => ({})) : {};
+        }
+        if (!payload.summary || !Array.isArray(payload.summary.toolExecutions)) {
             return item || null;
         }
         summaries = cacheToolExecutionSummaries(messageElement, payload.summary.toolExecutions);
@@ -4784,6 +4810,8 @@ function copyDetailBlock(elementId, triggerBtn = null) {
 
 // 开始新对话
 async function startNewConversation() {
+    invalidateChatView();
+    const seq = loadConversationRequestSeq;
     // 如果当前在分组详情页面，先退出分组详情
     if (currentGroupId) {
         const groupDetailPage = document.getElementById('group-detail-page');
@@ -4806,9 +4834,11 @@ async function startNewConversation() {
             await ensureDefaultActiveProjectForNewChat();
         } catch (e) { /* ignore */ }
     }
+    if (seq !== loadConversationRequestSeq) return;
     if (typeof refreshChatProjectSelector === 'function') {
         await refreshChatProjectSelector();
     }
+    if (seq !== loadConversationRequestSeq) return;
     document.getElementById('chat-messages').innerHTML = '';
     const readyMsgNew = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
     addMessage('assistant', readyMsgNew, null, null, null, { systemReadyMessage: true });
@@ -4816,6 +4846,7 @@ async function startNewConversation() {
     updateActiveConversation();
     // 刷新分组列表，清除分组高亮
     await loadGroups();
+    if (seq !== loadConversationRequestSeq) return;
     // 刷新对话列表，确保显示最新的历史对话
     loadConversationsWithGroups();
     // 清除防抖定时器，防止恢复草稿时触发保存
@@ -5034,7 +5065,7 @@ async function prefetchLastAssistantProcessDetails() {
         await window.loadProcessDetailsPaginated(last.id, backendId);
         return;
     }
-    const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?full=1');
+    const res = await apiFetch('/api/messages/' + encodeURIComponent(String(backendId)) + '/process-details?latest=1&limit=50&include_summary=false');
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !Array.isArray(j.processDetails) || j.processDetails.length === 0) return;
     if (typeof renderProcessDetails === 'function') {
@@ -5047,7 +5078,8 @@ async function loadConversation(conversationId) {
     chatTargetReminderHide();
     chatTargetReminderAcknowledgedText = '';
     chatTargetReminderHits = [];
-    const seq = ++loadConversationRequestSeq;
+    invalidateChatView();
+    const seq = loadConversationRequestSeq;
     try {
         const cachedConversation = getConversationLiteFromCache(conversationId);
         let conversation = null;
@@ -5270,9 +5302,6 @@ async function loadConversation(conversationId) {
             if (seq !== loadConversationRequestSeq) {
                 return;
             }
-            if (currentConversationId === conversationId && typeof window.restoreHitlInlineForConversation === 'function') {
-                await window.restoreHitlInlineForConversation(conversationId);
-            }
         } else {
             const readyMsgEmpty = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
             addMessage('assistant', readyMsgEmpty, null, null, null, { systemReadyMessage: true, scroll: 'force' });
@@ -5284,9 +5313,6 @@ async function loadConversation(conversationId) {
             addAttackChainButton(conversationId);
             if (seq !== loadConversationRequestSeq) {
                 return;
-            }
-            if (currentConversationId === conversationId && typeof window.restoreHitlInlineForConversation === 'function') {
-                await window.restoreHitlInlineForConversation(conversationId);
             }
         }
 
@@ -5300,7 +5326,10 @@ async function loadConversation(conversationId) {
             !skipReplay
         ) {
             Promise.resolve()
-                .then(() => window.attachRunningTaskEventStream(conversationId))
+                .then(() => {
+                    if (seq !== loadConversationRequestSeq || currentConversationId !== conversationId) return false;
+                    return window.attachRunningTaskEventStream(conversationId);
+                })
                 .catch((e) => {
                     console.warn('attachRunningTaskEventStream on loadConversation failed', e);
                 });
@@ -5311,6 +5340,7 @@ async function loadConversation(conversationId) {
             });
         }
     } catch (error) {
+        if (seq !== loadConversationRequestSeq) return;
         console.error('加载对话失败:', error);
         showChatToast('加载对话失败: ' + (error && error.message ? error.message : String(error)), 'error');
     }

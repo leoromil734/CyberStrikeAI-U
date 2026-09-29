@@ -46,9 +46,16 @@ parameters:
     format: "flag"
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径"
+    description: "字典文件路径；建议省略，执行器按候选路径选择第一个真实存在的文件"
     required: false
-    default: "/usr/share/wordlists/dirb/common.txt"
+    existing_file: true
+    default: "/opt/cyberstrike/wordlists/raft-small-directories.txt"
+    fallback_paths:
+      - "/opt/cyberstrike/wordlists/raft-small-directories.txt"
+      - "/opt/cyberstrike/wordlists/raft-medium-directories.txt"
+      - "/opt/pipx/venvs/dirsearch/lib/python3.10/site-packages/dirsearch/db/dicc.txt"
+      - "/usr/share/seclists/Discovery/Web-Content/raft-small-directories.txt"
+      - "/usr/share/wordlists/dirb/common.txt"
     flag: "-w"
     format: "flag"
   - name: "additional_args"

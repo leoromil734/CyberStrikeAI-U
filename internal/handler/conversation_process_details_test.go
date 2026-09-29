@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cyberstrike-ai/internal/database"
 
@@ -28,9 +29,22 @@ func TestProcessDetailsPageIncludesTerminalToolStatusAcrossPageBoundary(t *testi
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
+	// The page-boundary contract assumes calls precede their results. Explicit
+	// fixture timestamps avoid UUID reordering when Windows time.Now values tie.
+	ordinal := 0
+	addDetail := func(eventType, text string, data interface{}) error {
+		id, err := db.AddProcessDetailWithID(message.ID, conversation.ID, eventType, text, data)
+		if err != nil {
+			return err
+		}
+		ordinal++
+		createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(ordinal) * time.Second)
+		_, err = db.Exec("UPDATE process_details SET created_at = ? WHERE id = ?", createdAt, id)
+		return err
+	}
 	for i := 1; i <= 4; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_call", "call", map[string]interface{}{
+		if err := addDetail("tool_call", "call", map[string]interface{}{
 			"toolName": "http-framework-test", "toolCallId": id, "index": i, "total": 4,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_call): %v", err)
@@ -38,7 +52,7 @@ func TestProcessDetailsPageIncludesTerminalToolStatusAcrossPageBoundary(t *testi
 	}
 	for i := 1; i <= 4; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_result", "result", map[string]interface{}{
+		if err := addDetail("tool_result", "result", map[string]interface{}{
 			"toolName": "http-framework-test", "toolCallId": id, "success": true,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_result): %v", err)

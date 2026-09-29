@@ -240,6 +240,8 @@ const (
 // 查询参数：
 //   - summary=1：仅返回摘要（total / iterationCount / maxIteration）
 //   - limit + offset：分页返回 processDetails（未指定 limit 时默认 50 条）
+//   - latest=1：直接返回最新一页，避免先加载摘要或逐页恢复全部历史
+//   - include_summary=false：省略全历史工具摘要（新 UI 单独按需获取）
 //   - anchorId：返回包含该过程详情锚点的一页，适合从工具按钮精准定位
 //   - full=1：显式返回全量 processDetails（用于导出/兼容旧集成，不建议 UI 展开时使用）
 func (h *ConversationHandler) GetMessageProcessDetails(c *gin.Context) {
@@ -313,33 +315,48 @@ func (h *ConversationHandler) GetMessageProcessDetails(c *gin.Context) {
 		}
 	}
 
-	details, total, err := h.db.GetProcessDetailsPage(messageID, limit, offset)
+	var details []database.ProcessDetail
+	var total int
+	var err error
+	latest := c.Query("latest") == "1" || strings.EqualFold(c.Query("latest"), "true")
+	if latest && anchorID == "" {
+		details, total, offset, err = h.db.GetLatestProcessDetailsPage(messageID, limit)
+	} else {
+		details, total, err = h.db.GetProcessDetailsPage(messageID, limit, offset)
+	}
 	if err != nil {
 		h.logger.Error("分页获取过程详情失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// Pagination advances over raw database rows, not the deduplicated display
+	// rows; otherwise a page containing duplicates repeatedly fetches its tail.
+	nextOffset := offset + len(details)
 	details = database.DedupeConsecutiveProcessDetails(details)
 	out := processDetailsToJSON(h.logger, details, false)
-	// A page may end between tool_call and tool_result. Return the full-history
-	// execution summary so the UI can render terminal status without pretending
-	// that an unloaded result is still running.
-	summary, summaryErr := h.db.GetProcessDetailsSummary(messageID)
-	if summaryErr != nil {
-		h.logger.Warn("获取分页工具执行状态失败", zap.Error(summaryErr), zap.String("messageID", messageID))
-	}
-	var toolExecutions []database.ProcessDetailsToolExecution
-	if summary != nil {
-		toolExecutions = summary.ToolExecutions
-	}
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"processDetails": out,
-		"toolExecutions": toolExecutions,
 		"total":          total,
 		"offset":         offset,
+		"nextOffset":     nextOffset,
 		"limit":          limit,
-		"hasMore":        offset+len(out) < total,
-	})
+		"hasMore":        nextOffset < total,
+	}
+	// Retain the legacy default for integrations. The current UI requests pages
+	// without the full-history summary and obtains it once when needed instead.
+	includeSummary := !strings.EqualFold(c.Query("include_summary"), "false") && c.Query("include_summary") != "0"
+	if includeSummary {
+		summary, summaryErr := h.db.GetProcessDetailsSummary(messageID)
+		if summaryErr != nil {
+			h.logger.Warn("获取分页工具执行状态失败", zap.Error(summaryErr), zap.String("messageID", messageID))
+		}
+		var toolExecutions []database.ProcessDetailsToolExecution
+		if summary != nil {
+			toolExecutions = summary.ToolExecutions
+		}
+		response["toolExecutions"] = toolExecutions
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // GetProcessDetail 获取单条完整过程详情。列表接口默认不给工具 payload，用户点开单条工具时再拉这里。

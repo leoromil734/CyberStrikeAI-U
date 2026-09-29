@@ -219,13 +219,14 @@ func Open(opt OpenOptions) (*DB, error) {
 		}
 	}
 
+	name := "conversations"
+	if opt.KnowledgeOnly {
+		name = "knowledge"
+	}
 	if d.IsSQLite() {
-		name := "conversations"
-		if opt.KnowledgeOnly {
-			name = "knowledge"
-		}
 		database.startPassiveCheckpointLoop(name)
 	}
+	database.startPoolObserver(name)
 
 	if logger != nil {
 		logger.Info("数据库已连接",
