@@ -38,6 +38,17 @@ func TestDecideBlocksIncompleteCandidate(t *testing.T) {
 	}
 }
 
+func TestDecideBlocksStandaloneNarrationTail(t *testing.T) {
+	// 结尾一句仍是「接下来我会…」这类自述：说明本轮没有真正收尾。
+	d := Decide(nil, Input{Response: "已确认 hfm.com 三个入口匿名均 401。接下来我会继续验证 /api/secure-assets 的路径穿越。", Status: StatusCompleted})
+	if d.Finalizable {
+		t.Fatalf("以「接下来我会…」结尾的短候选不应可交付: %+v", d)
+	}
+	if d.CompletionReason != ReasonIncompleteCandidate {
+		t.Fatalf("reason = %q, want %q", d.CompletionReason, ReasonIncompleteCandidate)
+	}
+}
+
 func TestDecideBlocksCandidateWithoutTerminalPunctuation(t *testing.T) {
 	d := Decide(nil, Input{Response: "已确认 my.hfm.com 的 /api/trader/* 全为 401，下一步准备测试 /api/secure-assets", Status: StatusCompleted})
 	if d.Finalizable {

@@ -293,13 +293,29 @@ func incompleteCandidateReason(text string) string {
 	if line == "" {
 		return ""
 	}
-	if isNextStepNarration(line) {
+	if isNextStepNarration(lastSentence(line)) {
 		return "candidate final text ends with a next-step narration instead of a delivered result"
 	}
 	if !hasTerminalPunctuation(line) {
 		return "candidate final text looks cut off (no sentence-ending punctuation)"
 	}
 	return ""
+}
+
+// lastSentence 取一行文本的最后一句（按中英文句末标点切分），用于判断结尾是否是「接下来式」叙述。
+func lastSentence(line string) string {
+	parts := strings.FieldsFunc(line, func(r rune) bool {
+		switch r {
+		case '。', '！', '？', '.', '!', '?', '\n':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[len(parts)-1])
 }
 
 // lastVisibleLine 取最后一行有内容的文本，并去掉 markdown 前缀。
