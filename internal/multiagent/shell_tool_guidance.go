@@ -29,5 +29,10 @@ func injectShellToolGuidance(instruction string, toolNames []string) string {
 	if s == "" {
 		return block
 	}
+	// ComposeSystemPrompt already includes this exact shared section. Keep
+	// custom/variant guidance intact; only avoid reinjecting the same bytes.
+	if strings.Contains(s, block) {
+		return instruction
+	}
 	return s + "\n\n" + block
 }

@@ -274,14 +274,15 @@ func RunDeepAgent(
 				subHandlers = append(subHandlers, einoSkillMW)
 			}
 			subHandlers = appendEinoChatModelTailMiddlewares(subHandlers, einoChatModelTailConfig{
-				logger:           logger,
-				phase:            "sub_agent:" + id,
-				summarization:    subSumMw,
-				modelName:        appCfg.OpenAI.Model,
-				maxTotalTokens:   appCfg.OpenAI.MaxTotalTokens,
-				toolMaxBytes:     toolMaxBytesFromMW(&ma.EinoMiddleware),
-				conversationID:   conversationID,
-				middlewareConfig: &ma.EinoMiddleware,
+				logger:              logger,
+				phase:               "sub_agent:" + id,
+				summarization:       subSumMw,
+				modelName:           appCfg.OpenAI.Model,
+				maxTotalTokens:      appCfg.OpenAI.MaxTotalTokens,
+				outputReserveTokens: appCfg.OpenAI.MaxCompletionTokensEffective(),
+				toolMaxBytes:        toolMaxBytesFromMW(&ma.EinoMiddleware),
+				conversationID:      conversationID,
+				middlewareConfig:    &ma.EinoMiddleware,
 			})
 
 			subInstrFinal := project.AppendVisionImageAnalysisIfReady(instr, appCfg.Vision.Ready())
@@ -448,7 +449,7 @@ func RunDeepAgent(
 			}
 		}
 	}
-	if mw := newTaskContextEnrichMiddleware(runtimeUserMessage, history, ma.SubAgentUserContextMaxRunesEffective(), taskBlackboardSupplement); mw != nil {
+	if mw := newTaskContextEnrichMiddleware(runtimeUserMessage, history, ma.SubAgentUserContextMaxRunesEffective(), taskBlackboardSupplement, configuredRoleUserPrompts(appCfg)...); mw != nil {
 		deepHandlers = append(deepHandlers, mw)
 	}
 	if len(mainOrchestratorPre) > 0 {
@@ -463,15 +464,16 @@ func RunDeepAgent(
 		deepHandlers = append(deepHandlers, einoSkillMW)
 	}
 	deepHandlers = appendEinoChatModelTailMiddlewares(deepHandlers, einoChatModelTailConfig{
-		logger:           logger,
-		phase:            "deep_orchestrator",
-		summarization:    mainSumMw,
-		modelName:        appCfg.OpenAI.Model,
-		maxTotalTokens:   appCfg.OpenAI.MaxTotalTokens,
-		toolMaxBytes:     toolMaxBytesFromMW(&ma.EinoMiddleware),
-		conversationID:   conversationID,
-		trace:            modelFacingTrace,
-		middlewareConfig: &ma.EinoMiddleware,
+		logger:              logger,
+		phase:               "deep_orchestrator",
+		summarization:       mainSumMw,
+		modelName:           appCfg.OpenAI.Model,
+		maxTotalTokens:      appCfg.OpenAI.MaxTotalTokens,
+		outputReserveTokens: appCfg.OpenAI.MaxCompletionTokensEffective(),
+		toolMaxBytes:        toolMaxBytesFromMW(&ma.EinoMiddleware),
+		conversationID:      conversationID,
+		trace:               modelFacingTrace,
+		middlewareConfig:    &ma.EinoMiddleware,
 	})
 
 	supHandlers := []adk.ChatModelAgentMiddleware{}
@@ -485,15 +487,16 @@ func RunDeepAgent(
 		supHandlers = append(supHandlers, einoSkillMW)
 	}
 	supHandlers = appendEinoChatModelTailMiddlewares(supHandlers, einoChatModelTailConfig{
-		logger:           logger,
-		phase:            "supervisor_orchestrator",
-		summarization:    mainSumMw,
-		modelName:        appCfg.OpenAI.Model,
-		maxTotalTokens:   appCfg.OpenAI.MaxTotalTokens,
-		toolMaxBytes:     toolMaxBytesFromMW(&ma.EinoMiddleware),
-		conversationID:   conversationID,
-		trace:            modelFacingTrace,
-		middlewareConfig: &ma.EinoMiddleware,
+		logger:              logger,
+		phase:               "supervisor_orchestrator",
+		summarization:       mainSumMw,
+		modelName:           appCfg.OpenAI.Model,
+		maxTotalTokens:      appCfg.OpenAI.MaxTotalTokens,
+		outputReserveTokens: appCfg.OpenAI.MaxCompletionTokensEffective(),
+		toolMaxBytes:        toolMaxBytesFromMW(&ma.EinoMiddleware),
+		conversationID:      conversationID,
+		trace:               modelFacingTrace,
+		middlewareConfig:    &ma.EinoMiddleware,
 	})
 
 	mainToolsCfg := adk.ToolsConfig{
@@ -569,15 +572,16 @@ func RunDeepAgent(
 			FilesystemMiddleware: peFsMw,
 			ModelFacingTrace:     modelFacingTrace,
 			PlannerReplannerRewriteHandlers: appendEinoChatModelTailMiddlewares(nil, einoChatModelTailConfig{
-				logger:           logger,
-				phase:            "plan_execute_planner_replanner",
-				summarization:    mainSumMw,
-				modelName:        appCfg.OpenAI.Model,
-				maxTotalTokens:   appCfg.OpenAI.MaxTotalTokens,
-				toolMaxBytes:     toolMaxBytesFromMW(&ma.EinoMiddleware),
-				conversationID:   conversationID,
-				skipTrace:        true,
-				middlewareConfig: &ma.EinoMiddleware,
+				logger:              logger,
+				phase:               "plan_execute_planner_replanner",
+				summarization:       mainSumMw,
+				modelName:           appCfg.OpenAI.Model,
+				maxTotalTokens:      appCfg.OpenAI.MaxTotalTokens,
+				outputReserveTokens: appCfg.OpenAI.MaxCompletionTokensEffective(),
+				toolMaxBytes:        toolMaxBytesFromMW(&ma.EinoMiddleware),
+				conversationID:      conversationID,
+				skipTrace:           true,
+				middlewareConfig:    &ma.EinoMiddleware,
 			}),
 		})
 		if perr != nil {

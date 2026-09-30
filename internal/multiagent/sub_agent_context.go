@@ -3,7 +3,6 @@ package multiagent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"cyberstrike-ai/internal/agent"
@@ -32,8 +31,8 @@ type taskContextEnrichMiddleware struct {
 // descriptions with user conversation context. Returns nil if disabled
 // (maxRunes < 0) or no user messages exist.
 // projectBlackboard 仅传项目黑板索引块（BuildFactIndexBlock）；勿传完整 systemPromptExtra。
-func newTaskContextEnrichMiddleware(userMessage string, history []agent.ChatMessage, maxRunes int, projectBlackboard string) adk.ChatModelAgentMiddleware {
-	supplement := buildUserContextSupplement(userMessage, history, maxRunes)
+func newTaskContextEnrichMiddleware(userMessage string, history []agent.ChatMessage, maxRunes int, projectBlackboard string, rolePrompts ...string) adk.ChatModelAgentMiddleware {
+	supplement := buildUserContextSupplement(userMessage, history, maxRunes, rolePrompts...)
 	if bb := strings.TrimSpace(projectBlackboard); bb != "" {
 		if supplement != "" {
 			supplement += "\n\n" + bb
@@ -73,6 +72,11 @@ func (m *taskContextEnrichMiddleware) enrichTaskDescription(argsJSON string) str
 	if !ok {
 		return argsJSON
 	}
+	// A repaired/retried task can already contain the exact host supplement.
+	// Keep it once; do not infer duplicates from partial text or summaries.
+	if strings.HasSuffix(desc, m.supplement) {
+		return argsJSON
+	}
 	raw["description"] = desc + m.supplement
 	enriched, err := json.Marshal(raw)
 	if err != nil {
@@ -84,7 +88,7 @@ func (m *taskContextEnrichMiddleware) enrichTaskDescription(argsJSON string) str
 // buildUserContextSupplement collects user messages from conversation history
 // and the current message, returning a formatted block to append to task
 // descriptions. Returns "" if disabled or no user messages exist.
-func buildUserContextSupplement(userMessage string, history []agent.ChatMessage, maxRunes int) string {
+func buildUserContextSupplement(userMessage string, history []agent.ChatMessage, maxRunes int, rolePrompts ...string) string {
 	if maxRunes < 0 {
 		return ""
 	}
@@ -106,12 +110,10 @@ func buildUserContextSupplement(userMessage string, history []agent.ChatMessage,
 		return ""
 	}
 
-	lines := make([]string, 0, len(userMsgs))
-	for i, msg := range userMsgs {
-		lines = append(lines, fmt.Sprintf("[第%d轮] %s", i+1, msg))
-	}
-	joined := strings.Join(lines, "\n")
+	joined := compactUserContextTurns(userMsgs, rolePrompts)
 	if maxRunes > 0 && len([]rune(joined)) > maxRunes {
+		// Preserve the explicitly configured legacy cap without cutting JSON
+		// dictionaries/references in half. The default (0) stays fully lossless.
 		joined = truncateKeepFirstLast(userMsgs, maxRunes)
 	}
 

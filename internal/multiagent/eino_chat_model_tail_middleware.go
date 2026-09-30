@@ -24,18 +24,19 @@ import (
 //  11. telemetry
 //  12. model-facing trace snapshot
 type einoChatModelTailConfig struct {
-	logger           *zap.Logger
-	phase            string
-	summarization    adk.ChatModelAgentMiddleware
-	modelName        string
-	maxTotalTokens   int
-	toolMaxBytes     int
-	conversationID   string
-	trace            *modelFacingTraceHolder
-	middlewareConfig *config.MultiAgentEinoMiddlewareConfig
-	skipOrphanPruner bool
-	skipTelemetry    bool
-	skipTrace        bool
+	logger              *zap.Logger
+	phase               string
+	summarization       adk.ChatModelAgentMiddleware
+	modelName           string
+	maxTotalTokens      int
+	outputReserveTokens int
+	toolMaxBytes        int
+	conversationID      string
+	trace               *modelFacingTraceHolder
+	middlewareConfig    *config.MultiAgentEinoMiddlewareConfig
+	skipOrphanPruner    bool
+	skipTelemetry       bool
+	skipTrace           bool
 }
 
 func appendEinoChatModelTailMiddlewares(handlers []adk.ChatModelAgentMiddleware, cfg einoChatModelTailConfig) []adk.ChatModelAgentMiddleware {
@@ -48,7 +49,7 @@ func appendEinoChatModelTailMiddlewares(handlers []adk.ChatModelAgentMiddleware,
 		handlers = append(handlers, newToolPairReconcilerMiddleware(cfg.logger, cfg.phase+"_pre_summarization"))
 		handlers = append(handlers, cfg.summarization)
 	}
-	handlers = append(handlers, newModelInputSoftBudgetMiddleware(cfg.maxTotalTokens, cfg.toolMaxBytes, cfg.modelName, cfg.logger, cfg.phase))
+	handlers = append(handlers, newModelInputSoftBudgetMiddleware(cfg.maxTotalTokens, cfg.toolMaxBytes, cfg.modelName, cfg.logger, cfg.phase, cfg.outputReserveTokens))
 	handlers = append(handlers, newToolCallArgumentsSanitizerMiddleware(cfg.logger, cfg.phase))
 	handlers = append(handlers, newToolPairReconcilerMiddleware(cfg.logger, cfg.phase))
 	if !cfg.skipOrphanPruner {

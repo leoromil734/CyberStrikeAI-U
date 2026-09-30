@@ -159,15 +159,16 @@ func RunEinoSingleChatModelAgent(
 		handlers = append(handlers, einoSkillMW)
 	}
 	handlers = appendEinoChatModelTailMiddlewares(handlers, einoChatModelTailConfig{
-		logger:           logger,
-		phase:            "eino_single",
-		summarization:    mainSumMw,
-		modelName:        appCfg.OpenAI.Model,
-		maxTotalTokens:   appCfg.OpenAI.MaxTotalTokens,
-		toolMaxBytes:     toolMaxBytesFromMW(&ma.EinoMiddleware),
-		conversationID:   conversationID,
-		trace:            modelFacingTrace,
-		middlewareConfig: &ma.EinoMiddleware,
+		logger:              logger,
+		phase:               "eino_single",
+		summarization:       mainSumMw,
+		modelName:           appCfg.OpenAI.Model,
+		maxTotalTokens:      appCfg.OpenAI.MaxTotalTokens,
+		outputReserveTokens: appCfg.OpenAI.MaxCompletionTokensEffective(),
+		toolMaxBytes:        toolMaxBytesFromMW(&ma.EinoMiddleware),
+		conversationID:      conversationID,
+		trace:               modelFacingTrace,
+		middlewareConfig:    &ma.EinoMiddleware,
 	})
 
 	maxIter := agentMaxIterations(appCfg)
