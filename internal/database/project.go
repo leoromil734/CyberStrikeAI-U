@@ -426,16 +426,29 @@ func mergeFactBodyOnUpdate(incoming, existing string) string {
 	return incoming
 }
 
+// ProjectFactPatchFields 标记可选零值字段是否提交；false 表示更新时保留旧值。
+// category/confidence/body 的空值更新始终保留旧值。
+type ProjectFactPatchFields struct {
+	PinnedSet                 bool
+	RelatedVulnerabilityIDSet bool
+}
+
 // UpsertProjectFact 创建或更新事实（按 project_id + fact_key）。
+// 保留全量调用的兼容行为：Pinned=false 和空 RelatedVulnerabilityID 会覆盖旧值。
+// 需要区分省略与明确提交零值的调用方应使用 UpsertProjectFactPatch。
 func (db *DB) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
+	return db.upsertProjectFact(f, nil)
+}
+
+// UpsertProjectFactPatch 创建或部分更新事实，按 fields 区分省略与明确提交零值。
+// 创建时 category/confidence 为空才使用默认值，其他字段直接使用 f 的值。
+func (db *DB) UpsertProjectFactPatch(f *ProjectFact, fields ProjectFactPatchFields) (*ProjectFact, error) {
+	return db.upsertProjectFact(f, &fields)
+}
+
+func (db *DB) upsertProjectFact(f *ProjectFact, fields *ProjectFactPatchFields) (*ProjectFact, error) {
 	if err := ValidateFactKey(f.FactKey); err != nil {
 		return nil, err
-	}
-	if strings.TrimSpace(f.Category) == "" {
-		f.Category = "note"
-	}
-	if strings.TrimSpace(f.Confidence) == "" {
-		f.Confidence = "tentative"
 	}
 	now := time.Now()
 
@@ -450,6 +463,14 @@ func (db *DB) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 		}
 		if strings.TrimSpace(f.Confidence) == "" {
 			f.Confidence = existing.Confidence
+		}
+		if fields != nil {
+			if !fields.PinnedSet {
+				f.Pinned = existing.Pinned
+			}
+			if !fields.RelatedVulnerabilityIDSet {
+				f.RelatedVulnerabilityID = existing.RelatedVulnerabilityID
+			}
 		}
 		_, err = db.Exec(
 			`UPDATE project_facts SET category = ?, summary = ?, body = ?, confidence = ?,
@@ -467,6 +488,12 @@ func (db *DB) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 		return f, nil
 	}
 
+	if strings.TrimSpace(f.Category) == "" {
+		f.Category = "note"
+	}
+	if strings.TrimSpace(f.Confidence) == "" {
+		f.Confidence = "tentative"
+	}
 	if f.ID == "" {
 		f.ID = uuid.New().String()
 	}

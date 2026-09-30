@@ -14,6 +14,8 @@ func TestShouldAutoContinueAfterFinalizationReasons(t *testing.T) {
 		attempt int
 		want    bool
 	}{
+		{"缺覆盖证据", agentfinalizer.Decision{CompletionReason: agentfinalizer.ReasonCoverageIncomplete, Status: agentfinalizer.StatusInProgress}, 0, true},
+		{"覆盖续跑有界", agentfinalizer.Decision{CompletionReason: agentfinalizer.ReasonCoverageIncomplete}, finalizationAutoContinueMaxAttempts, false},
 		{"缺执行证据", agentfinalizer.Decision{CompletionReason: agentfinalizer.ReasonMissingEvidence}, 0, true},
 		{"有工具执行未结束", agentfinalizer.Decision{CompletionReason: agentfinalizer.ReasonPendingTools, Status: agentfinalizer.StatusInProgress}, 0, true},
 		{"候选没说完", agentfinalizer.Decision{CompletionReason: agentfinalizer.ReasonIncompleteCandidate, Status: agentfinalizer.StatusInProgress}, 0, true},

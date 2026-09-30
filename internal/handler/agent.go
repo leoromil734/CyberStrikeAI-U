@@ -356,6 +356,10 @@ type ChatFinalizationRequest struct {
 	// RequireExecutionEvidence 为 true 时，本轮必须存在至少一条 completed 的工具执行记录，
 	// 否则最终回复被阻断为 blocked / missing_execution_evidence。
 	RequireExecutionEvidence *bool `json:"requireExecutionEvidence,omitempty"`
+	// RequireCoverageEvidence checks a schema-v2 project assessment ledger even
+	// before a manifest is written. A manifest written in the current assistant
+	// turn also activates checking; ordinary questions remain compatible.
+	RequireCoverageEvidence *bool `json:"requireCoverageEvidence,omitempty"`
 }
 
 func (h *AgentHandler) configForAIChannel(channelID string) (*config.Config, string, error) {
@@ -2583,6 +2587,7 @@ func (h *AgentHandler) loadHistoryFromAgentTrace(conversationID string) ([]agent
 		}
 	}
 
+	agentMessages = h.restoreUserConstraintsAfterCompaction(conversationID, messagesArray, agentMessages)
 	if len(agentMessages) == 0 {
 		return nil, fmt.Errorf("从代理轨迹解析的消息为空")
 	}

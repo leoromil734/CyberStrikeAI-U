@@ -173,6 +173,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		result.AwaitingHITL,
 		"",
 		requestRequiresExecutionEvidence(req),
+		requestRequiresCoverageEvidence(req),
 	)
 	payload := map[string]interface{}{
 		"workflowRunId": result.RunID,
@@ -290,6 +291,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		result.AwaitingHITL,
 		"",
 		requestRequiresExecutionEvidence(req),
+		requestRequiresCoverageEvidence(req),
 	)
 	responseText := decision.FinalText
 	if !decision.Finalizable {

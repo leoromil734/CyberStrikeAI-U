@@ -278,7 +278,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
 				continue
 			}
-			finalizationDecision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), result, cumulativeMCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+			finalizationDecision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), result, cumulativeMCPExecutionIDs, requestRequiresExecutionEvidence(&req), requestRequiresCoverageEvidence(&req))
 			if h.tryAutoContinueAfterFinalization(taskCtx, conversationID, result, finalizationDecision, &finalizationAutoContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
 				timeoutCancel()
@@ -496,7 +496,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		if h.tryContinueOnEinoEmptyResponse(taskCtx, &h.config.MultiAgent.EinoMiddleware, prep.ConversationID, result, &emptyResponseContinueAttempt, &curHist, &curMsg, false, progressCallback) {
 			continue
 		}
-		decision = h.decideAgentRunForDeliveryWithPolicy(prep.ConversationID, prep.AssistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)), result, result.MCPExecutionIDs, requestRequiresExecutionEvidence(&req))
+		decision = h.decideAgentRunForDeliveryWithPolicy(prep.ConversationID, prep.AssistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)), result, result.MCPExecutionIDs, requestRequiresExecutionEvidence(&req), requestRequiresCoverageEvidence(&req))
 		if h.tryAutoContinueAfterFinalization(taskCtx, prep.ConversationID, result, decision, &finalizationAutoContinueAttempt, &curHist, &curMsg, progressCallback) {
 			continue
 		}

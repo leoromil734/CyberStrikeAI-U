@@ -30,13 +30,14 @@ const (
 	StatusCancelled    = "cancelled"
 	StatusAwaitingHITL = "awaiting_hitl"
 
-	ReasonVerified        = "verified"
-	ReasonPendingTools    = "pending_tool_executions"
-	ReasonEmptyResponse   = "empty_response"
-	ReasonAwaitingHITL    = "awaiting_hitl"
-	ReasonFailed          = "failed"
-	ReasonCancelled       = "cancelled"
-	ReasonMissingEvidence = "missing_execution_evidence"
+	ReasonVerified           = "verified"
+	ReasonPendingTools       = "pending_tool_executions"
+	ReasonEmptyResponse      = "empty_response"
+	ReasonAwaitingHITL       = "awaiting_hitl"
+	ReasonFailed             = "failed"
+	ReasonCancelled          = "cancelled"
+	ReasonMissingEvidence    = "missing_execution_evidence"
+	ReasonCoverageIncomplete = "coverage_incomplete"
 	// ReasonIncompleteCandidate 候选文本是「没说完」的半截话（下一步叙述或缺少句末标点）。
 	// 与空回复不同：文本非空但明显不是结论，转自动续跑而不是直接交付。
 	ReasonIncompleteCandidate = "incomplete_candidate_response"
@@ -76,6 +77,7 @@ type Input struct {
 	CompletionReason         string
 	AwaitingHITL             bool
 	RequireExecutionEvidence bool
+	RequireCoverageEvidence  bool
 }
 
 // FromRunResult 依据 RunResult 做判定，并把终态字段回填到 result，便于统一读写。
@@ -192,6 +194,16 @@ func Decide(db *database.DB, in Input) Decision {
 		d.MissingChecks = append(d.MissingChecks, "execution evidence is required but no completed tool execution was recorded")
 		return d
 	}
+
+	coverage := coverageForDelivery(db, in)
+	if coverage.Active && len(coverage.Missing) > 0 {
+		d.Status = StatusInProgress
+		d.CompletionReason = ReasonCoverageIncomplete
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, coverage.Missing...)
+		return d
+	}
+	d.EvidenceRefs = append(d.EvidenceRefs, coverage.EvidenceRefs...)
 
 	d.Finalizable = true
 	d.Finalized = true

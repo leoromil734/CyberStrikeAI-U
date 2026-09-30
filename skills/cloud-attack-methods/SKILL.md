@@ -5,7 +5,7 @@ description: >-
   EKS / AKS / GKE / 无服务器 / MinIO / 阿里云 FC / pacu / prowler / scout-suite /
   kube-hunter / kube-bench / trivy / checkov / terrascan。用户说「测云」「元数据」
   「S3 公开」「K8s」「AssumeRole」「云渗透」「容器逃逸」「IAM」时加载。
-allowed-tools: pacu prowler scout-suite cloudmapper kube-hunter kube-bench trivy checkov terrascan clair falco nuclei httpx http-framework-test interactsh dnslog exec record_vulnerability list_vulnerabilities upsert_project_fact
+allowed-tools: pacu prowler scout-suite cloudmapper kube-hunter kube-bench trivy checkov terrascan clair falco nuclei httpx http-framework-test interactsh-client dnslog exec record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags: [渗透测试, penetration-testing, 红队, cloud]
   source_augment: Hi-FullHouse/CyberSecurity-Skills
@@ -29,7 +29,7 @@ metadata:
 | 多云配置审计 | `prowler` / `scout-suite` | `checkov`/`terrascan`(IaC) | 配置 ≠ 已利用 |
 | 镜像/供应链 | `trivy` / `clair` | — | tentative CVE |
 | K8s 攻击面 | `kube-hunter` | `kube-bench`、`falco` | 集群网络授权内 |
-| 元数据/SSRF | `http-framework-test` / `httpx` | `interactsh`/`dnslog` | 169.254.169.254 等 |
+| 元数据/SSRF | `http-framework-test` / `httpx` | `interactsh-client`/`dnslog` | 169.254.169.254 等 |
 | 通用线索 | `nuclei` | `exec`+厂商 CLI | 命中后手工复现 |
 | 落库 | `record_vulnerability` | `upsert_project_fact` | 未利用成功的暴露面用 fact |
 

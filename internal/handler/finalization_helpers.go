@@ -31,6 +31,7 @@ func (h *AgentHandler) finalizeAgentRunForDeliveryWithPolicy(
 	mcpExecutionIDs []string,
 	reasoningContent string,
 	requireExecutionEvidence bool,
+	requireCoverageEvidence ...bool,
 ) agentfinalizer.Decision {
 	decision := agentfinalizer.FromRunResult(h.db, result, agentfinalizer.Input{
 		ConversationID:           conversationID,
@@ -38,6 +39,7 @@ func (h *AgentHandler) finalizeAgentRunForDeliveryWithPolicy(
 		AgentMode:                agentMode,
 		MCPExecutionIDs:          mcpExecutionIDs,
 		RequireExecutionEvidence: requireExecutionEvidence,
+		RequireCoverageEvidence:  firstPolicyFlag(requireCoverageEvidence),
 	})
 	h.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, mcpExecutionIDs, reasoningContent, decision)
 	return decision
@@ -51,6 +53,7 @@ func (h *AgentHandler) decideAgentRunForDeliveryWithPolicy(
 	result *multiagent.RunResult,
 	mcpExecutionIDs []string,
 	requireExecutionEvidence bool,
+	requireCoverageEvidence ...bool,
 ) agentfinalizer.Decision {
 	return agentfinalizer.FromRunResult(h.db, result, agentfinalizer.Input{
 		ConversationID:           conversationID,
@@ -58,6 +61,7 @@ func (h *AgentHandler) decideAgentRunForDeliveryWithPolicy(
 		AgentMode:                agentMode,
 		MCPExecutionIDs:          mcpExecutionIDs,
 		RequireExecutionEvidence: requireExecutionEvidence,
+		RequireCoverageEvidence:  firstPolicyFlag(requireCoverageEvidence),
 	})
 }
 
@@ -121,6 +125,7 @@ func (h *AgentHandler) finalizeCandidateForDeliveryWithPolicy(
 	awaitingHITL bool,
 	reasoningContent string,
 	requireExecutionEvidence bool,
+	requireCoverageEvidence ...bool,
 ) agentfinalizer.Decision {
 	decision := agentfinalizer.Decide(h.db, agentfinalizer.Input{
 		Response:                 response,
@@ -130,6 +135,7 @@ func (h *AgentHandler) finalizeCandidateForDeliveryWithPolicy(
 		MCPExecutionIDs:          mcpExecutionIDs,
 		AwaitingHITL:             awaitingHITL,
 		RequireExecutionEvidence: requireExecutionEvidence,
+		RequireCoverageEvidence:  firstPolicyFlag(requireCoverageEvidence),
 	})
 	if assistantMessageID == "" || h.db == nil {
 		return decision
@@ -173,4 +179,12 @@ func finalizationResponsePayload(d agentfinalizer.Decision, extra map[string]int
 
 func requestRequiresExecutionEvidence(req *ChatRequest) bool {
 	return req != nil && req.Finalization.RequireExecutionEvidence != nil && *req.Finalization.RequireExecutionEvidence
+}
+
+func firstPolicyFlag(flags []bool) bool {
+	return len(flags) > 0 && flags[0]
+}
+
+func requestRequiresCoverageEvidence(req *ChatRequest) bool {
+	return req != nil && req.Finalization.RequireCoverageEvidence != nil && *req.Finalization.RequireCoverageEvidence
 }

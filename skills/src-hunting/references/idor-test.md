@@ -1,4 +1,4 @@
-> 写不写只认 `rules/vuln-report-format.md`。进站有会话时最低探针见 `dig-scope` §4.2.3（对象图、换 id、哨兵值）；单号用列表/回包里的他人 id，不为第二号磨注册。默认先用读/列表差分证明跨用户·跨租户。写越权仍要测，但**不是**对着别人已有数据改/删。顺序见下「写越权怎么打」。禁止批量改删、禁止真资损。
+> 写不写只认 `rules/vuln-report-format.md`。进站有会话时最低探针见 `dig-scope` §4.2.3（对象图、换 id、哨兵值）；单号先按 `dig-scope` §4.1.0 低成本准备受控 A/B；挑战或预算阻断时继续有归属证据的只读列表/回包差分，仅依赖第二身份的单元记 blocked，不记安全/否定/N/A，不磨注册。默认先用读/列表差分证明跨用户·跨租户。写越权仍要测，但**不是**对着别人已有数据改/删。顺序见下「写越权怎么打」。禁止批量改删、禁止真资损。
 > 短表指针用标题搜。英文 BOLA 百科已砍；写越权怎么打仍在上半。
 
 ## 一、原有知识库
@@ -43,11 +43,11 @@ URL 参数:    ?userId=12345&orderId=ABC
 - 响应包含他人的手机号、邮箱、真实姓名、身份证
 - 修改类接口: `update`, `edit`, `delete`, `change`
 
-### Step 2: 对象 id（有两号更好，没有也不磨注册）
+### Step 2: 对象 id（先按预算正常准备 A/B）
 
 ```
-有对照号：账号 A 登录拿 token，账号 B 的资源 ID 做对照。
-单号 / 没号：用列表、回包、邻号、`0`/`-1`/空当他人 id（`dig-scope` §4.2.3）。禁止为凑第二号去磨注册。
+有对照号：账号 A 登录拿 token，受控账号 B 的自有资源 ID 做对照。
+单号：先按 dig-scope §4.1.0 正常准备 B，不磨挑战或无限注册；受阻时列表/回包 id 只作有归属证据的范围内只读差分，不猜作 B。缺第二身份仅对应单元 blocked，不记安全/否定/N/A。
 ```
 
 ### Step 3: 替换标识符测试
@@ -538,7 +538,7 @@ userId=12345         → userId=%31%32%33%34%35（URL编码）
 ## 12. QUICK IDOR CHECKLIST
 
 ```
-□ 有对照号更好；单号用列表/回包/邻号，不为第二号磨注册
+□ 先按 dig-scope §4.1.0 正常准备受控 A/B；缺号仅对应单元 blocked，不记安全/否定/N/A，不磨挑战
 □ Map all API calls that contain object IDs (Burp History export filter)
 □ Test all HTTP verbs on each endpoint（写：先 POST 添加，再删自己加的那条；勿删别人已有对象）
 □ Test ID in all locations: path, body, header, query, cookie

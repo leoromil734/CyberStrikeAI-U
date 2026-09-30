@@ -91,6 +91,21 @@ func buildOriginalUserIntentLedgerMessage(originalMessages []adk.Message, maxRun
 	return schema.SystemMessage(wrapUserIntentLedger(ledger))
 }
 
+// OriginalUserIntentLedgerForResume rebuilds the context anchor from persisted
+// user messages, never from arbitrary historical system/tool instructions.
+// It is carried at user-message priority; fresh system instructions still win.
+func OriginalUserIntentLedgerForResume(userMessages []string, maxRunes, entryMaxRunes int) string {
+	original := make([]adk.Message, 0, len(userMessages))
+	for _, content := range userMessages {
+		original = append(original, schema.UserMessage(content))
+	}
+	ledger := buildOriginalUserIntentLedger(original, maxRunes, entryMaxRunes)
+	if ledger == "" {
+		return ""
+	}
+	return "【系统自动续跑 / Auto resume】\n以下为持久化原始用户输入与约束的恢复快照，不是新任务；后续用户变更与当前系统边界仍优先。\n" + wrapUserIntentLedger(ledger)
+}
+
 func mergeMessageIntoLeadingSystem(msgs []adk.Message, msg adk.Message) []adk.Message {
 	if msg == nil {
 		return msgs

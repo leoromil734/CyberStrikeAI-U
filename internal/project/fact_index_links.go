@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"cyberstrike-ai/internal/coverage"
 	"cyberstrike-ai/internal/database"
 )
 
@@ -216,6 +217,22 @@ func factIndexSortPriority(f *database.ProjectFact) int {
 	}
 	if strings.EqualFold(strings.TrimSpace(f.Confidence), "confirmed") {
 		score += 80
+	}
+	key := strings.ToLower(strings.TrimSpace(f.FactKey))
+	if strings.HasPrefix(key, "recon/") {
+		state := coverage.LedgerStatus(f.Body)
+		switch {
+		case strings.HasPrefix(key, "recon/phase/") && (state == "pending" || state == "active"):
+			score += 650
+		case strings.HasPrefix(key, "recon/assessment/") && state == "active":
+			score += 600
+		case strings.HasPrefix(key, "recon/risk/") && (state == "gap" || state == "tentative" || state == "waiting" || state == "active"):
+			score += 600
+		case strings.HasPrefix(key, "recon/js/") && (state == "queued" || state == "fetched" || state == "analyzed"):
+			score += 550
+		case strings.HasPrefix(key, "recon/endpoint/") && (state == "discovered" || state == "extracted" || state == "baselined" || state == "risk-mapped"):
+			score += 500
+		}
 	}
 	return score
 }

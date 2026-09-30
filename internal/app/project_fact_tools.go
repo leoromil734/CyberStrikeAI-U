@@ -7,6 +7,7 @@ import (
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/coverage"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
@@ -15,8 +16,15 @@ import (
 	"go.uber.org/zap"
 )
 
+func projectConversationID(ctx context.Context) string {
+	if id := strings.TrimSpace(agent.ConversationIDFromContext(ctx)); id != "" {
+		return id
+	}
+	return strings.TrimSpace(mcp.MCPConversationIDFromContext(ctx))
+}
+
 func projectIDFromConversation(db *database.DB, ctx context.Context) (string, error) {
-	convID := agent.ConversationIDFromContext(ctx)
+	convID := projectConversationID(ctx)
 	if convID == "" {
 		return "", fmt.Errorf("无法确定当前对话，请在对话上下文中使用项目事实工具")
 	}
@@ -64,7 +72,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				},
 				"category": map[string]interface{}{
 					"type":        "string",
-					"description": "target | auth | infra | business | recon | finding | chain | exploit | poc | note",
+					"description": "target | auth | infra | business | recon | finding | chain | exploit | poc | note；创建默认 note，更新时省略或留空保留原值",
 					"enum":        []string{"target", "auth", "infra", "business", "recon", "finding", "chain", "exploit", "poc", "note"},
 				},
 				"summary": map[string]interface{}{
@@ -74,21 +82,21 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				"body": map[string]interface{}{
 					"type": "string",
 					"description": "完整详情（仅 get_project_fact 返回）。发现/利用类须含攻击链与请求响应；" +
-						"recon/source 须含 status/raw/unique/incremental/error/alt_tried；recon/endpoint 须含 host/method/path/runtime_status 等。" +
+						"recon/source 须含 status/raw/unique/incremental/error/alt_tried；recon/endpoint 须含 host/method/path/runtime_status 等；body 带 endpoint_url/method/assessment_id 时自动生成稳定端点 key，以返回 fact_key 为准。" +
 						"更新已有 fact_key 时若省略或留空 body，将保留库中已有 body（可只改 summary）。",
 				},
 				"confidence": map[string]interface{}{
 					"type":        "string",
-					"description": "confirmed | tentative | deprecated",
+					"description": "confirmed | tentative | deprecated；创建默认 tentative，更新时省略或留空保留原值",
 					"enum":        []string{"confirmed", "tentative", "deprecated"},
 				},
 				"pinned": map[string]interface{}{
 					"type":        "boolean",
-					"description": "是否优先出现在黑板索引",
+					"description": "是否优先出现在黑板索引；更新时省略保留原值，明确 false 取消置顶",
 				},
 				"related_vulnerability_id": map[string]interface{}{
 					"type":        "string",
-					"description": "可选：关联的漏洞记录 ID",
+					"description": "可选：关联的漏洞记录 ID；更新时省略保留原值，传空字符串清空关联",
 				},
 				"links": map[string]interface{}{
 					"type":        "array",
@@ -130,6 +138,11 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if len([]rune(summary)) > cfg.Project.FactSummaryMaxRunesEffective() {
 			return textResult(fmt.Sprintf("错误: summary 过长（最多 %d 字）", cfg.Project.FactSummaryMaxRunesEffective()), true), nil
 		}
+		canonicalKey, err := coverage.CanonicalEndpointFactKey(factKey, strArg(args, "body"))
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		factKey = canonicalKey
 		f := &database.ProjectFact{
 			ProjectID:              projectID,
 			FactKey:                factKey,
@@ -140,10 +153,15 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			Pinned:                 boolArg(args, "pinned"),
 			RelatedVulnerabilityID: strArg(args, "related_vulnerability_id"),
 		}
-		if convID := agent.ConversationIDFromContext(ctx); convID != "" {
+		if convID := projectConversationID(ctx); convID != "" {
 			f.SourceConversationID = convID
 		}
-		created, err := db.UpsertProjectFact(f)
+		_, pinnedSet := args["pinned"]
+		_, relatedVulnerabilityIDSet := args["related_vulnerability_id"]
+		created, err := db.UpsertProjectFactPatch(f, database.ProjectFactPatchFields{
+			PinnedSet:                 pinnedSet,
+			RelatedVulnerabilityIDSet: relatedVulnerabilityIDSet,
+		})
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -152,7 +170,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			if err != nil {
 				return textResult("错误: "+err.Error(), true), nil
 			}
-			convID := agent.ConversationIDFromContext(ctx)
+			convID := projectConversationID(ctx)
 			if err := project.PersistFactLinksFromParsed(db, projectID, created.FactKey, convID, linkInputs, true); err != nil {
 				return textResult("错误: 保存关系边失败: "+err.Error(), true), nil
 			}

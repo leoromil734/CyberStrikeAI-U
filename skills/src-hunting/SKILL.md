@@ -7,10 +7,10 @@ description: >-
   或提到 JS 逆向找接口、未授权、越权/IDOR/BOLA、认证绕过、业务逻辑、信息泄露、上传、
   SSRF、XSS、注入、WAF 绕过、代码审计、源码审计、0day 时，在已有 SRC/赏金/集团品牌
   语境下必须优先加载。进入 SRC 任务后，后续出现单个 Web/API 漏洞关键词仍继续使用本包
-  references，不切走通用领域 skill。提供锁面/自由跳一种子闭环、知识库信号路由、进站短表、
+  references，不切走通用领域 skill。先读 routing-index，再按现场信号选专题；提供锁面/自由跳一种子闭环、进站短表、
   价值矩阵、白盒流程和中文 SRC 报告。仅当任务明确是无 SRC 语境的通用单站 Web/API 或纯
   源码动态 PoC 时，分别使用 web-attack-methods、api-security-testing、source-aware-whitebox。
-allowed-tools: fofa_search httpx jsluice katana gau waybackurls sqlmap dalfox jwt-analyzer graphql-scanner http-framework-test interactsh dnslog nuclei arjun x8 ffuf exec record_vulnerability list_vulnerabilities upsert_project_fact get_project_fact list_project_facts
+allowed-tools: fofa_search httpx jsluice katana gau waybackurls sqlmap dalfox jwt-analyzer graphql-scanner http-framework-test interactsh-client dnslog nuclei arjun x8 ffuf exec record_vulnerability list_vulnerabilities upsert_project_fact get_project_fact list_project_facts
 metadata:
   tags:
     - penetration-testing
@@ -63,7 +63,7 @@ metadata:
 |---|---|---|
 | 测绘/存活 | `fofa_search` / `httpx` | 外部 `get_alerts` |
 | JS/API | `jsluice` | `katana`、`gau` |
-| SQLi/XSS/OOB | `sqlmap` / `dalfox` / `interactsh` | 手工、`dnslog` |
+| SQLi/XSS/OOB | `sqlmap` / `dalfox` / `interactsh-client` | 手工、`dnslog` |
 | 落库 | `list_vulnerabilities` → `record_vulnerability` | `upsert_project_fact` |
 
 平台通用字段可叠加 `pentest-blackboard` / `pentest-output-standards`，**SRC 正式稿仍只认 vuln-report-format**。

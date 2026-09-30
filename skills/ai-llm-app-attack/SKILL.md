@@ -4,7 +4,7 @@ description: >-
   AI/LLM 安全 / 提示注入 / Prompt Injection / Agent 工具滥用 / RAG 投毒 /
   MCP 供应链 / 大模型红队 / 输出越权 / 幻觉利用 / 系统提示泄露。用户说「测 LLM」
   「提示注入」「Agent 安全」「RAG」「大模型」「AI 应用」时加载。
-allowed-tools: httpx http-framework-test interactsh dnslog nuclei exec execute-python-script record_vulnerability list_vulnerabilities upsert_project_fact
+allowed-tools: httpx http-framework-test interactsh-client dnslog nuclei exec execute-python-script record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags: [渗透测试, penetration-testing, 红队, llm]
   source_augment: Hi-FullHouse/CyberSecurity-Skills
@@ -21,7 +21,7 @@ metadata:
 | 场景 | 优先工具 | 备选 | 备注 |
 | --- | --- | --- | --- |
 | 对话/Agent HTTP 接口 | `http-framework-test` / `httpx` | `exec` | 固定 system/user 差分 |
-| 工具副作用验证 | `interactsh` / `dnslog` | 读文件/OOB | **实际副作用**才可 confirmed |
+| 工具副作用验证 | `interactsh-client` / `dnslog` | 读文件/OOB | **实际副作用**才可 confirmed |
 | 脚本化投毒/批量提示 | `execute-python-script` | `exec` | 间接注入载荷生成 |
 | 暴露面线索 | `nuclei` | — | tentative |
 | 落库 | `record_vulnerability`（跨租户/工具越权+POC） | `upsert_project_fact` | 仅提示泄露可用 fact |

@@ -70,7 +70,7 @@ func modeLifecycleSection(mode PromptMode) string {
 func EvidenceLoopSection() string {
 	return `## 证据闭环
 
-按 Surface → Hypothesize → Verify → Record/Negate 推进。扫描、版本匹配和 nuclei 只入候选队列；队列非空时下一条必须验证队首，禁止再开一轮同类扫描。每个新 Web/API 入口先打有危害面：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传；适用项测完才算覆盖：去掉或替换身份后再请求、替换对象 ID、有差分面的参数探针、上传是否读到敏感文件或可执行、内网 URL、备份/swagger/.git/报错栈。只回「请登录」且没有业务字段的口不喷注入。未测不得写成已排除。可复现才 confirmed。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。同类方法连续三次无进展则换入口或风险族。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。低价值面见下一节，不在此覆盖要求内。`
+按 Surface → Hypothesize → Verify → Record/Negate 推进。扫描、版本匹配和 nuclei 只入候选队列；队列非空时下一条必须验证队首（就绪项）；waiting 身份/OOB/异步有界回看，不阻塞独立 ready 项。禁止再开一轮同类扫描。每个新 Web/API 入口先打有危害面：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传；适用项测完才算覆盖：去掉或替换身份后再请求、替换对象 ID、有差分面的参数探针、上传是否读到敏感文件或可执行、内网 URL、备份/swagger/.git/报错栈。只回「请登录」且没有业务字段的口不喷注入。未测不得写成已排除。可复现才 confirmed。负结果写条件与 Do-Not-Repeat，勿把“未发现”写成“不存在”。同类方法连续三次无进展则换入口或风险族。Do-Not-Repeat 只封闭已记录的入口+身份+方法+参数组合，不能据此跳过新资产、新身份、JS/API 或其他适用风险类别。低价值面见下一节，不在此覆盖要求内。`
 }
 
 // SkipLowValueSection 列出不测的低价值面，避免把时间花在没有实际危害的探针上。
@@ -107,6 +107,7 @@ func ComprehensiveAssessmentSection() string {
 	return `## 全面评估门禁
 
 用户要求“全面/完整/深度/包括品牌资产”时采用 deep，并维护 phase_ledger：全面侦察 → 资产分级 → JS/API 清单 → 匿名/认证态业务流 → 风险矩阵 → 缺口复核。Top-N 只决定顺序，不缩小授权范围。
+绑定项目时先读 pentest-blackboard/references/coverage-contract.md，写 recon/assessment/{id}（schema_version:2、mode:comprehensive）；阶段、资源、端点和风险单元均带 assessment_id，实时同步库存计数。不能只改报告或 phase 状态来通过检查。
 
 阶段仅为 pending、active、passed、blocked。passed 附覆盖与证据；blocked 附错误与替代路径。存在 pending/active 或可执行 gap 时只输出进度，禁止总结或声称全覆盖。
 

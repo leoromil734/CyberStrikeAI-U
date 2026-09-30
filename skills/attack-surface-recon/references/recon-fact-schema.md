@@ -10,9 +10,9 @@
 | `recon/phase/{phase}` | phase_ledger 阶段状态 | phase ∈ recon_sources, asset_ranking, frontend_api, auth_workflows, risk_matrix, gap_review |
 | `recon/asset/{asset_slug}` | 确认范围内资产 | 含价值分与归属置信度 |
 | `recon/js/{resource_slug}` | 前端资源队列项 | 状态 queued→fetched→analyzed→expanded |
-| `recon/endpoint/{host_slug}/{method}_{path_slug}` | 逐端点 API/入口 | 路径 slug 小写，`/`→`-`，过长截断 |
+| `recon/endpoint/{host_slug}/{endpoint_id}` | 逐端点 API/入口 | 方法前缀 + 完整 origin/method/大小写保真 path 的稳定摘要；不可小写或截断路径生成唯一标识 |
 
-`target_slug` / `host_slug`：小写主机或根域，去掉协议与端口特殊字符。
+`target_slug` / `host_slug` 只作可读前缀，不能代替唯一 origin；body 保留协议、主机与有效端口。绑定项目的全面任务以 `pentest-blackboard/references/coverage-contract.md` 的 v2 结构为准：先建 assessment manifest，本轮事实带 assessment_id，端点明确关联 risk_units；旧结构用于兼容笔记，不冒充 v2 覆盖。
 
 ## 2. `recon/source/*` body 必填字段
 

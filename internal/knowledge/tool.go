@@ -158,42 +158,13 @@ func RegisterKnowledgeTool(
 		// 格式化结果
 		var resultText strings.Builder
 
-		// 按余弦相似度（Score）降序
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Score > results[j].Score
-		})
+		// Retriever.Search has already applied fusion/reranking. Preserve that
+		// order: the original vector Score is not the final relevance rank.
 
-		// 按文档分组结果，以便更好地展示上下文
-		type itemGroup struct {
-			itemID   string
-			results  []*RetrievalResult
-			maxScore float64 // 该文档块的最高相似度
-		}
-		itemGroups := make([]*itemGroup, 0)
-		itemMap := make(map[string]*itemGroup)
+		// 按文档分组，保留最终检索顺序中的首次出现位置。
+		itemGroups := groupKnowledgeResultsInOrder(results)
 
-		for _, result := range results {
-			itemID := result.Item.ID
-			group, exists := itemMap[itemID]
-			if !exists {
-				group = &itemGroup{
-					itemID:   itemID,
-					results:  make([]*RetrievalResult, 0),
-					maxScore: result.Score,
-				}
-				itemMap[itemID] = group
-				itemGroups = append(itemGroups, group)
-			}
-			group.results = append(group.results, result)
-			if result.Score > group.maxScore {
-				group.maxScore = result.Score
-			}
-		}
-
-		// 按文档内最高相似度排序
-		sort.Slice(itemGroups, func(i, j int) bool {
-			return itemGroups[i].maxScore > itemGroups[j].maxScore
-		})
+		// Groups retain the first occurrence in the final retrieval order.
 
 		// 收集检索到的知识项ID（用于日志）
 		retrievedItemIDs := make([]string, 0, len(itemGroups))
@@ -203,14 +174,7 @@ func RegisterKnowledgeTool(
 		resultIndex := 1
 		for _, group := range itemGroups {
 			itemResults := group.results
-			mainResult := itemResults[0]
-			maxScore := mainResult.Score
-			for _, result := range itemResults {
-				if result.Score > maxScore {
-					maxScore = result.Score
-					mainResult = result
-				}
-			}
+			mainResult := itemResults[0] // First is the highest final-rank match in this document.
 
 			// 按chunk_index排序，保证阅读的逻辑顺序（文档的原始顺序）
 			sort.Slice(itemResults, func(i, j int) bool {

@@ -8,7 +8,7 @@ description: >-
   「BOLA」「BFLA」「Swagger」时加载。出现 SRC、漏洞赏金、挖集团/品牌、白帽或中文
   SRC 报告上下文时优先 `src-hunting`，本 skill 主动让路；不是通用 Web 注入清单；
   缺少可达基线时不得宣称接口安全。
-allowed-tools: httpx http-framework-test api-schema-analyzer graphql-scanner jwt-analyzer arjun x8 ffuf katana jsluice interactsh dnslog nuclei sqlmap exec record_vulnerability list_vulnerabilities upsert_project_fact
+allowed-tools: httpx http-framework-test api-schema-analyzer graphql-scanner jwt-analyzer arjun x8 ffuf katana jsluice interactsh-client dnslog nuclei sqlmap exec record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags:
     - penetration-testing
@@ -41,7 +41,7 @@ API 测试优先建立「端点 × 身份 × 对象归属 × 动作」差分矩�
 
 1. 可达基线：协议、base URL、版本、认证、Content-Type、标准客户端响应。
 2. 端点表：方法、对象 ID、角色、副作用、敏感度；JS 路由必须展开到逐端点。
-3. 允许时最少测试账号 + 双主体差分。
+3. 允许时按 `pentest-scan-deep` §4 的低成本预算建立受控 A/B；挑战、费用或人工审批即停止身份线，保护用户现有账户，不磨注册。缺少第二身份只阻断对应双主体单元，不记安全/否定/N/A，继续独立可达单元。
 4. 一次只改身份 / 对象 ID / 字段 / 状态之一。
 5. 比较数据、字段、副作用与后续 GET，不单靠状态码。
 6. 正负结果都记适用身份与请求摘要；记录漏洞须完整 POC + `validation`。
@@ -56,7 +56,7 @@ API 测试优先建立「端点 × 身份 × 对象归属 × 动作」差分矩�
 | JWT | `jwt-analyzer` | — |
 | 隐藏参数 | `arjun` / `x8` | `ffuf` |
 | 端点发现 | `jsluice` / `katana` | — |
-| OOB | `interactsh` / `dnslog` | — |
+| OOB | `interactsh-client` / `dnslog` | — |
 | 线索 | `nuclei` | `sqlmap`（适用时） |
 | 落库 | `list_vulnerabilities` → `record_vulnerability` | `upsert_project_fact` |
 

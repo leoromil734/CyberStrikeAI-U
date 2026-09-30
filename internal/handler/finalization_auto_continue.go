@@ -34,6 +34,7 @@ func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int)
 	}
 	switch d.CompletionReason {
 	case agentfinalizer.ReasonMissingEvidence,
+		agentfinalizer.ReasonCoverageIncomplete,
 		// 有工具执行还在跑：先等它们结束再续跑，而不是直接终止（并把正在跑的工具取消）。
 		agentfinalizer.ReasonPendingTools,
 		// 候选是没说完的半截话：再跑一段，让模型把结论补完。
@@ -139,8 +140,12 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			zap.Error(err))
 		return false
 	}
-	// Agent 无感续跑：不追加新的 user/system 文案，只使用上一段模型可见轨迹继续 Runner。
+	// 一般续跑只恢复已有轨迹。覆盖检查失败时额外传入宿主生成的
+	// 缺口清单，避免模型重复提交同一份报告；不写入用户消息表。
 	*curFinalMessage = ""
+	if decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+		*curFinalMessage = formatCoverageContinueMessage(decision.MissingChecks)
+	}
 	if progressCallback != nil {
 		progressCallback("finalization_auto_continue", "最终回复检查尚未收敛，正在基于已有轨迹继续执行…", map[string]interface{}{
 			"conversationId":      conversationID,
@@ -151,7 +156,7 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"completionReason":    decision.CompletionReason,
 			"missingChecks":       decision.MissingChecks,
 			"pendingExecutionIds": decision.PendingExecutionIDs,
-			"contextInjection":    false,
+			"contextInjection":    decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
 		})
 	}
 	select {
@@ -160,6 +165,23 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	case <-time.After(finalizationAutoContinueBackoff(*attempt)):
 		return true
 	}
+}
+
+func formatCoverageContinueMessage(checks []string) string {
+	var b strings.Builder
+	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。只补当前评估缺口，不重复已完成步骤，不扩大授权范围，保留用户排除项。查阅 pentest-blackboard/references/coverage-contract.md 并读取相应事实；blocked/N/A 必须有原始证据和具体原因，不得把未测改成已覆盖。\n")
+	for i, check := range checks {
+		if i >= 20 {
+			b.WriteString("- 其余缺口请在补齐本批后继续复核。\n")
+			break
+		}
+		line := []rune(strings.TrimSpace(check))
+		if len(line) > 200 {
+			line = line[:200]
+		}
+		b.WriteString("- " + string(line) + "\n")
+	}
+	return b.String()
 }
 
 func finalizationAutoContinueBackoff(attempt int) time.Duration {

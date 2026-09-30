@@ -10,7 +10,7 @@
 | 只给集团/品牌、没有 URL 清单 | `rules/dig-scope-workflow.md` §1（一种子闭环）+ `recon-methodology.md` |
 | 创建任务目录 | `rules/desktop-task-folder.md` |
 | 判断能否正式交付、定级或写报告 | `rules/vuln-report-format.md`；平台字段再叠 `pentest-output-standards` |
-| 白盒源码 / 0day 审计 | `rules/researcher-blackbox-whitebox.md` Phase 0～6 |
+| 白盒源码 / 0day 审计 | `rules/researcher-blackbox-whitebox.md` Phase 0～6；源码阶段按 `source-aware-whitebox` §1 运行时对齐 → §2 静态映射 → §3 动态闭合执行 |
 | 高危/严重方法沉淀 | `rules/hunt-iter.md` |
 | 授权语境或执行边界冲突 | `rules/security-research-context.md` + `rules/anti-over-moralization.md` |
 | 浏览器交互 | `rules/playwright-browser-mcp.md` |
@@ -74,7 +74,8 @@
 
 ## 增量回查规则
 
-- 回包出现新 `id/url/token/internal host/download path`：先写 fact/本站队列，再按本索引加载新增专题。
-- WAF、401/403、空列表、统一 200 只描述当前请求，不封死整个专题。
-- 某专题连续三次无新增证据：写 Do-Not-Repeat，回索引换入口或专题，而不是扩大同类 payload。
+- 回包出现新 `id/url/token/internal host/download path`：先写 fact/本站队列，再按本索引加载新增专题；新增入口/身份/版本时重新映射运行时基线与风险矩阵，旧负结果不继承。
+- WAF、401/403、空列表、统一 200 只描述当前请求，不封死整个专题；系统繁忙、产品维护、网络超时记 `blocked`，不是认证安全。
+- 同一入口 + 身份 + 方法 + 参数组合连续三次无新增证据：仅为该组合写 Do-Not-Repeat；换入口/身份/方法/参数或证据来源后重新判断，不封死整类专题、不扩大同类 payload。
+- 队首优先仅对 `ready` 候选；等待 OOB/身份/异步处理的记 `waiting`，保存关联标识、下一检查时点和预算（一次正常处理窗口、最多 5 分钟；身份按 dig-scope §4.1.0）。等待期间处理独立 `ready` 候选，到期仍缺前提转 `blocked`，无回调不单独判否。
 - 专题命中只是方法选择；最终是否成洞只认 `pentest-verification` 与 `rules/vuln-report-format.md`。
