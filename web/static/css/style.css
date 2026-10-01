@@ -3245,8 +3245,18 @@ html[data-theme="dark"] .new-chat-btn:focus-visible {
     line-height: 1.3;
 }
 
-/* 对话列表：该对话使用的 AI 模型标签（数据来自 conversation_ai_channels 表） */
-.conversation-item-model-badge {
+/* 对话列表：最近运行的模型与渠道，过长标签省略并可悬停查看。 */
+.conversation-item-ai-metadata {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px 4px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.conversation-item-model-badge,
+.conversation-item-channel-badge {
     display: inline-block;
     align-self: flex-start;
     max-width: 100%;
@@ -3261,6 +3271,11 @@ html[data-theme="dark"] .new-chat-btn:focus-visible {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.conversation-item-channel-badge {
+    color: var(--accent-color);
+    background: rgba(0, 102, 255, 0.08);
 }
 
 .conversations-list {
@@ -7898,6 +7913,21 @@ html[data-theme="dark"] .login-card .login-submit:disabled {
     font-weight: 600;
     letter-spacing: 0.02em;
     flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* 顶部执行栏——各任务实际使用的模型，与会话输入区当前选择无关。 */
+.active-task-model {
+    max-width: 220px;
+    min-width: 0;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 

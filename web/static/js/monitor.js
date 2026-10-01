@@ -5383,6 +5383,8 @@ function renderTaskItemIntoContainer(task, container, openActiveTaskConversation
     const taskDisplayName = getActiveTaskDisplayName(task);
     const stopTaskBtnText = _t('tasks.stopTask');
     const modeLabel = task.agentMode ? agentModeLabel(task.agentMode) : '';
+    const modelName = String(task.aiModel || task.ai_model || '').trim() || _t('chat.aiModelUnknown');
+    const modelTitle = `${_t('chat.aiModelLabel')}: ${modelName}`;
 
     if (task && task.conversationId) {
         item.dataset.conversationId = task.conversationId;
@@ -5392,6 +5394,7 @@ function renderTaskItemIntoContainer(task, container, openActiveTaskConversation
         <div class="active-task-info">
             <span class="active-task-status">${statusText}</span>
             ${modeLabel ? `<span class="active-task-mode">${escapeHtml(modeLabel)}</span>` : ''}
+            <span class="active-task-model" title="${escapeHtml(modelTitle)}">${escapeHtml(modelName)}</span>
             <span class="active-task-message">${escapeHtml(taskDisplayName)}</span>
         </div>
         <div class="active-task-actions">

@@ -892,7 +892,6 @@ function resolveChatAIChannelId(id) {
 
 function populateChatAIChannelSelect(ai) {
     const select = document.getElementById('chat-ai-channel-select');
-    if (!select) return;
     const cfg = ai && typeof ai === 'object' ? ai : {};
     chatAIChannels = cfg.channels && typeof cfg.channels === 'object' ? cfg.channels : {};
     chatAIChannelIdByNormalizedId = {};
@@ -903,6 +902,8 @@ function populateChatAIChannelSelect(ai) {
         }
     });
     chatDefaultAIChannel = resolveChatAIChannelId(cfg.default_channel || '');
+    refreshConversationAILabels();
+    if (!select) return;
     select.innerHTML = '';
     const fallbackOpt = document.createElement('option');
     fallbackOpt.value = '';
@@ -921,6 +922,61 @@ function populateChatAIChannelSelect(ai) {
     select.value = stored || '';
     refreshSessionSettingsSelects();
     updateChatReasoningSummary();
+}
+
+function conversationAIChannelLabel(conversation) {
+    const recordedName = String(conversation.aiChannelName || conversation.ai_channel_name || '').trim();
+    if (recordedName) return recordedName;
+    const recordedId = String(conversation.aiChannelId || conversation.ai_channel_id || '').trim();
+    if (!recordedId) return '';
+    const resolvedId = resolveChatAIChannelId(recordedId);
+    const channel = resolvedId ? chatAIChannels[resolvedId] : null;
+    // Deleted/unknown channels retain their recorded ID; never substitute the
+    // currently selected or default channel for another conversation.
+    return String(channel && channel.name || '').trim() || recordedId;
+}
+
+function updateConversationAIChannelBadge(badge) {
+    const channelName = conversationAIChannelLabel({
+        aiChannelId: badge.dataset.aiChannelId,
+        aiChannelName: badge.dataset.aiChannelName,
+    });
+    const label = typeof window.t === 'function' ? window.t('chat.aiChannelLabel') : 'AI 通道';
+    const unknown = typeof window.t === 'function' ? window.t('chat.aiChannelUnknown') : '渠道未记录';
+    badge.textContent = channelName || unknown;
+    badge.title = `${label}: ${channelName || unknown}`;
+}
+
+function refreshConversationAILabels() {
+    document.querySelectorAll('.conversation-item-channel-badge').forEach(updateConversationAIChannelBadge);
+    const modelLabel = typeof window.t === 'function' ? window.t('chat.aiModelLabel') : 'AI 模型';
+    document.querySelectorAll('.conversation-item-model-badge').forEach(function (badge) {
+        badge.title = `${modelLabel}: ${badge.textContent}`;
+    });
+}
+
+function appendConversationAIBadges(conversation, contentWrapper) {
+    const model = String(conversation.aiModel || conversation.ai_model || '').trim();
+    const channelId = String(conversation.aiChannelId || conversation.ai_channel_id || '').trim();
+    const channelName = String(conversation.aiChannelName || conversation.ai_channel_name || '').trim();
+    if (!model && !channelId && !channelName) return;
+    const metadata = document.createElement('div');
+    metadata.className = 'conversation-item-ai-metadata';
+    if (model) {
+        const modelBadge = document.createElement('div');
+        modelBadge.className = 'conversation-item-model-badge';
+        modelBadge.textContent = model;
+        const label = typeof window.t === 'function' ? window.t('chat.aiModelLabel') : 'AI 模型';
+        modelBadge.title = `${label}: ${model}`;
+        metadata.appendChild(modelBadge);
+    }
+    const channelBadge = document.createElement('div');
+    channelBadge.className = 'conversation-item-channel-badge';
+    channelBadge.dataset.aiChannelId = channelId;
+    channelBadge.dataset.aiChannelName = channelName;
+    updateConversationAIChannelBadge(channelBadge);
+    metadata.appendChild(channelBadge);
+    contentWrapper.appendChild(metadata);
 }
 
 function selectedChatAIChannelId() {
@@ -1185,6 +1241,7 @@ async function initChatAgentModeFromConfig() {
 }
 
 document.addEventListener('languagechange', function () {
+    refreshConversationAILabels();
     const hid = document.getElementById('agent-mode-select');
     if (!hid) return;
     const v = hid.value;
@@ -4911,14 +4968,7 @@ function createConversationListItem(conversation) {
     }
 
     // 该对话最近一次运行使用的 AI 模型（后端 conversation_ai_channels 表提供）
-    const conversationAIModel = (conversation.aiModel || conversation.ai_model || '').trim();
-    if (conversationAIModel) {
-        const modelBadge = document.createElement('div');
-        modelBadge.className = 'conversation-item-model-badge';
-        modelBadge.textContent = conversationAIModel;
-        modelBadge.title = `AI 模型: ${conversationAIModel}`;
-        contentWrapper.appendChild(modelBadge);
-    }
+    appendConversationAIBadges(conversation, contentWrapper);
 
     const time = document.createElement('div');
     time.className = 'conversation-time';
@@ -8968,14 +9018,7 @@ function createConversationListItemWithMenu(conversation, isPinned) {
     // 该对话最近一次运行使用的 AI 模型（后端 conversation_ai_channels 表提供）。
     // 注意：对话列表实际由本函数渲染；createConversationListItem 已无调用点（死代码），
     // 新增列表项元素必须加在这里，否则界面上不会出现。
-    const conversationAIModel = (conversation.aiModel || conversation.ai_model || '').trim();
-    if (conversationAIModel) {
-        const modelBadge = document.createElement('div');
-        modelBadge.className = 'conversation-item-model-badge';
-        modelBadge.textContent = conversationAIModel;
-        modelBadge.title = `AI 模型: ${conversationAIModel}`;
-        contentWrapper.appendChild(modelBadge);
-    }
+    appendConversationAIBadges(conversation, contentWrapper);
 
     const time = document.createElement('div');
     time.className = 'conversation-time';

@@ -1736,6 +1736,7 @@ func (h *AgentHandler) ListAgentTasks(c *gin.Context) {
 		return task != nil && h.agentConversationAllowed(c, task.ConversationID)
 	})
 	h.enrichAgentTasksWithConversationTitles(tasks)
+	attachAgentTaskAIModels(h.db, tasks)
 	c.JSON(http.StatusOK, gin.H{
 		"tasks": tasks,
 	})
