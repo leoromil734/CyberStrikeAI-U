@@ -1,0 +1,12 @@
+#page-experience-memory .knowledge-filters { flex-wrap: wrap; align-items: end; gap: 12px; }
+#page-experience-memory label { display: block; margin: 8px 0 4px; }
+#page-experience-memory input, #page-experience-memory select, #page-experience-memory textarea { max-width: 100%; }
+.experience-item { padding: 16px 0; border-bottom: 1px solid var(--border-color, #ddd); }
+.experience-item h3 { margin: 0 0 8px; font-size: 16px; }
+.experience-item p { margin: 8px 0; overflow-wrap: anywhere; }
+.experience-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 560px; overflow: auto; padding: 14px; background: var(--bg-secondary, #f5f5f5); }
+.experience-editor { display: block; width: 100%; min-height: 260px; margin: 10px 0; padding: 12px; font-family: monospace; resize: vertical; box-sizing: border-box; }
+.experience-review { padding: 18px 0; }
+#experience-review-note { display: block; width: 100%; margin: 10px 0; }
+#experience-pagination { padding: 14px 0; }
+#experience-detail[hidden] { display: none; }

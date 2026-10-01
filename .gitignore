@@ -29,6 +29,12 @@ coverage.html
 tmp/
 temp/
 
+# Node MCP dependencies and private proxy credentials
+node_modules/
+mcp-servers/shared/proxy.local.json
+mcp-servers/web-search/*.local.json
+.cursor/mcp.json
+
 # Python
 venv/
 .venv/

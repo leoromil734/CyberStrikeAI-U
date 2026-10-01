@@ -661,6 +661,12 @@ func (m *ExternalMCPManager) triggerToolListRefresh(name string, client External
 
 // updateToolCache 更新工具列表缓存与工具数量
 func (m *ExternalMCPManager) updateToolCache(name string, tools []Tool) {
+	if registry, ok := m.storage.(interface{ RegisterExperienceToolDefinition(Tool) }); ok {
+		for _, tool := range tools {
+			tool.Name = name + "::" + tool.Name
+			registry.RegisterExperienceToolDefinition(tool)
+		}
+	}
 	stored := cloneTools(tools)
 	m.toolCacheMu.Lock()
 	m.toolCache[name] = toolListCacheEntry{tools: stored, updatedAt: time.Now()}

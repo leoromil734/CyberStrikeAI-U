@@ -98,6 +98,22 @@ func FromRunResult(db *database.DB, result *multiagent.RunResult, in Input) Deci
 		}
 	}
 	d := Decide(db, in)
+	// Coverage-repair segments must not replace an already generated report
+	// with a short bookkeeping notice. Recover only after all current execution
+	// and coverage checks have passed; a report can never bypass those gates.
+	if result != nil && d.Finalizable {
+		if delivered, repairOnly := multiagent.FinalReportAfterCoverageRepair(d.FinalText, result.LastAgentTraceInput); delivered != d.FinalText {
+			d.FinalText = delivered
+			d.CandidateResponseLen = len([]rune(delivered))
+			result.Response = delivered
+			result.LastAgentTraceOutput = delivered
+		} else if repairOnly {
+			d.Finalizable, d.Finalized = false, false
+			d.Status, d.CompletionReason = StatusInProgress, ReasonIncompleteCandidate
+			d.EvidenceVerified = false
+			d.MissingChecks = append(d.MissingChecks, "internal coverage repair returned only a bookkeeping notice; a complete final report is still required")
+		}
+	}
 	if result != nil {
 		result.Finalized = d.Finalized
 		result.Status = d.Status

@@ -343,13 +343,30 @@ mcp:
 #       CLOAKBROWSER_MCP_OUTPUT_DIR: /opt/cloakbrowser-mcp/output
 #     external_mcp_enable: true
 external_mcp:
-  servers: {}
+  servers:
+    # 安装：在 mcp-servers/ 执行 npm ci；从项目根目录启动平台。
+    # 异地部署请将 args 改为 server.mjs 绝对路径；凭据只在 shared/proxy.local.json。
+    web-search:
+      type: stdio
+      command: node
+      args: [mcp-servers/web-search/server.mjs]
+      env:
+        WEB_SEARCH_MODE: request
+      timeout: 300
+      external_mcp_enable: true
+      description: "公开网页/漏洞情报检索与全局按需住宅代理池"
 # 内置 C2：本机仅做对话/知识库时可设为 false，不启动监听器、不注册 C2 MCP 工具；省略本段时默认启用
 c2:
   enabled: true
 # ============================================
-# 知识库相关配置
+# 知识库与跨任务经验配置
 # ============================================
+# 跨任务经验记忆（启动时生效）
+# 自动学习只产生私有候选，审核与共享需要独立 RBAC 权限；不修改模型权重。
+experience:
+  disabled: false
+  auto_learn_disabled: false
+
 knowledge:
   enabled: false # 是否启用知识检索功能
   base_path: knowledge_base # 知识库目录路径（相对于配置文件所在目录）

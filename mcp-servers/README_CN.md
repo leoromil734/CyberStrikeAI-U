@@ -10,6 +10,7 @@
 
 | 服务 | 说明 |
 |------|------|
+| [web-search](web-search/README_CN.md) | 多引擎公开网页/漏洞情报检索、网页正文与 GitHub README；项目全局按需住宅代理池，支持国家/sid 切换与独立租约。 |
 | [reverse_shell](reverse_shell/) | 反向 Shell：开启/停止监听、与已连接目标交互执行命令，完整交互流程。 |
 | [fofa_MCP](fofa_MCP/) | FOFA 资产搜索：主号/备用号遇 429 自动切换。 |
 

@@ -78,10 +78,11 @@ type ConfigHandler struct {
 	config                     *config.Config
 	mcpServer                  *mcp.Server
 	executor                   *security.Executor
-	agent                      AgentUpdater               // Agent接口，用于更新Agent配置
-	attackChainHandler         AttackChainUpdater         // 攻击链处理器接口，用于更新配置
-	externalMCPMgr             *mcp.ExternalMCPManager    // 外部MCP管理器
-	knowledgeToolRegistrar     KnowledgeToolRegistrar     // 知识库工具注册器（可选）
+	agent                      AgentUpdater            // Agent接口，用于更新Agent配置
+	attackChainHandler         AttackChainUpdater      // 攻击链处理器接口，用于更新配置
+	externalMCPMgr             *mcp.ExternalMCPManager // 外部MCP管理器
+	knowledgeToolRegistrar     KnowledgeToolRegistrar  // 知识库工具注册器（可选）
+	experienceToolRegistrar    func() error
 	vulnerabilityToolRegistrar VulnerabilityToolRegistrar // 漏洞工具注册器（可选）
 	webshellToolRegistrar      WebshellToolRegistrar      // WebShell 工具注册器（可选）
 	skillsToolRegistrar        SkillsToolRegistrar        // Skills工具注册器（可选）
@@ -161,6 +162,12 @@ func (h *ConfigHandler) SetKnowledgeToolRegistrar(registrar KnowledgeToolRegistr
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.knowledgeToolRegistrar = registrar
+}
+
+func (h *ConfigHandler) SetExperienceToolRegistrar(registrar func() error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.experienceToolRegistrar = registrar
 }
 
 // SetVulnerabilityToolRegistrar 设置漏洞工具注册器
@@ -1708,6 +1715,12 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 			h.logger.Error("重新注册 C2 MCP 工具失败", zap.Error(err))
 		} else {
 			h.logger.Info("C2 MCP 工具已处理")
+		}
+	}
+
+	if h.experienceToolRegistrar != nil {
+		if err := h.experienceToolRegistrar(); err != nil {
+			h.logger.Error("重新注册经验记忆工具失败", zap.Error(err))
 		}
 	}
 

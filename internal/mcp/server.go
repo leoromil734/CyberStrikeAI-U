@@ -196,6 +196,9 @@ func (s *Server) effectiveHTTPToolCallDeadline(parent context.Context) (context.
 
 // RegisterTool 注册工具
 func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
+	if registry, ok := s.storage.(interface{ RegisterExperienceToolDefinition(Tool) }); ok {
+		registry.RegisterExperienceToolDefinition(tool)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tools[tool.Name] = handler

@@ -386,6 +386,8 @@ func grantSystemRolePermissions(tx *Tx, permissions map[string]string) error {
 			}
 		case strings.HasPrefix(key, "rbac:"), strings.HasPrefix(key, "config:"), strings.HasPrefix(key, "terminal:"), strings.HasPrefix(key, "audit:"):
 			continue
+		case key == "experience:review" || key == "experience:share" || key == "experience:export":
+			continue
 		case key == "mcp:write" || key == "mcp:external:execute":
 			continue
 		case key == "roles:write" || key == "roles:delete" ||

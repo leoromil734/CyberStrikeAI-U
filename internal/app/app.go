@@ -22,6 +22,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/einoobserve"
+	"cyberstrike-ai/internal/experience"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/hitl"
 	"cyberstrike-ai/internal/knowledge"
@@ -72,6 +73,9 @@ type App struct {
 	c2WatchdogCancel   context.CancelFunc        // 看门狗取消函数
 	c2Handler          *handler.C2Handler        // C2 REST（与 Manager 生命周期同步）
 	auditSvc           *audit.Service
+	experienceHandler  *handler.ExperienceHandler
+	experienceCancel   context.CancelFunc
+	experienceDone     <-chan struct{}
 }
 
 // New 创建新应用
@@ -508,6 +512,18 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	}
 	configHandler.SetBatchTaskToolRegistrar(batchTaskToolRegistrar)
 
+	var experienceService *experience.Service
+	if !cfg.Experience.Disabled {
+		experienceService = experience.New(db, log.Logger)
+		experience.RegisterTools(mcpServer, experienceService)
+		agent.SetExperienceHints(experienceService.ToolHints)
+		configHandler.SetExperienceToolRegistrar(func() error {
+			experience.RegisterTools(mcpServer, experienceService)
+			return nil
+		})
+	}
+	app.experienceHandler = handler.NewExperienceHandler(experienceService, db, auditSvc, log.Logger)
+
 	// 设置知识库初始化器（用于动态初始化，需要在 App 创建后设置）
 	configHandler.SetKnowledgeInitializer(func() (*handler.KnowledgeHandler, error) {
 		knowledgeHandler, err := initializeKnowledge(cfg, db, knowledgeDBConn, mcpServer, agentHandler, app, log.Logger)
@@ -592,6 +608,12 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		openAPIHandler,
 	)
 
+	if experienceService != nil && !cfg.Experience.AutoLearnDisabled {
+		db.SetExperienceLearningEnabled(true)
+		var learningCtx context.Context
+		learningCtx, app.experienceCancel = context.WithCancel(context.Background())
+		app.experienceDone = experienceService.Start(learningCtx)
+	}
 	return app, nil
 
 }
@@ -739,6 +761,13 @@ func (a *App) RunWithContext(ctx context.Context) error {
 
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
+	if a.experienceCancel != nil {
+		a.experienceCancel()
+		if a.experienceDone != nil {
+			<-a.experienceDone
+		}
+		a.experienceCancel = nil
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = einoobserve.ShutdownOtel(shutdownCtx)
 	shutdownCancel()
@@ -1104,6 +1133,20 @@ func setupRoutes(
 		// 攻击链可视化
 		protected.GET("/attack-chain/:conversationId", attackChainHandler.GetAttackChain)
 		protected.POST("/attack-chain/:conversationId/regenerate", attackChainHandler.RegenerateAttackChain)
+
+		// 证据驱动的跨任务经验：审核、共享和成功判定不向模型开放。
+		protected.GET("/experiences", app.experienceHandler.List)
+		protected.GET("/experiences/learning-events", app.experienceHandler.LearningEvents)
+		protected.POST("/experiences/search", app.experienceHandler.Search)
+		protected.POST("/experiences", app.experienceHandler.Create)
+		protected.GET("/experiences/:id", app.experienceHandler.Get)
+		protected.GET("/experiences/:id/evidence/:executionId", app.experienceHandler.Evidence)
+		protected.PUT("/experiences/:id", app.experienceHandler.Revise)
+		protected.GET("/experiences/:id/revisions", app.experienceHandler.History)
+		protected.POST("/experiences/:id/review", app.experienceHandler.Review)
+		protected.POST("/experiences/:id/outcomes", app.experienceHandler.Outcome)
+		protected.POST("/experiences/:id/confirmed-outcomes", app.experienceHandler.ConfirmedOutcome)
+		protected.GET("/experiences/:id/skill", app.experienceHandler.ExportSkill)
 
 		// 知识库管理（始终注册路由，通过 App 实例动态获取 handler）
 		knowledgeRoutes := protected.Group("/knowledge")

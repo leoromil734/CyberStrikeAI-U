@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "web-search": {
+      "command": "node",
+      "args": ["/absolute/path/to/CyberStrikeAI-U/mcp-servers/web-search/server.mjs"],
+      "env": { "WEB_SEARCH_MODE": "request" }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "web-search": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["/absolute/path/to/CyberStrikeAI-U/mcp-servers/web-search/server.mjs"],
+    "env": { "WEB_SEARCH_MODE": "request" },
+    "timeout": 300,
+    "external_mcp_enable": true,
+    "description": "公开网页/漏洞情报检索与全局按需住宅代理池"
+  }
+}

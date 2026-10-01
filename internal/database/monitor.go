@@ -57,7 +57,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err = db.Exec(query,
+	args := []interface{}{
 		exec.ID,
 		exec.ToolName,
 		string(argsJSON),
@@ -74,7 +74,24 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 		strings.TrimSpace(exec.OwnerUserID),
 		strings.TrimSpace(exec.ConversationID),
 		time.Now(),
-	)
+	}
+
+	if db.shouldQueueExperience(exec) {
+		tx, beginErr := db.Begin()
+		if beginErr != nil {
+			return beginErr
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(query, args...); err != nil {
+			return err
+		}
+		if err = db.enqueueExperienceTx(tx, exec); err != nil {
+			return err
+		}
+		err = tx.Commit()
+	} else {
+		_, err = db.Exec(query, args...)
+	}
 
 	if err != nil {
 		db.logger.Error("保存工具执行记录失败", zap.Error(err), zap.String("executionId", exec.ID))

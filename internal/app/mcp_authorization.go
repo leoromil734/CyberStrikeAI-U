@@ -117,6 +117,10 @@ func mcpToolAuthorizer(db *database.DB) func(context.Context, string, map[string
 			return authorizeProjectTool(ctx, principal, db, "project:write")
 		case builtin.ToolGetProjectFact, builtin.ToolListProjectFacts, builtin.ToolSearchProjectFacts:
 			return authorizeProjectTool(ctx, principal, db, "project:read")
+		case builtin.ToolSearchExperience, builtin.ToolGetExperience:
+			return require("experience:read")
+		case builtin.ToolProposeExperience, builtin.ToolObserveExperience:
+			return require("experience:write")
 		case builtin.ToolListKnowledgeRiskTypes, builtin.ToolSearchKnowledgeBase:
 			return require("knowledge:read")
 		case builtin.ToolAnalyzeImage:

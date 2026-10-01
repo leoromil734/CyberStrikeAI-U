@@ -146,6 +146,17 @@ func permissionForRequest(method, fullPath string) string {
 		return "mcp:write"
 	case strings.HasPrefix(path, "/attack-chain"):
 		return crudPermission(method, "attackchain")
+	case strings.HasPrefix(path, "/experiences"):
+		if strings.HasSuffix(path, "/review") || strings.HasSuffix(path, "/confirmed-outcomes") || path == "/experiences/learning-events" {
+			return "experience:review"
+		}
+		if strings.HasSuffix(path, "/skill") {
+			return "experience:export"
+		}
+		if path == "/experiences/search" {
+			return "experience:read"
+		}
+		return crudPermission(method, "experience")
 	case strings.HasPrefix(path, "/knowledge"):
 		if path == "/knowledge/search" {
 			return "knowledge:read"

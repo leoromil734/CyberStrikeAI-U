@@ -25,6 +25,7 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 		SkipLowValueSection(),
 		IndependentBoundarySection(),
 		ExecutionRecoverySection(),
+		WebResearchSection(),
 		SkillsRoutingSection(),
 		ComprehensiveAssessmentSection(),
 		ConciseBlackboardSection(mode == PromptModeDeep || mode == PromptModeSupervisor || mode == PromptModePlanExecute, mode == PromptModeSubAgent),

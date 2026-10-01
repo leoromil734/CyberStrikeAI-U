@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -46,21 +47,23 @@ func configureSQLitePragmas(db *sql.DB) error {
 // DB 数据库连接
 type DB struct {
 	*sql.DB
-	dialect                  Dialect
-	logger                   *zap.Logger
-	conversationArtifactsDir string
-	einoPlantaskBaseDir      string // skills_dir + plantask_rel_dir (per-conversation subdirs)
-	einoCheckpointBaseDir    string // checkpoint_dir root (per-conversation subdirs)
-	einoReductionRootDir     string // reduction_root_dir or default tmp/reduction (conversations/<id> subdirs)
-	einoWorkspaceRootDir     string // workspace_root_dir or default tmp/workspace (projects|conversations/<id> subdirs)
-	checkpointLoopName       string
-	checkpointStop           chan struct{}
-	checkpointDone           chan struct{}
-	poolObserverStop         chan struct{}
-	poolObserverDone         chan struct{}
-	closeOnce                sync.Once
-	closeErr                 error
-	vulnerabilityCreatedHook func(*Vulnerability)
+	dialect                    Dialect
+	logger                     *zap.Logger
+	conversationArtifactsDir   string
+	einoPlantaskBaseDir        string // skills_dir + plantask_rel_dir (per-conversation subdirs)
+	einoCheckpointBaseDir      string // checkpoint_dir root (per-conversation subdirs)
+	einoReductionRootDir       string // reduction_root_dir or default tmp/reduction (conversations/<id> subdirs)
+	einoWorkspaceRootDir       string // workspace_root_dir or default tmp/workspace (projects|conversations/<id> subdirs)
+	checkpointLoopName         string
+	checkpointStop             chan struct{}
+	checkpointDone             chan struct{}
+	poolObserverStop           chan struct{}
+	poolObserverDone           chan struct{}
+	closeOnce                  sync.Once
+	closeErr                   error
+	vulnerabilityCreatedHook   func(*Vulnerability)
+	experienceLearningEnabled  atomic.Bool
+	experienceToolFingerprints sync.Map
 }
 
 // startPassiveCheckpointLoop 启动后台 PASSIVE checkpoint 循环。
@@ -1029,6 +1032,9 @@ func (db *DB) initTables() error {
 		db.logger.Warn("迁移RBAC资源归属字段失败", zap.Error(err))
 	}
 
+	if err := db.initExperienceTables(); err != nil {
+		return err
+	}
 	if _, err := db.Exec(createIndexes); err != nil {
 		return fmt.Errorf("创建索引失败: %w", err)
 	}

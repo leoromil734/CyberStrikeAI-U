@@ -1,0 +1,19 @@
+{
+  "name": "cyberstrike-mcp-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "web-search": "node web-search/server.mjs",
+    "test": "node --test shared/*.test.mjs web-search/*.test.mjs",
+    "smoke": "node web-search/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "open-websearch": "2.2.0",
+    "https-proxy-agent": "7.0.6",
+    "proxy-chain": "3.0.1",
+    "zod": "3.25.76"
+  }
+}

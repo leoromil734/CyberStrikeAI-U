@@ -246,6 +246,10 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			RootDir: root, ProjectID: h.conversationProjectID(conversationID), ConversationID: conversationID,
 			ExecutionID: "coverage-checks-" + uuid.NewString() + ".json",
 		})
+	} else if decision.CompletionReason == agentfinalizer.ReasonIncompleteCandidate {
+		if _, repairOnly := multiagent.FinalReportAfterCoverageRepair(result.Response, result.LastAgentTraceInput); repairOnly {
+			*curFinalMessage = multiagent.FormatFinalReportContinueUserMessage()
+		}
 	}
 	state.Attempts++
 	if progressCallback != nil {
@@ -267,7 +271,7 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	}
 }
 
-const coverageContinuationHeader = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。只补当前评估缺口，不重复已完成步骤，不扩大授权范围，保留用户排除项。查阅 pentest-blackboard/references/coverage-contract.md 并读取相应事实；blocked/N/A 必须有原始证据和具体原因，不得把未测改成已覆盖。\n"
+const coverageContinuationHeader = multiagent.CoverageContinuationHeader
 
 // With no artifact, preserve every check in full. Silent prefix-only feedback
 // previously hid the exact malformed JS/source records the model had to repair.

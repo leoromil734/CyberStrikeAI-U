@@ -119,7 +119,8 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 
 func TestSharedContractStaticBudget(t *testing.T) {
 	prompt := ComposeSystemPrompt("", PromptModeSingle)
-	if got := utf8.RuneCountInString(prompt); got > 4600 {
+	// 共享记忆与联网检索指引增加后，仍对所有模式的静态契约设置明确上限。
+	if got := utf8.RuneCountInString(prompt); got > 5600 {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
 	scope := ScopeAuthorizationSection()

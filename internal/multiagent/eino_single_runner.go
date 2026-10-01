@@ -182,6 +182,7 @@ func RunEinoSingleChatModelAgent(
 				localToolRBACMiddleware(),
 				hitlToolCallMiddleware(),
 				softRecoveryToolMiddleware(),
+				experienceArgumentFailureMiddleware(ag),
 			},
 		},
 		EmitInternalEvents: true,
@@ -189,6 +190,7 @@ func RunEinoSingleChatModelAgent(
 	ins := project.AppendSystemPromptBlock(ag.EinoSingleAgentSystemInstruction(), systemPromptExtra)
 	ins = gptinstruct.MaybePrepend(ins, appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))
 	ins = project.AppendVisionImageAnalysisIfReady(ins, appCfg.Vision.Ready())
+	ins = project.AppendSystemPromptBlock(ins, ag.ExperienceInstruction(ctx, mainDefs))
 	ins = injectToolNamesOnlyInstruction(ctx, ins, mainTools, singleToolSearchActive)
 	if logger != nil {
 		names := collectToolNames(ctx, mainTools)

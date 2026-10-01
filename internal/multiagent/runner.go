@@ -286,6 +286,7 @@ func RunDeepAgent(
 			})
 
 			subInstrFinal := project.AppendVisionImageAnalysisIfReady(instr, appCfg.Vision.Ready())
+			subInstrFinal = project.AppendSystemPromptBlock(subInstrFinal, ag.ExperienceInstruction(ctx, subDefs))
 			subInstrFinal = injectToolNamesOnlyInstruction(ctx, subInstrFinal, subTools, subToolSearchActive)
 			if logger != nil {
 				subNames := collectToolNames(ctx, subTools)
@@ -313,6 +314,7 @@ func RunDeepAgent(
 							localToolRBACMiddleware(),
 							hitlToolCallMiddleware(),
 							softRecoveryToolMiddleware(),
+							experienceArgumentFailureMiddleware(ag),
 						},
 					},
 					EmitInternalEvents: true,
@@ -371,6 +373,7 @@ func RunDeepAgent(
 	orchInstruction = project.AppendSystemPromptBlock(orchInstruction, systemPromptExtra)
 	orchInstruction = gptinstruct.MaybePrepend(orchInstruction, appCfg.OpenAI.Model, gptinstruct.OptionsFromConfig(appCfg))
 	orchInstruction = project.AppendVisionImageAnalysisIfReady(orchInstruction, appCfg.Vision.Ready())
+	orchInstruction = project.AppendSystemPromptBlock(orchInstruction, ag.ExperienceInstruction(ctx, mainDefs))
 	orchInstruction = injectToolNamesOnlyInstruction(ctx, orchInstruction, mainTools, mainToolSearchActive)
 	if logger != nil {
 		mainNames := collectToolNames(ctx, mainTools)
@@ -508,6 +511,7 @@ func RunDeepAgent(
 				localToolRBACMiddleware(),
 				hitlToolCallMiddleware(),
 				softRecoveryToolMiddleware(),
+				experienceArgumentFailureMiddleware(ag),
 			},
 		},
 		EmitInternalEvents: true,

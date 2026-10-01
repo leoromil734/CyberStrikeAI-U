@@ -24,6 +24,12 @@ const (
 	ToolDeprecateProjectFact = "deprecate_project_fact"
 	ToolRestoreProjectFact   = "restore_project_fact"
 
+	// Reviewed cross-task experience; verification and sharing have no Agent tool.
+	ToolSearchExperience  = "search_experience"
+	ToolGetExperience     = "get_experience"
+	ToolProposeExperience = "propose_experience"
+	ToolObserveExperience = "observe_experience"
+
 	// 知识库工具
 	ToolListKnowledgeRiskTypes = "list_knowledge_risk_types"
 	ToolSearchKnowledgeBase    = "search_knowledge_base"
@@ -93,6 +99,10 @@ func IsBuiltinTool(toolName string) bool {
 		ToolSearchProjectFacts,
 		ToolDeprecateProjectFact,
 		ToolRestoreProjectFact,
+		ToolSearchExperience,
+		ToolGetExperience,
+		ToolProposeExperience,
+		ToolObserveExperience,
 		ToolListKnowledgeRiskTypes,
 		ToolSearchKnowledgeBase,
 		ToolAnalyzeImage,
@@ -154,6 +164,10 @@ func GetAllBuiltinTools() []string {
 		ToolSearchProjectFacts,
 		ToolDeprecateProjectFact,
 		ToolRestoreProjectFact,
+		ToolSearchExperience,
+		ToolGetExperience,
+		ToolProposeExperience,
+		ToolObserveExperience,
 		ToolListKnowledgeRiskTypes,
 		ToolSearchKnowledgeBase,
 		ToolAnalyzeImage,

@@ -24,6 +24,7 @@
         })();
     </script>
     <link rel="stylesheet" href="/static/css/style.css?v=20260929-3">
+    <link rel="stylesheet" href="/static/css/experience.css">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
     <script src="/static/js/router.js?v=20260929-perf1"></script>
@@ -352,6 +353,9 @@
                         <div class="nav-submenu">
                             <div class="nav-submenu-item" data-page="knowledge-retrieval-logs" onclick="switchPage('knowledge-retrieval-logs')">
                                 <span data-i18n="nav.knowledgeRetrievalLogs">检索历史</span>
+                            </div>
+                            <div class="nav-submenu-item" data-page="experience-memory" onclick="switchPage('experience-memory')">
+                                <span data-i18n="experience.title">经验记忆</span>
                             </div>
                             <div class="nav-submenu-item" data-page="knowledge-management" onclick="switchPage('knowledge-management')">
                                 <span data-i18n="nav.knowledgeManagement">知识管理</span>
@@ -1642,6 +1646,66 @@
                             <div class="loading-spinner" data-i18n="knowledgePage.loading">加载中...</div>
                         </div>
                         <div id="knowledge-pagination"></div>
+                    </div>
+                </div>
+
+                <!-- 证据驱动的跨任务经验管理 -->
+                <div id="page-experience-memory" class="page">
+                    <div class="page-header">
+                        <h2 data-i18n="experience.title">经验记忆</h2>
+                        <div class="page-header-actions">
+                            <button class="btn-secondary" onclick="ExperienceMemory.refresh()" data-i18n="common.refresh">刷新</button>
+                            <button class="btn-primary" data-require-permission="experience:write" onclick="ExperienceMemory.newProposal()" data-i18n="experience.new">新增候选</button>
+                        </div>
+                    </div>
+                    <div class="page-content">
+                        <p class="form-hint" data-i18n="experience.hint">自动学习只生成私有候选。审核后才复用；历史成功不证明当前目标，共享前请移除客户数据和凭据。</p>
+                        <div class="knowledge-filters">
+                            <label><span data-i18n="experience.status">状态</span><select id="experience-status" onchange="ExperienceMemory.refresh()">
+                                <option value="" data-i18n="experience.all">全部</option>
+                                <option value="candidate" data-i18n="experience.candidate">候选</option>
+                                <option value="verified" data-i18n="experience.verified">条件内已验证</option>
+                                <option value="needs_review" data-i18n="experience.needsReview">待复核</option>
+                                <option value="deprecated" data-i18n="experience.deprecated">已废弃</option>
+                            </select></label>
+                            <label><span data-i18n="experience.kind">类型</span><select id="experience-kind" onchange="ExperienceMemory.refresh()">
+                                <option value="" data-i18n="experience.all">全部</option>
+                                <option value="tool_repair" data-i18n="experience.toolRepair">工具修复</option>
+                                <option value="vulnerability_method" data-i18n="experience.vulnerability">漏洞验证方法</option>
+                                <option value="workflow" data-i18n="experience.workflow">工作流</option>
+                                <option value="negative_result" data-i18n="experience.negative">失败反例</option>
+                            </select></label>
+                            <label><span data-i18n="experience.project">项目 ID（可选）</span><input id="experience-project" type="text" /></label>
+                            <label><span data-i18n="common.search">搜索</span><input id="experience-query" type="search" onkeydown="if(event.key==='Enter') ExperienceMemory.refresh()" /></label>
+                            <button class="btn-secondary" onclick="ExperienceMemory.refresh()" data-i18n="common.search">搜索</button>
+                        </div>
+                        <div id="experience-list" aria-live="polite"></div>
+                        <div id="experience-pagination" class="page-header-actions"></div>
+                        <section id="experience-detail" hidden>
+                            <div class="page-header-actions">
+                                <button class="btn-secondary" onclick="ExperienceMemory.close()" data-i18n="common.close">关闭</button>
+                                <button class="btn-secondary" data-require-permission="experience:export" onclick="ExperienceMemory.exportSkill()" data-i18n="experience.export">导出技能包</button>
+                                <button class="btn-secondary" onclick="ExperienceMemory.history()" data-i18n="experience.history">版本历史</button>
+                            </div>
+                            <pre id="experience-detail-json" class="experience-pre"></pre>
+                            <div id="experience-evidence"></div>
+                            <div data-require-permission="experience:write">
+                                <label for="experience-editor" data-i18n="experience.editor">候选正文与证据（JSON；修改后需重新审核）</label>
+                                <textarea id="experience-editor" class="experience-editor" spellcheck="false"></textarea>
+                                <button class="btn-primary" onclick="ExperienceMemory.save()" data-i18n="experience.saveCandidate">保存候选</button>
+                            </div>
+                            <div data-require-permission="experience:review" class="experience-review">
+                                <h3 data-i18n="experience.review">审核决定</h3>
+                                <label for="experience-review-status" data-i18n="experience.status">状态</label>
+                                <select id="experience-review-status"><option value="verified" data-i18n="experience.verified">条件内已验证</option><option value="needs_review" data-i18n="experience.needsReview">待复核</option><option value="deprecated" data-i18n="experience.deprecated">已废弃</option><option value="candidate" data-i18n="experience.candidate">候选</option></select>
+                                <label for="experience-review-scope" data-i18n="experience.scope">共享范围</label>
+                                <select id="experience-review-scope"><option value="private" data-i18n="experience.private">个人私有</option><option value="project" data-i18n="experience.projectScope">原项目内</option><option value="shared" data-i18n="experience.shared">跨项目共享</option></select>
+                                <label for="experience-review-note" data-i18n="experience.reviewNote">审核依据（必填）</label>
+                                <textarea id="experience-review-note" rows="3"></textarea>
+                                <button class="btn-primary" onclick="ExperienceMemory.review()" data-i18n="experience.submitReview">提交审核</button>
+                                <details><summary data-i18n="experience.confirmOutcome">确认本次复用结果（JSON）</summary><textarea id="experience-outcome" class="experience-editor" spellcheck="false"></textarea><button class="btn-secondary" onclick="ExperienceMemory.confirmOutcome()" data-i18n="common.save">保存</button></details>
+                            </div>
+                        </section>
                     </div>
                 </div>
 
@@ -6751,10 +6815,11 @@
     <script src="/static/vendor/xterm-addon-fit.js"></script>
     <script src="/static/js/terminal.js"></script>
     <script src="/static/js/knowledge.js"></script>
+    <script src="/static/js/experience.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
     <script src="/static/js/projects.js?v=20260717-1"></script>
-    <script src="/static/js/vulnerability.js?v=14"></script>
+    <script src="/static/js/vulnerability.js?v=15"></script>
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js"></script>

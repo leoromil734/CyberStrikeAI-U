@@ -382,6 +382,7 @@ const PAGE_PERMISSION_MAP = {
     knowledge: 'knowledge:read',
     'knowledge-retrieval-logs': 'knowledge:read',
     'knowledge-management': 'knowledge:read',
+    'experience-memory': 'experience:read',
     skills: 'skills:read',
     'skills-monitor': 'skills:read',
     'skills-management': 'skills:read',
@@ -498,7 +499,9 @@ function applyRBACToUI(root) {
         const page = el.getAttribute('data-page');
         const permission = PAGE_PERMISSION_MAP[page];
         if (!permission) return;
-        const allowed = hasPermission(permission);
+        const allowed = page === 'knowledge'
+            ? hasAnyPermission(['knowledge:read', 'experience:read'])
+            : hasPermission(permission);
         el.hidden = !allowed;
         el.setAttribute('aria-hidden', allowed ? 'false' : 'true');
     });

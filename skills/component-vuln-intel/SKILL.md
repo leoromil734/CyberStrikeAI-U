@@ -9,6 +9,8 @@ metadata:
 
 ## 联网情报收集（识别组件→立即全网搜；结果=线索/tentative，验证前不是 confirmed Fact）
 
+已接入 `web-search` 时，优先按 `references/web-research.md` 使用 `research_plan` → `web_search` → `web_fetch` / `github_readme`。平台工具名为 `web-search__工具名`（配置/角色键为 `web-search::工具名`）。多引擎结果须核对原始公告与补丁，不能把摘要当作 PoC 正文；需要代理优先 `proxy_get` 获取项目共享住宅代理，不向模型或终端命令暴露上游凭据。未挂载工具时才用下面的浏览器/终端路径。
+
 **出口纪律**：本 skill 结束时应得到「候选 CVE/PoC 链接 + 建议验证步骤」，并 `upsert_project_fact`（confidence=tentative）。**禁止**在本 skill 内直接 `record_vulnerability`。验证交给 `web-attack-methods` / penetration 与 `pentest-verification`。
 
 ```
@@ -58,11 +60,11 @@ metadata:
 🔴搜索受阻处理序列(碰到403/验证码/空结果/超时→按序执行不放弃):
   ①换UA: curl -H "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" "{URL}"
   ②Jina读取器: browser_navigate: https://r.jina.ai/{原始URL}
-  ③Google缓存: browser_navigate: https://webcache.googleusercontent.com/search?q=cache:{域名}+{关键词}
+  ③来源已失效时跳过 Google Cache（服务已关闭），直接查官方引用/补丁或下面的公开历史快照，并记录时间
   ④Archive: browser_navigate: https://web.archive.org/web/{URL}
   ⑤GitHub API替代(GitHub页面拦但API不拦): 用上面第4步的curl命令
   ⑥换引擎: Google拦→执行Bing/DuckDuckGo/百度; 百度拦→执行Google/Bing
-  ⑦走代理: 按 `proxy-tool-bootstrap` 序列获取SOCKS5代理后重试
-  全部受阻仍无结果→写负Fact"已搜{C} {V}全渠道无公开漏洞"→转 `zero-day-discovery`
+  ⑦走代理: 优先按 `proxy-tool-bootstrap` 使用项目 `proxy_get`；仅连接类故障有界重试，407/597检查代理凭据，429先等待/降速，登录/验证码/JS需求交浏览器，不无限换出口
+  全部受阻→写blocked Fact，保留查询/时间/失败分类/替代路径，不能声明“无公开漏洞”。可达但没有命中→只记录本轮检索范围内未找到证据，按需要继续其他方法。
 ```
 

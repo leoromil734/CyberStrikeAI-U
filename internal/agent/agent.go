@@ -36,6 +36,7 @@ type Agent struct {
 	toolNameMapping     map[string]string // 工具名称映射：OpenAI格式 -> 原始格式（用于外部MCP工具）
 	promptBaseDir       string            // 解析 system_prompt_path 时相对路径的基准目录（通常为 config.yaml 所在目录）
 	toolDescriptionMode string            // 工具描述模式: "short" | "full"，默认 short
+	experienceHints     func(context.Context, []mcp.Tool) string
 }
 
 type agentConversationIDKey struct{}
@@ -365,8 +366,8 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 
 				// 如果指定了角色工具列表，只添加在列表中的工具
 				if len(roleToolSet) > 0 {
-					if !roleToolSet[externalToolKey] {
-						continue // 不在角色工具列表中，跳过
+					if !roleToolSet[externalToolKey] && !isSharedResearchTool(externalToolKey) {
+						continue // 无关外部工具仍按角色裁剪；共享检索/代理保留启用与 RBAC 检查
 					}
 				}
 

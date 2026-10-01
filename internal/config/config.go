@@ -37,6 +37,7 @@ type Config struct {
 	Monitor     MonitorConfig         `yaml:"monitor,omitempty" json:"monitor,omitempty"`
 	ExternalMCP ExternalMCPConfig     `yaml:"external_mcp,omitempty"`
 	Knowledge   KnowledgeConfig       `yaml:"knowledge,omitempty"`
+	Experience  ExperienceConfig      `yaml:"experience,omitempty" json:"experience,omitempty"`
 	C2          C2Config              `yaml:"c2,omitempty" json:"c2,omitempty"`                 // 内置 C2 总开关；未配置时默认启用
 	Robots      RobotsConfig          `yaml:"robots,omitempty" json:"robots,omitempty"`         // 企业微信/钉钉/飞书等机器人配置
 	RolesDir    string                `yaml:"roles_dir,omitempty" json:"roles_dir,omitempty"`   // 角色配置文件目录（新方式）

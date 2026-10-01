@@ -7,7 +7,20 @@ metadata:
   tags: [渗透测试, penetration-testing, 红队]
 ---
 
-## 自找代理 + 工具自举（被拦换路，没工具自己写）
+## 项目共享住宅代理（优先路径）
+
+已挂载 `web-search` 时，优先使用 `proxy_status` → `proxy_get`。`proxy_get` 创建当前任务的独立粘性出口，返回 `lease_id`、本地 HTTP CONNECT 代理 URL 与环境变量；它不返回住宅代理用户名/密码，也不修改系统或模型 API 的全局网络路径。其他 Agent 不应复用你的 `lease_id`。
+
+- `exec` / `execute` / Python / curl / HTTPX / 浏览器等只给受影响请求或子进程传返回的代理地址。该地址只在 MCP 所在主机或同一容器网络空间可用，远程 MCP 应在远端部署服务，不把监听地址暴露为 `0.0.0.0`。
+- HTTP(S) 与 SOCKS5/SOCKS5h 上游由共享配置决定；Agent 始终拿到本地 HTTP CONNECT 入口，不能把它当作 SOCKS5 端口。HTTPX 用显式 `proxy` 参数；curl 用 `--proxy`（或小写 `http_proxy`/`https_proxy`）。
+- 确认连接/出口故障后才 `proxy_rotate(lease_id, country)` 换 sid/国家；会断开本租约旧连接，随后新建客户端连接。登录/验证码/Cookie 会话需要粘性出口，不随每次请求轮换。
+- 401 为站点认证问题；407/597为代理凭据问题；429等待 `Retry-After`、降速或换数据来源；403/验证码/JS挑战先检查认证、地区与浏览器需求，不据此无限换 IP。
+- `proxy_healthcheck` 经代理访问公开 IP 检测接口，可能消耗少量代理流量。请求的国家不是已验证的地理位置，换 sid 也不保证提供商每次分配不同 IP。
+- 用完 `proxy_release`；空闲租约自动过期。代理不应携带平台/模型API密钥、客户资料或内网敏感流量；遵守授权范围与来源条款。
+
+## 自找代理 + 工具自举（共享服务不可用时的显式替代路径）
+
+仅当项目共享代理未配置或有明确故障证据，且任务允许该替代网络时，才考虑下面旧式路径。公共免费代理不可信，不发送账号密码、Cookie、密钥或敏感数据；不能自动作为全局代理。
 
 ```
 🔴被拦时先分流（不要无脑换代理或安装 curl_cffi）:
@@ -31,7 +44,7 @@ metadata:
   curl_cffi 仍 Challenge → 未确认 TLS 指纹；改用浏览器挑战流程，不要轮换 impersonate 猜测
   详情 → skill `cdn-tls-fingerprint`
 
-🔴代理(IP信誉/限流/地区限制 → 换路。不换路=放弃=违反黑板触发器2):
+🔴代理（仅在共享代理不可用且已有网络归因证据时采用替代路径）:
   执行序列(按顺序,前一步失败才下一步):
   ①探目标地区: terminal: curl -s "http://ip-api.com/json/{目标IP}" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['country'],d['countryCode'])"
   ②获取该地区SOCKS5代理: terminal: curl -s "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&country={countryCode}&timeout=5000" | head -20
@@ -42,7 +55,7 @@ metadata:
   ⑦全代理失败→Tor: terminal: curl --socks5 127.0.0.1:9050 --connect-timeout 15 {目标URL}
   工具统一加代理参数: curl --socks5 / sqlmap --proxy=socks5://{P} / nmap --proxies socks5://{P} / nuclei -proxy socks5://{P} / ffuf -x socks5://{P}
   curl_cffi 代理: Session.get(..., proxies={"http":"socks5://...","https":"socks5://..."})
-  轮换策略: 429/403→先降速再换代理,每20请求主动换 | 已确认 TLS 指纹时才保持 curl_cffi Session
+  轮换策略: 只在确认出口连接故障时有限轮换；429先等待/降速，403先归因认证/地区/验证码。认证会话不按请求数量自动换出口。
   🚨HTTP代理vs SOCKS5: HTTP代理会插入自己的错误页→探测优先 SOCKS5
 工具自举(which X || 用Python实现):
   无nmap→socket扫端口 | 无ffuf→标准 requests 小规模目录探测 | 无sqlmap→手工payload | 已确认无浏览器TLS能力且存在指纹拦截→curl_cffi
