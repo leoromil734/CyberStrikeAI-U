@@ -460,7 +460,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		return
 	}
 	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
-	h.recordRunTargets(prep.ConversationID, prep.FinalMessage)
+	h.recordRunTargets(prep.ConversationID, req.Message)
 
 	curHist := prep.History
 	curMsg := prep.FinalMessage

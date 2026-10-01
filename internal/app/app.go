@@ -129,8 +129,13 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	monitorRetention.PurgeExpired()
 	monitor.StartRetentionLoop(monitorRetention, log.Logger)
 
-	// 目标历史迁移：把历史上真正跑过的目标（口径 = 对话标题）登记进 target_runs，
-	// 供发起对话/批量任务时提示「这个目标跑过」。幂等，每次启动都会重算聚合。
+	// 任务提交与实际运行分开登记。回填只读完整任务/原始用户输入，
+	// 不从截断标题、角色模板或助手输出猜测目标；两条路径均保持幂等。
+	if submitted, bErr := db.BackfillTaskTargetRegistrations(); bErr != nil {
+		log.Logger.Warn("回填任务目标登记失败", zap.Error(bErr))
+	} else if submitted > 0 {
+		log.Logger.Info("回填任务目标登记", zap.Int("inserted", submitted))
+	}
 	if backfill, bErr := db.BackfillTargetRunsFromConversations(); bErr != nil {
 		log.Logger.Warn("回填目标历史失败", zap.Error(bErr))
 	} else {

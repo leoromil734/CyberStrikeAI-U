@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/targets"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,18 @@ func (h *AgentHandler) recordRunTargets(conversationID, message string) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return
+	}
+	// 批量任务始终从持久化的完整 task.message 提取。普通聊天则使用本轮原始请求，
+	// 保留后续用户新增目标的登记；调用方不得传入角色展开后的 FinalMessage。
+	original, found, err := h.db.ConversationTaskTargetInput(conversationID)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("读取原始目标输入失败（跳过目标登记）", zap.String("conversationId", conversationID), zap.Error(err))
+		}
+		return
+	}
+	if found {
+		message = original
 	}
 	list := targets.Extract(message)
 	if len(list) == 0 {
@@ -58,6 +71,10 @@ type checkRunTargetsRequest struct {
 // CheckRunTargets 检查输入里哪些目标历史上跑过，供对话页/任务管理页做提醒。
 // POST /api/targets/check
 func (h *AgentHandler) CheckRunTargets(c *gin.Context) {
+	session, ok := targetHistorySession(c)
+	if !ok {
+		return
+	}
 	var req checkRunTargetsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -72,7 +89,7 @@ func (h *AgentHandler) CheckRunTargets(c *gin.Context) {
 		return
 	}
 
-	hits, err := h.db.CheckTargetRuns(list)
+	hits, err := h.db.CheckTargetRunsForAccess(list, session.UserID, session.Scope)
 	if err != nil {
 		h.logger.Error("查询目标历史失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -93,6 +110,10 @@ func (h *AgentHandler) CheckRunTargets(c *gin.Context) {
 
 // ListRunTargets 分页列出跑过的目标。GET /api/targets?keyword=&page=&page_size=
 func (h *AgentHandler) ListRunTargets(c *gin.Context) {
+	session, ok := targetHistorySession(c)
+	if !ok {
+		return
+	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
 	if page < 1 {
@@ -104,7 +125,7 @@ func (h *AgentHandler) ListRunTargets(c *gin.Context) {
 	if keyword == "" {
 		keyword = strings.TrimSpace(c.Query("q"))
 	}
-	list, total, err := h.db.ListTargetRuns(keyword, pageSize, (page-1)*pageSize)
+	list, total, err := h.db.ListTargetRunsForAccess(keyword, pageSize, (page-1)*pageSize, session.UserID, session.Scope)
 	if err != nil {
 		h.logger.Error("加载目标历史失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -125,6 +146,10 @@ func (h *AgentHandler) ListRunTargets(c *gin.Context) {
 
 // ListRunTargetEvents 列出某个目标跑过的对话明细。GET /api/targets/:target/events
 func (h *AgentHandler) ListRunTargetEvents(c *gin.Context) {
+	session, ok := targetHistorySession(c)
+	if !ok {
+		return
+	}
 	target := strings.TrimSpace(c.Param("target"))
 	if targets.Normalize(target) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "目标域名不合法"})
@@ -137,7 +162,7 @@ func (h *AgentHandler) ListRunTargetEvents(c *gin.Context) {
 	}
 	pageSize = int(math.Max(1, math.Min(float64(pageSize), 200)))
 
-	events, total, err := h.db.ListTargetRunEvents(target, pageSize, (page-1)*pageSize)
+	events, total, err := h.db.ListTargetRunEventsForAccess(target, pageSize, (page-1)*pageSize, session.UserID, session.Scope)
 	if err != nil {
 		h.logger.Error("加载目标运行明细失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -158,17 +183,30 @@ func (h *AgentHandler) ListRunTargetEvents(c *gin.Context) {
 
 // DeleteRunTarget 删除某个目标的登记（用于清理误登记的噪声目标）。DELETE /api/targets/:target
 func (h *AgentHandler) DeleteRunTarget(c *gin.Context) {
+	session, ok := targetHistorySession(c)
+	if !ok {
+		return
+	}
 	target := targets.Normalize(c.Param("target"))
 	if target == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "目标域名不合法"})
 		return
 	}
-	if err := h.db.DeleteTargetRun(target); err != nil {
+	if err := h.db.DeleteTargetRunForAccess(target, session.UserID, session.Scope); err != nil {
 		h.logger.Error("删除目标历史失败", zap.String("target", target), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "target": target})
+}
+
+func targetHistorySession(c *gin.Context) (security.Session, bool) {
+	session, ok := security.CurrentSession(c)
+	if !ok || strings.TrimSpace(session.UserID) == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return session, false
+	}
+	return session, true
 }
 
 func appendUniqueTarget(list []string, item string) []string {

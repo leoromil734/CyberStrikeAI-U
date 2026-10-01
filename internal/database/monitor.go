@@ -23,7 +23,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 
 	var resultJSON sql.NullString
 	if exec.Result != nil {
-		resultBytes, err := json.Marshal(exec.Result)
+		resultBytes, err := marshalToolExecutionResult(exec.Result)
 		if err != nil {
 			db.logger.Warn("序列化执行结果失败", zap.Error(err))
 		} else {
@@ -31,10 +31,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 		}
 	}
 
-	var errorText sql.NullString
-	if exec.Error != "" {
-		errorText = sql.NullString{String: exec.Error, Valid: true}
-	}
+	errorText := sqlNullString(exec.Error)
 
 	var endTime sql.NullTime
 	if exec.EndTime != nil {
@@ -93,7 +90,7 @@ func (db *DB) UpdateToolExecutionResult(id string, result *mcp.ToolResult) error
 	if id == "" || result == nil {
 		return nil
 	}
-	resultBytes, err := json.Marshal(result)
+	resultBytes, err := marshalToolExecutionResult(result)
 	if err != nil {
 		return err
 	}
@@ -108,7 +105,7 @@ func sqlNullString(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}
 	}
-	return sql.NullString{String: s, Valid: true}
+	return sql.NullString{String: toolExecutionText(s), Valid: true}
 }
 
 // CountToolExecutions 统计工具执行记录总数
@@ -601,6 +598,7 @@ func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg stri
 	if errMsg == "" {
 		errMsg = "执行已中断（服务重启或会话结束）"
 	}
+	errMsg = toolExecutionText(errMsg)
 	// duration：end - start_time（毫秒）；SQLite 用 julianday，PostgreSQL 用 EXTRACT(EPOCH)
 	durationSQL := db.Dialect().durationMsSQL("?", "start_time")
 	query := fmt.Sprintf(`
@@ -625,6 +623,7 @@ func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.
 	if errMsg == "" {
 		errMsg = "执行已中断（会话已结束）"
 	}
+	errMsg = toolExecutionText(errMsg)
 	if minAge < 0 {
 		minAge = 0
 	}

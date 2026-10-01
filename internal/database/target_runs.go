@@ -12,19 +12,25 @@ import (
 	"cyberstrike-ai/internal/targets"
 )
 
-// TargetRun 是按「归一化域名」聚合的跑过记录，用于发起任务/对话时提示重复目标。
-// RunCount 按对话去重：同一对话里的多轮追问只算一次渗透。
+// TargetRun 合并实际运行与任务提交历史。RunCount 按对话去重，SubmittedCount 按任务去重。
+// 仅提交尚未执行的目标 RunCount 为 0，运行时间与对话指针为空。
 type TargetRun struct {
-	Target                string     `json:"target"`
-	RunCount              int        `json:"runCount"`
-	FirstRunAt            *time.Time `json:"firstRunAt,omitempty"`
-	LastRunAt             *time.Time `json:"lastRunAt,omitempty"`
-	LastConversationID    string     `json:"lastConversationId,omitempty"`
-	LastConversationTitle string     `json:"lastConversationTitle,omitempty"`
-	LastProjectID         string     `json:"lastProjectId,omitempty"`
+	Target                 string     `json:"target"`
+	RunCount               int        `json:"runCount"`
+	FirstRunAt             *time.Time `json:"firstRunAt,omitempty"`
+	LastRunAt              *time.Time `json:"lastRunAt,omitempty"`
+	LastConversationID     string     `json:"lastConversationId,omitempty"`
+	LastConversationTitle  string     `json:"lastConversationTitle,omitempty"`
+	LastProjectID          string     `json:"lastProjectId,omitempty"`
+	SubmittedCount         int        `json:"submittedCount"`
+	LastSubmittedAt        *time.Time `json:"lastSubmittedAt,omitempty"`
+	LastQueueID            string     `json:"lastQueueId,omitempty"`
+	LastTaskID             string     `json:"lastTaskId,omitempty"`
+	LastTaskTitle          string     `json:"lastTaskTitle,omitempty"`
+	LastSubmittedProjectID string     `json:"lastSubmittedProjectId,omitempty"`
 }
 
-// TargetRunEvent 是一次「某对话跑了某目标」的明细。
+// TargetRunEvent 是一次「某对话跑了某目标」的明细，不包含待执行提交。
 type TargetRunEvent struct {
 	ID                string    `json:"id"`
 	Target            string    `json:"target"`
@@ -34,7 +40,7 @@ type TargetRunEvent struct {
 	StartedAt         time.Time `json:"startedAt"`
 }
 
-// TargetBackfillResult 汇总一次历史回填的结果，供启动日志说明「迁移了什么」。
+// TargetBackfillResult 汇总一次历史运行回填的结果。
 type TargetBackfillResult struct {
 	Conversations  int `json:"conversations"`
 	WithTargets    int `json:"withTargets"`
@@ -43,36 +49,30 @@ type TargetBackfillResult struct {
 }
 
 const insertTargetRunEventSQL = `
-	INSERT OR IGNORE INTO target_run_events
-		(id, target, conversation_id, conversation_title, project_id, started_at)
-	VALUES (?, ?, ?, ?, ?, ?)`
+	INSERT INTO target_run_events
+		(id, target, conversation_id, conversation_title, project_id, started_at, owner_user_id)
+	VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT owner_user_id FROM conversations WHERE id = ?), ''))
+	ON CONFLICT(target, conversation_id) DO NOTHING`
 
-// 新目标第一次出现时插入聚合行；同目标再次（在别的对话里）出现时只要事件是新插入的，
-// 就把计数 +1 并把「最近一次」指针移到本轮。first_run_at 只在首次写入。
 const upsertTargetRunSQL = `
 	INSERT INTO target_runs
 		(target, run_count, first_run_at, last_run_at, last_conversation_id, last_conversation_title, last_project_id, updated_at)
 	VALUES (?, 1, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(target) DO UPDATE SET
 		run_count = target_runs.run_count + 1,
-		first_run_at = COALESCE(target_runs.first_run_at, excluded.first_run_at),
-		last_run_at = excluded.last_run_at,
-		last_conversation_id = excluded.last_conversation_id,
-		last_conversation_title = excluded.last_conversation_title,
-		last_project_id = excluded.last_project_id,
+		first_run_at = CASE WHEN target_runs.first_run_at IS NULL OR excluded.first_run_at < target_runs.first_run_at THEN excluded.first_run_at ELSE target_runs.first_run_at END,
+		last_run_at = CASE WHEN excluded.last_run_at >= target_runs.last_run_at THEN excluded.last_run_at ELSE target_runs.last_run_at END,
+		last_conversation_id = CASE WHEN excluded.last_run_at >= target_runs.last_run_at THEN excluded.last_conversation_id ELSE target_runs.last_conversation_id END,
+		last_conversation_title = CASE WHEN excluded.last_run_at >= target_runs.last_run_at THEN excluded.last_conversation_title ELSE target_runs.last_conversation_title END,
+		last_project_id = CASE WHEN excluded.last_run_at >= target_runs.last_run_at THEN excluded.last_project_id ELSE target_runs.last_project_id END,
 		updated_at = excluded.updated_at`
 
-// RecordTargetRuns 登记「某个对话跑了哪些目标」。
-// 同一 (目标, 对话) 只登记一次，因此重复调用（多轮追问、重启后重放）不会把次数刷高。
-// 返回本次新登记的目标数量（用于日志与提示）。
+// RecordTargetRuns 按 (目标, 对话) 幂等登记实际运行，不被任务提交影响。
 func (db *DB) RecordTargetRuns(conversationID, conversationTitle, projectID string, list []string, at time.Time) (int, error) {
-	if db == nil {
+	if db == nil || strings.TrimSpace(conversationID) == "" {
 		return 0, nil
 	}
 	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" {
-		return 0, nil
-	}
 	normalized := targets.NormalizeAll(list)
 	if len(normalized) == 0 {
 		return 0, nil
@@ -80,156 +80,135 @@ func (db *DB) RecordTargetRuns(conversationID, conversationTitle, projectID stri
 	if at.IsZero() {
 		at = time.Now()
 	}
-	conversationTitle = strings.TrimSpace(conversationTitle)
-	projectID = strings.TrimSpace(projectID)
-
+	at = at.UTC()
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("登记目标运行失败: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-
+	defer tx.Rollback()
 	recorded := 0
 	for _, target := range normalized {
-		res, execErr := tx.Exec(
-			insertTargetRunEventSQL,
-			uuid.New().String(), target, conversationID, conversationTitle, projectID, at,
-		)
-		if execErr != nil {
-			return recorded, fmt.Errorf("登记目标运行明细失败: %w", execErr)
+		res, err := tx.Exec(insertTargetRunEventSQL, uuid.New().String(), target, conversationID,
+			strings.TrimSpace(conversationTitle), strings.TrimSpace(projectID), at, conversationID)
+		if err != nil {
+			return 0, fmt.Errorf("登记目标运行明细失败: %w", err)
 		}
-		affected, _ := res.RowsAffected()
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
 		if affected == 0 {
-			// 这个对话早就登记过该目标，不重复计数。
 			continue
 		}
-		if _, err := tx.Exec(
-			upsertTargetRunSQL,
-			target, at, at, conversationID, conversationTitle, projectID, at,
-		); err != nil {
-			return recorded, fmt.Errorf("更新目标聚合失败: %w", err)
+		if _, err := tx.Exec(upsertTargetRunSQL, target, at, at, conversationID, strings.TrimSpace(conversationTitle), strings.TrimSpace(projectID), at); err != nil {
+			return 0, fmt.Errorf("更新目标聚合失败: %w", err)
 		}
 		recorded++
 	}
 	if err := tx.Commit(); err != nil {
-		return recorded, fmt.Errorf("登记目标运行失败: %w", err)
+		return 0, fmt.Errorf("登记目标运行失败: %w", err)
 	}
 	return recorded, nil
 }
 
-// CheckTargetRuns 查询这批目标里哪些跑过（只返回命中的）。
+// CheckTargetRuns 查询已提交或已运行目标，兼容内部全局调用。
 func (db *DB) CheckTargetRuns(list []string) ([]TargetRun, error) {
+	return db.CheckTargetRunsForAccess(list, "", RBACScopeAll)
+}
+
+// CheckTargetRunsForAccess 同用户跨项目可查重，但只汇总当前用户有权限的明细。
+func (db *DB) CheckTargetRunsForAccess(list []string, userID, scope string) ([]TargetRun, error) {
 	if db == nil {
 		return nil, nil
 	}
 	normalized := targets.NormalizeAll(list)
 	if len(normalized) == 0 {
-		return nil, nil
+		return []TargetRun{}, nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(normalized)), ",")
-	args := make([]interface{}, 0, len(normalized))
-	for _, t := range normalized {
-		args = append(args, t)
-	}
-	rows, err := db.Query(`
-		SELECT target, run_count, first_run_at, last_run_at, last_conversation_id, last_conversation_title, last_project_id
-		FROM target_runs
-		WHERE target IN (`+placeholders+`)`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("查询目标历史失败: %w", err)
-	}
-	defer rows.Close()
-
+	// 分块限制绑定参数数量（SQLite 同样适用），每块查询两个表，不做逐域名查询。
 	out := make([]TargetRun, 0, len(normalized))
-	for rows.Next() {
-		item, scanErr := scanTargetRun(rows)
-		if scanErr != nil {
-			return nil, scanErr
+	for start := 0; start < len(normalized); start += targetHistoryBatchSize {
+		end := start + targetHistoryBatchSize
+		if end > len(normalized) {
+			end = len(normalized)
 		}
-		out = append(out, item)
+		args := make([]interface{}, 0, end-start)
+		for _, target := range normalized[start:end] {
+			args = append(args, target)
+		}
+		filter := " AND target IN (" + strings.TrimRight(strings.Repeat("?,", len(args)), ",") + ")"
+		query, queryArgs := targetHistorySourcesSQL(filter, args, userID, scope)
+		batch, err := db.queryTargetHistory(query+targetHistoryMergedSQL+" ORDER BY a.target", queryArgs, len(args))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, batch...)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// ListTargetRuns 分页列出目标历史，支持按域名关键字搜索。
 func (db *DB) ListTargetRuns(keyword string, limit, offset int) ([]TargetRun, int, error) {
+	return db.ListTargetRunsForAccess(keyword, limit, offset, "", RBACScopeAll)
+}
+
+// ListTargetRunsForAccess 在数据库内分页汇总，最近时间取提交与运行时间中较新的一个。
+func (db *DB) ListTargetRunsForAccess(keyword string, limit, offset int, userID, scope string) ([]TargetRun, int, error) {
 	if db == nil {
 		return nil, 0, nil
 	}
+	limit, offset = targetHistoryPage(limit, offset)
+	filter := ""
+	args := []interface{}{}
+	if keyword = strings.ToLower(strings.TrimSpace(keyword)); keyword != "" {
+		filter = " AND target LIKE ?"
+		args = append(args, "%"+keyword+"%")
+	}
+	query, args := targetHistorySourcesSQL(filter, args, userID, scope)
+	var total int
+	if err := db.QueryRow(query+` SELECT COUNT(*) FROM (SELECT target FROM run_rows UNION SELECT target FROM submission_rows) history_targets`, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计目标历史失败: %w", err)
+	}
+	query += targetHistoryMergedSQL + ` ORDER BY CASE
+		WHEN r.last_run_at IS NULL THEN s.last_submitted_at
+		WHEN s.last_submitted_at IS NULL OR r.last_run_at >= s.last_submitted_at THEN r.last_run_at
+		ELSE s.last_submitted_at END DESC, a.target ASC LIMIT ? OFFSET ?`
+	list, err := db.queryTargetHistory(query, append(args, limit, offset), limit)
+	return list, total, err
+}
+
+func targetHistoryPage(limit, offset int) (int, int) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	keyword = strings.ToLower(strings.TrimSpace(keyword))
-
-	where := ""
-	args := make([]interface{}, 0, 4)
-	if keyword != "" {
-		where = " WHERE target LIKE ?"
-		args = append(args, "%"+keyword+"%")
-	}
-
-	var total int
-	if err := db.QueryRow("SELECT COUNT(*) FROM target_runs"+where, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("统计目标历史失败: %w", err)
-	}
-
-	queryArgs := append(append([]interface{}{}, args...), limit, offset)
-	rows, err := db.Query(`
-		SELECT target, run_count, first_run_at, last_run_at, last_conversation_id, last_conversation_title, last_project_id
-		FROM target_runs`+where+`
-		ORDER BY last_run_at DESC, target ASC
-		LIMIT ? OFFSET ?`, queryArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("查询目标历史失败: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]TargetRun, 0, limit)
-	for rows.Next() {
-		item, scanErr := scanTargetRun(rows)
-		if scanErr != nil {
-			return nil, 0, scanErr
-		}
-		out = append(out, item)
-	}
-	return out, total, rows.Err()
+	return limit, offset
 }
 
-// ListTargetRunEvents 列出某个目标跑过的对话明细，供历史页展开与跳转。
 func (db *DB) ListTargetRunEvents(target string, limit, offset int) ([]TargetRunEvent, int, error) {
-	if db == nil {
+	return db.ListTargetRunEventsForAccess(target, limit, offset, "", RBACScopeAll)
+}
+
+func (db *DB) ListTargetRunEventsForAccess(target string, limit, offset int, userID, scope string) ([]TargetRunEvent, int, error) {
+	if db == nil || targets.Normalize(target) == "" {
 		return nil, 0, nil
 	}
 	target = targets.Normalize(target)
-	if target == "" {
-		return nil, 0, nil
-	}
-	if limit <= 0 || limit > 500 {
-		limit = 50
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
+	limit, offset = targetHistoryPage(limit, offset)
+	access, args := targetHistoryAccessSQL("e", "conversation", "conversation_id", userID, scope)
+	args = append([]interface{}{target}, args...)
+	from := " FROM target_run_events e WHERE target = ?" + access
 	var total int
-	if err := db.QueryRow("SELECT COUNT(*) FROM target_run_events WHERE target = ?", target).Scan(&total); err != nil {
+	if err := db.QueryRow("SELECT COUNT(*)"+from, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("统计目标运行明细失败: %w", err)
 	}
-
-	rows, err := db.Query(`
-		SELECT id, target, conversation_id, conversation_title, project_id, started_at
-		FROM target_run_events
-		WHERE target = ?
-		ORDER BY started_at DESC
-		LIMIT ? OFFSET ?`, target, limit, offset)
+	rows, err := db.Query(`SELECT e.id, e.target, e.conversation_id, e.conversation_title, e.project_id, e.started_at`+from+`
+		ORDER BY e.started_at DESC, e.id DESC LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询目标运行明细失败: %w", err)
 	}
 	defer rows.Close()
-
 	out := make([]TargetRunEvent, 0, limit)
 	for rows.Next() {
 		var item TargetRunEvent
@@ -237,15 +216,18 @@ func (db *DB) ListTargetRunEvents(target string, limit, offset int) ([]TargetRun
 		if err := rows.Scan(&item.ID, &item.Target, &item.ConversationID, &title, &projectID, &item.StartedAt); err != nil {
 			return nil, 0, fmt.Errorf("扫描目标运行明细失败: %w", err)
 		}
-		item.ConversationTitle = stringFromNull(title)
-		item.ProjectID = stringFromNull(projectID)
+		item.ConversationTitle, item.ProjectID = stringFromNull(title), stringFromNull(projectID)
 		out = append(out, item)
 	}
 	return out, total, rows.Err()
 }
 
-// DeleteTargetRun 删除某个目标的登记（含明细），用于清理误登记的噪声目标（例如 example.com）。
 func (db *DB) DeleteTargetRun(target string) error {
+	return db.DeleteTargetRunForAccess(target, "", RBACScopeAll)
+}
+
+// DeleteTargetRunForAccess 只删除可访问的运行/提交明细，保留其他用户历史并同步重算该目标。
+func (db *DB) DeleteTargetRunForAccess(target, userID, scope string) error {
 	if db == nil {
 		return nil
 	}
@@ -255,186 +237,148 @@ func (db *DB) DeleteTargetRun(target string) error {
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("删除目标历史失败: %w", err)
+		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.Exec("DELETE FROM target_run_events WHERE target = ?", target); err != nil {
-		return fmt.Errorf("删除目标运行明细失败: %w", err)
+	defer tx.Rollback()
+	for _, entry := range []struct{ table, alias, resource, column string }{
+		{"target_run_events", "e", "conversation", "conversation_id"},
+		{"task_target_registrations", "s", "batch_task", "queue_id"},
+	} {
+		access, args := targetHistoryAccessSQL(entry.alias, entry.resource, entry.column, userID, scope)
+		// SQLite 和 PostgreSQL 均支持删除时给目标表设置别名。
+		if _, err := tx.Exec("DELETE FROM "+entry.table+" AS "+entry.alias+" WHERE target = ?"+access, append([]interface{}{target}, args...)...); err != nil {
+			return fmt.Errorf("删除目标历史失败: %w", err)
+		}
 	}
 	if _, err := tx.Exec("DELETE FROM target_runs WHERE target = ?", target); err != nil {
-		return fmt.Errorf("删除目标聚合失败: %w", err)
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("删除目标历史失败: %w", err)
+	if err := recomputeTargetRunAggregatesTx(tx, target); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit()
 }
 
-// RecomputeTargetRunAggregates 依据明细表重算聚合表。
-// 回填后调用一次即可，聚合值因此始终可以从明细重建，便于排错与修正。
+// RecomputeTargetRunAggregates 在数据库中重算；不把全部运行明细加载到内存。
 func (db *DB) RecomputeTargetRunAggregates() error {
 	if db == nil {
 		return nil
 	}
-	rows, err := db.Query(`
-		SELECT target, conversation_id, conversation_title, project_id, started_at
-		FROM target_run_events
-		ORDER BY started_at ASC`)
-	if err != nil {
-		return fmt.Errorf("读取目标运行明细失败: %w", err)
-	}
-
-	type agg struct {
-		count       int
-		first       time.Time
-		last        time.Time
-		lastConvID  string
-		lastTitle   string
-		lastProject string
-	}
-	byTarget := make(map[string]*agg)
-	for rows.Next() {
-		var target, conversationID string
-		var title, projectID *string
-		var startedAt time.Time
-		if err := rows.Scan(&target, &conversationID, &title, &projectID, &startedAt); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("扫描目标运行明细失败: %w", err)
-		}
-		item, ok := byTarget[target]
-		if !ok {
-			item = &agg{first: startedAt}
-			byTarget[target] = item
-		}
-		item.count++
-		item.last = startedAt
-		item.lastConvID = conversationID
-		item.lastTitle = stringFromNull(title)
-		item.lastProject = stringFromNull(projectID)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("读取目标运行明细失败: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("读取目标运行明细失败: %w", err)
-	}
-
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("重算目标聚合失败: %w", err)
+		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-
+	defer tx.Rollback()
 	if _, err := tx.Exec("DELETE FROM target_runs"); err != nil {
-		return fmt.Errorf("清空目标聚合失败: %w", err)
+		return err
 	}
-	now := time.Now()
-	for target, item := range byTarget {
-		if _, err := tx.Exec(`
-			INSERT INTO target_runs
-				(target, run_count, first_run_at, last_run_at, last_conversation_id, last_conversation_title, last_project_id, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			target, item.count, item.first, item.last, item.lastConvID, item.lastTitle, item.lastProject, now,
-		); err != nil {
-			return fmt.Errorf("写入目标聚合失败: %w", err)
-		}
+	if err := recomputeTargetRunAggregatesTx(tx, ""); err != nil {
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("重算目标聚合失败: %w", err)
-	}
-	return nil
+	return tx.Commit()
 }
 
-// BackfillTargetRunsFromConversations 从历史对话标题回填目标登记。
-// 「实际跑过」的口径就是对话：批量任务真正执行时也会建对话，所以这里只扫对话即可覆盖两条路径。
-// 幂等：明细表上有 (target, conversation_id) 唯一约束，重复执行不会重复计数。
+func recomputeTargetRunAggregatesTx(tx *Tx, target string) error {
+	filter, args := "", []interface{}{time.Now().UTC()}
+	if target != "" {
+		filter = " WHERE target = ?"
+		args = append(args, target)
+	}
+	_, err := tx.Exec(`INSERT INTO target_runs
+		(target, run_count, first_run_at, last_run_at, last_conversation_id, last_conversation_title, last_project_id, updated_at)
+		SELECT target, run_count, first_run_at, started_at, conversation_id, conversation_title, project_id, ?
+		FROM (SELECT *, COUNT(*) OVER (PARTITION BY target) AS run_count,
+			MIN(started_at) OVER (PARTITION BY target) AS first_run_at,
+			ROW_NUMBER() OVER (PARTITION BY target ORDER BY started_at DESC, conversation_id DESC) AS rn
+			FROM target_run_events`+filter+`) ranked WHERE rn = 1`, args...)
+	return err
+}
+
+// BackfillTargetRunsFromConversations 优先完整任务输入/最早用户输入，缺少输入时才兼容标题。
+// 只对已存在对话创建运行明细；未执行的批量任务由独立提交回填处理。
+// 使用主键游标分批，不全库加载；唯一约束使重复补漏幂等。
 func (db *DB) BackfillTargetRunsFromConversations() (TargetBackfillResult, error) {
 	var result TargetBackfillResult
 	if db == nil {
 		return result, nil
 	}
-	rows, err := db.Query(`
-		SELECT id, title, project_id, created_at
-		FROM conversations
-		ORDER BY created_at ASC`)
-	if err != nil {
-		return result, fmt.Errorf("读取历史对话失败: %w", err)
-	}
-
-	type convTargets struct {
-		id      string
-		title   string
-		project string
-		started time.Time
-		targets []string
-	}
-	items := make([]convTargets, 0, 128)
-	for rows.Next() {
-		var id, title string
-		var projectID *string
-		var createdAt time.Time
-		if err := rows.Scan(&id, &title, &projectID, &createdAt); err != nil {
-			_ = rows.Close()
-			return result, fmt.Errorf("扫描历史对话失败: %w", err)
-		}
-		result.Conversations++
-		extracted := targets.Extract(title)
-		if len(extracted) == 0 {
-			continue
-		}
-		result.WithTargets++
-		items = append(items, convTargets{
-			id:      id,
-			title:   title,
-			project: stringFromNull(projectID),
-			started: createdAt,
-			targets: extracted,
-		})
-	}
-	if err := rows.Close(); err != nil {
-		return result, fmt.Errorf("读取历史对话失败: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return result, fmt.Errorf("读取历史对话失败: %w", err)
-	}
-	if len(items) == 0 {
-		return result, nil
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return result, fmt.Errorf("回填目标历史失败: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	for _, item := range items {
-		for _, target := range item.targets {
-			res, execErr := tx.Exec(
-				insertTargetRunEventSQL,
-				uuid.New().String(), target, item.id, item.title, item.project, item.started,
-			)
-			if execErr != nil {
-				return result, fmt.Errorf("回填目标明细失败: %w", execErr)
-			}
-			if affected, _ := res.RowsAffected(); affected > 0 {
-				result.EventsInserted++
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return result, fmt.Errorf("回填目标历史失败: %w", err)
-	}
-	committed = true
-
-	// 明细落库后再统一重算聚合，避免「回填 + 日常登记」两条路径各写一套聚合逻辑。
-	if err := db.RecomputeTargetRunAggregates(); err != nil {
+	// 给旧运行明细补归属快照，不从助手或日志猜测目标。
+	if _, err := db.Exec(`UPDATE target_run_events SET owner_user_id = COALESCE(
+		(SELECT c.owner_user_id FROM conversations c WHERE c.id = target_run_events.conversation_id), '')
+		WHERE owner_user_id = '' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = target_run_events.conversation_id AND c.owner_user_id <> '')`); err != nil {
 		return result, err
+	}
+	cursor := ""
+	for {
+		rows, err := db.Query(`SELECT c.id, c.title, c.project_id, c.created_at, `+conversationOriginalTargetInputSQL+`
+			FROM conversations c WHERE c.id > ? ORDER BY c.id LIMIT ?`, cursor, targetHistoryBatchSize)
+		if err != nil {
+			return result, fmt.Errorf("读取历史对话失败: %w", err)
+		}
+		type input struct {
+			id, title, project string
+			at                 time.Time
+			targets            []string
+		}
+		batch := make([]input, 0, targetHistoryBatchSize)
+		for rows.Next() {
+			var item input
+			var project, original sql.NullString
+			if err := rows.Scan(&item.id, &item.title, &project, &item.at, &original); err != nil {
+				rows.Close()
+				return result, err
+			}
+			item.project = project.String
+			message := item.title
+			if original.Valid {
+				message = original.String
+			}
+			item.targets = targets.Extract(message)
+			result.Conversations++
+			if len(item.targets) > 0 {
+				result.WithTargets++
+			}
+			batch = append(batch, item)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return result, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			return result, err
+		}
+		n := 0
+		for _, item := range batch {
+			for _, target := range item.targets {
+				res, err := tx.Exec(insertTargetRunEventSQL, uuid.New().String(), target, item.id, item.title, item.project, item.at.UTC(), item.id)
+				if err != nil {
+					tx.Rollback()
+					return result, fmt.Errorf("回填目标明细失败: %w", err)
+				}
+				affected, err := res.RowsAffected()
+				if err != nil {
+					tx.Rollback()
+					return result, err
+				}
+				if affected > 0 {
+					if _, err := tx.Exec(upsertTargetRunSQL, target, item.at.UTC(), item.at.UTC(), item.id, item.title, item.project, time.Now().UTC()); err != nil {
+						tx.Rollback()
+						return result, err
+					}
+					n++
+				}
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return result, err
+		}
+		result.EventsInserted += n
+		cursor = batch[len(batch)-1].id
 	}
 	if err := db.QueryRow("SELECT COUNT(*) FROM target_runs").Scan(&result.Targets); err != nil {
 		return result, fmt.Errorf("统计目标历史失败: %w", err)
@@ -446,19 +390,27 @@ func scanTargetRun(rows interface {
 	Scan(dest ...interface{}) error
 }) (TargetRun, error) {
 	var item TargetRun
-	var firstRunAt, lastRunAt *time.Time
-	var lastConvID, lastTitle, lastProject *string
-	if err := rows.Scan(
-		&item.Target, &item.RunCount, &firstRunAt, &lastRunAt, &lastConvID, &lastTitle, &lastProject,
-	); err != nil {
+	var first, last, submitted sql.NullString
+	var conv, title, project, queue, task, taskTitle, taskProject sql.NullString
+	if err := rows.Scan(&item.Target, &item.RunCount, &first, &last, &conv, &title, &project,
+		&item.SubmittedCount, &submitted, &queue, &task, &taskTitle, &taskProject); err != nil {
 		return item, fmt.Errorf("扫描目标历史失败: %w", err)
 	}
-	item.FirstRunAt = firstRunAt
-	item.LastRunAt = lastRunAt
-	item.LastConversationID = stringFromNull(lastConvID)
-	item.LastConversationTitle = stringFromNull(lastTitle)
-	item.LastProjectID = stringFromNull(lastProject)
+	item.FirstRunAt, item.LastRunAt, item.LastSubmittedAt = targetHistoryTime(first), targetHistoryTime(last), targetHistoryTime(submitted)
+	item.LastConversationID, item.LastConversationTitle, item.LastProjectID = conv.String, title.String, project.String
+	item.LastQueueID, item.LastTaskID, item.LastTaskTitle, item.LastSubmittedProjectID = queue.String, task.String, taskTitle.String, taskProject.String
 	return item, nil
+}
+
+func targetHistoryTime(value sql.NullString) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	at := parseDBTime(value.String)
+	if at.IsZero() {
+		return nil
+	}
+	return &at
 }
 
 func stringFromNull(value *string) string {
@@ -468,18 +420,13 @@ func stringFromNull(value *string) string {
 	return *value
 }
 
-// ConversationTargetMeta 读取登记目标所需的对话元信息（标题、项目），不加载消息正文。
-// 对话已被删除时返回空值而不是错误：登记只是附加信息，不该影响本轮运行。
+// ConversationTargetMeta 读取运行登记所需的标题、项目，不加载消息正文。
 func (db *DB) ConversationTargetMeta(conversationID string) (title, projectID string, err error) {
-	if db == nil {
-		return "", "", nil
-	}
-	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" {
+	if db == nil || strings.TrimSpace(conversationID) == "" {
 		return "", "", nil
 	}
 	var project *string
-	if err := db.QueryRow("SELECT title, project_id FROM conversations WHERE id = ?", conversationID).Scan(&title, &project); err != nil {
+	if err := db.QueryRow("SELECT title, project_id FROM conversations WHERE id = ?", strings.TrimSpace(conversationID)).Scan(&title, &project); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", nil
 		}

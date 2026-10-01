@@ -6,7 +6,7 @@ import (
 )
 
 func TestTargetRunsRecordCheckAndDelete(t *testing.T) {
-	db := newRBACTestDB(t)
+	db := newTargetHistoryTestDB(t)
 
 	convA, err := db.CreateConversation("对 hfm.com 做全面 完整 深度的渗透测试 漏洞挖掘", ConversationCreateMeta{})
 	if err != nil {
@@ -94,7 +94,7 @@ func TestTargetRunsRecordCheckAndDelete(t *testing.T) {
 }
 
 func TestTargetRunsIgnoreNonTargetInput(t *testing.T) {
-	db := newRBACTestDB(t)
+	db := newTargetHistoryTestDB(t)
 	conv, err := db.CreateConversation("只做一件事：调用 fofa_search 工具一次", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
@@ -112,7 +112,7 @@ func TestTargetRunsIgnoreNonTargetInput(t *testing.T) {
 }
 
 func TestBackfillTargetRunsFromConversationsIsIdempotent(t *testing.T) {
-	db := newRBACTestDB(t)
+	db := newTargetHistoryTestDB(t)
 
 	titles := []string{
 		"对 orbex.com 做全面 完整 深度的渗透测试 漏洞挖掘",

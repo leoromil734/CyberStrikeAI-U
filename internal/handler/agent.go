@@ -1771,17 +1771,18 @@ func filterSlice[T any](items []T, keep func(T) bool) []T {
 
 // BatchTaskRequest 批量任务请求。Tasks 兼容字符串数组，也接受 {message, aiChannelId} 对象数组。
 type BatchTaskRequest struct {
-	Title         string          `json:"title"`
-	Tasks         json.RawMessage `json:"tasks" binding:"required"`
-	Role          string          `json:"role,omitempty"`
-	AgentMode     string          `json:"agentMode,omitempty"`
-	ScheduleMode  string          `json:"scheduleMode,omitempty"`
-	CronExpr      string          `json:"cronExpr,omitempty"`
-	ExecuteNow    bool            `json:"executeNow,omitempty"`
-	ProjectID     string          `json:"projectId,omitempty"`
-	Concurrency   int             `json:"concurrency,omitempty"`
-	ModelRetryMax *int            `json:"modelRetryMax,omitempty"`
-	AIChannelID   string          `json:"aiChannelId,omitempty"`
+	Title               string          `json:"title"`
+	Tasks               json.RawMessage `json:"tasks" binding:"required"`
+	Role                string          `json:"role,omitempty"`
+	AgentMode           string          `json:"agentMode,omitempty"`
+	ScheduleMode        string          `json:"scheduleMode,omitempty"`
+	CronExpr            string          `json:"cronExpr,omitempty"`
+	ExecuteNow          bool            `json:"executeNow,omitempty"`
+	ProjectID           string          `json:"projectId,omitempty"`
+	IndependentProjects bool            `json:"independentProjects,omitempty"`
+	Concurrency         int             `json:"concurrency,omitempty"`
+	ModelRetryMax       *int            `json:"modelRetryMax,omitempty"`
+	AIChannelID         string          `json:"aiChannelId,omitempty"`
 }
 
 func parseBatchTaskInputs(raw json.RawMessage, defaultChannel string) ([]BatchTaskInput, error) {
@@ -1895,7 +1896,21 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		nextRunAt = &next
 	}
 
-	queue, createErr := h.batchTaskManager.CreateBatchQueue(req.Title, req.Role, agentMode, scheduleMode, cronExpr, req.ProjectID, nextRunAt, req.Concurrency, resolveModelErrorRetryMax(req.ModelRetryMax), validTasks)
+	opts := database.BatchQueueCreateOptions{IndependentProjects: req.IndependentProjects}
+	if session, ok := security.CurrentSession(c); ok {
+		opts.OwnerUserID = session.UserID
+	}
+	if req.IndependentProjects {
+		if h.config == nil || !h.config.Project.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "每任务独立项目需要启用项目功能"})
+			return
+		}
+		if !security.SessionHasPermission(c, "project:write") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "创建任务独立项目需要 project:write 权限"})
+			return
+		}
+	}
+	queue, createErr := h.batchTaskManager.CreateBatchQueue(req.Title, req.Role, agentMode, scheduleMode, cronExpr, req.ProjectID, nextRunAt, req.Concurrency, resolveModelErrorRetryMax(req.ModelRetryMax), validTasks, opts)
 	if createErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": createErr.Error()})
 		return
@@ -2218,6 +2233,10 @@ func (h *AgentHandler) UpdateBatchTask(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(req.Message) != "" {
+		if queue, exists := h.batchTaskManager.GetBatchQueue(queueID); exists && queue.IndependentProjects && !security.SessionHasPermission(c, "project:write") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "编辑独立项目任务需要 project:write 权限"})
+			return
+		}
 		if err := h.batchTaskManager.UpdateTaskMessage(queueID, taskID, req.Message); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -2257,6 +2276,10 @@ func (h *AgentHandler) AddBatchTask(c *gin.Context) {
 		return
 	}
 
+	if queue, exists := h.batchTaskManager.GetBatchQueue(queueID); exists && queue.IndependentProjects && !security.SessionHasPermission(c, "project:write") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "追加独立项目任务需要 project:write 权限"})
+		return
+	}
 	task, err := h.batchTaskManager.AddTaskToQueue(queueID, req.Message, req.AIChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2283,10 +2306,8 @@ func (h *AgentHandler) RunSingleBatchTask(c *gin.Context) {
 	}
 	h.batchTaskManager.SetSingleRunTask(queueID, taskID)
 
-	// 暂停态单条执行：旧批量协程可能仍占用执行槽，先回收以便重新启动
-	if queue, ok := h.batchTaskManager.GetBatchQueue(queueID); ok && queue.Status == BatchQueueStatusPaused {
-		h.batchTaskManager.ForceUnmarkQueueExecutor(queueID)
-	}
+	// PrepareSingleTaskRun refuses to overlap an executor that is still
+	// stopping. Never force-clear its ownership and launch a second worker.
 
 	autoStarted := true
 	autoStartMsg := "已开始单条执行"
@@ -2360,6 +2381,9 @@ func (h *AgentHandler) nextBatchQueueRunAt(cronExpr string, from time.Time) (*ti
 func (h *AgentHandler) startBatchQueueExecution(queueID string, scheduled bool) (bool, error) {
 	// 先获取执行互斥门，再读取队列状态，避免基于过时快照做判断
 	if !h.batchTaskManager.TryMarkQueueExecutor(queueID) {
+		if queue, ok := h.batchTaskManager.GetBatchQueue(queueID); ok && queue.Status == BatchQueueStatusPaused {
+			return true, fmt.Errorf("暂停中的执行器仍在收尾，请等待停止后再继续")
+		}
 		return true, nil
 	}
 
@@ -2392,6 +2416,11 @@ func (h *AgentHandler) startBatchQueueExecution(queueID string, scheduled bool) 
 	} else if queue.Status != "pending" && queue.Status != "paused" {
 		h.batchTaskManager.UnmarkQueueExecutor(queueID)
 		return true, fmt.Errorf("队列状态不允许启动")
+	}
+
+	if !scheduled && queue.Status == BatchQueueStatusPaused && !h.batchTaskManager.HasResumableTasks(queueID) {
+		h.batchTaskManager.UnmarkQueueExecutor(queueID)
+		return true, fmt.Errorf("队列没有待执行或可继续的暂停任务；已取消项需显式单条重跑，未标记完成")
 	}
 
 	if queue != nil && batchQueueWantsEino(queue.AgentMode) && (h.config == nil || !h.config.MultiAgent.Enabled) {

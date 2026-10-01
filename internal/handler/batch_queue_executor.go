@@ -11,7 +11,6 @@ import (
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/agentfinalizer"
-	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
@@ -125,8 +124,28 @@ func (h *AgentHandler) tryFinalizeBatchQueue(queueID string) {
 	h.logger.Info("批量任务队列执行完成", zap.String("queueId", queueID))
 }
 
+func batchSubTaskProjectID(cfg *config.Config, queue *BatchTaskQueue, task *BatchTask) (string, error) {
+	if queue == nil || task == nil {
+		return "", fmt.Errorf("任务或队列不存在")
+	}
+	if queue.IndependentProjects {
+		if cfg == nil || !cfg.Project.Enabled {
+			return "", fmt.Errorf("每任务独立项目需要启用项目功能；未回退到共享项目")
+		}
+		if projectID := strings.TrimSpace(task.ProjectID); projectID != "" {
+			return projectID, nil
+		}
+		return "", fmt.Errorf("任务缺少独立项目绑定；未回退到共享项目")
+	}
+	return effectiveProjectID(cfg, queue.ProjectID), nil
+}
+
 // executeOneBatchSubTask 执行单条批量子任务（各自独立会话）。
 func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQueue, task *BatchTask) {
+	queue, exists := h.batchTaskManager.GetBatchQueue(queueID)
+	if !exists || queue.Status != BatchQueueStatusRunning {
+		return
+	}
 	ownerUserID := h.db.GetResourceOwner("batch_task", queueID)
 	access, accessErr := h.db.ResolveRBACAccess(ownerUserID)
 	if accessErr != nil || access == nil || !access.User.Enabled {
@@ -134,18 +153,23 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		return
 	}
 	principal := authctx.NewPrincipalWithScopes(access.User.ID, access.User.Username, access.Scope, access.Permissions, access.PermissionScopes)
-	title := safeTruncateString(task.Message, 50)
-	batchMeta := audit.ConversationCreateMeta("batch_task")
-	batchMeta.ProjectID = effectiveProjectID(h.config, queue.ProjectID)
-	conv, err := h.db.CreateConversation(title, batchMeta)
-	if err != nil {
-		h.logger.Error("创建对话失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
-		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "创建对话失败: "+err.Error())
+	projectID, projectErr := batchSubTaskProjectID(h.config, queue, task)
+	if projectErr != nil {
+		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", projectErr.Error())
 		return
 	}
-	conversationID := conv.ID
-	_ = h.db.SetResourceOwner("conversation", conversationID, access.User.ID)
-	_ = h.db.AssignResourceToUser(access.User.ID, "conversation", conversationID)
+	if queue.IndependentProjects {
+		if _, err := h.db.GetProject(projectID); err != nil || !h.db.UserCanAccessResource(access.User.ID, principal.ScopeFor("project:read"), "project", projectID) {
+			h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "任务独立项目不存在或不可访问；未回退到共享项目，请修复项目绑定")
+			return
+		}
+	}
+	conversationID, resumeHistory, resuming, err := h.prepareBatchSubTaskConversation(queue, task, access.User.ID, principal.ScopeFor("chat:read"), projectID)
+	if err != nil {
+		h.logger.Error("准备任务对话失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
+		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", err.Error())
+		return
+	}
 
 	h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, BatchTaskStatusRunning, "", "", conversationID)
 
@@ -166,7 +190,14 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		}
 	}
 
-	if _, err = h.db.AddMessage(conversationID, "user", task.Message, nil); err != nil {
+	if resuming {
+		finalMessage = "继续同一会话中被队列暂停的任务。沿用已有 assessment_id、证据与禁止重复项；先核对暂停前的动作、副作用和未结束工具，再从未完成步骤继续，不重新全量侦察。\n\n原始任务与角色约束：\n" + finalMessage
+	}
+	userMessage := task.Message
+	if resuming {
+		userMessage = "继续暂停任务；保留已有证据，核对未结束动作后继续。原始任务：" + task.Message
+	}
+	if _, err = h.db.AddMessage(conversationID, "user", userMessage, nil); err != nil {
 		h.logger.Error("保存用户消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
 	}
 
@@ -240,6 +271,10 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	}
 	registered = true
 	h.batchTaskManager.SetTaskCancel(queueID, task.ID, timeoutCancel)
+	if taskCtx.Err() != nil {
+		h.handleBatchSubTaskRunError(queueID, task, conversationID, assistantMessageID, baseCtx, taskCtx, nil, taskCtx.Err(), &finishStatus)
+		return
+	}
 
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 	taskCtx = mcp.WithMCPConversationID(taskCtx, conversationID)
@@ -275,7 +310,10 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)
 	// 最终化治理：候选文本先过 finalizer，未收敛时按原因自动续跑（含等待仍在跑的异步工具）。
 	segFinalMessage := finalMessage
-	segHistory := []agent.ChatMessage{}
+	segHistory := resumeHistory
+	if segHistory == nil {
+		segHistory = []agent.ChatMessage{}
+	}
 	finalizationAutoContinueAttempt := finalizationContinuationState{}
 	upstreamErrorRetries := 0
 	var resultMA *multiagent.RunResult
@@ -495,8 +533,12 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 		strings.Contains(strings.ToLower(errStr), "context cancelled") ||
 		(partialResp != "" && (strings.Contains(partialResp, "任务已被取消") || strings.Contains(partialResp, "任务执行中断")))
 	isTimeout := errors.Is(runErr, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded)
+	queue, queueExists := h.batchTaskManager.GetBatchQueue(queueID)
+	isPaused := isCancelled && !isTimeout && !errors.Is(context.Cause(baseCtx), ErrTaskCancelled) && queueExists && queue.Status == BatchQueueStatusPaused
 
-	if isTimeout {
+	if isPaused {
+		*finishStatus = BatchTaskStatusPaused
+	} else if isTimeout {
 		*finishStatus = "timeout"
 	} else if isCancelled {
 		*finishStatus = "cancelled"
@@ -507,7 +549,10 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 	if isCancelled {
 		h.logger.Info("批量任务被取消", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
 		cancelMsg := "任务已被用户取消，后续操作已停止。"
-		if partialResp != "" && (strings.Contains(partialResp, "任务已被取消") || strings.Contains(partialResp, "任务执行中断")) {
+		if isPaused {
+			cancelMsg = "任务已随队列暂停，保留当前会话和已有证据；继续时核对未结束动作后从未完成步骤恢复。"
+		}
+		if !isPaused && partialResp != "" && (strings.Contains(partialResp, "任务已被取消") || strings.Contains(partialResp, "任务执行中断")) {
 			cancelMsg = partialResp
 		}
 		if assistantMessageID != "" {
@@ -520,7 +565,7 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 		} else if _, errMsg := h.db.AddMessage(conversationID, "assistant", cancelMsg, nil); errMsg != nil {
 			h.logger.Warn("保存取消消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(errMsg))
 		}
-		h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, BatchTaskStatusCancelled, cancelMsg, "", conversationID)
+		h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, *finishStatus, cancelMsg, "", conversationID)
 		return
 	}
 

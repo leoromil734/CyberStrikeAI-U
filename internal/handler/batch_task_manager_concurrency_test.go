@@ -425,6 +425,7 @@ func TestBatchManagerMultiStatementFailureRollsBack(t *testing.T) {
 				before, _ := m.GetBatchQueue(q.ID)
 				var statements, callbacks atomic.Int32
 				m.SetTaskCancel(q.ID, q.Tasks[1].ID, func() { callbacks.Add(1) })
+				callbacksBeforeMutation := callbacks.Load()
 				c := &batchManagerTestConnector{exec: func(string, []driver.NamedValue) error {
 					if statements.Add(1) == 2 && !failCommit {
 						return errors.New("second SQL failed")
@@ -445,7 +446,7 @@ func TestBatchManagerMultiStatementFailureRollsBack(t *testing.T) {
 					}
 				}
 				after, _ := m.GetBatchQueue(q.ID)
-				if !reflect.DeepEqual(before, after) || callbacks.Load() != 0 {
+				if !reflect.DeepEqual(before, after) || callbacks.Load() != callbacksBeforeMutation {
 					t.Fatal("partial failure changed memory/callbacks")
 				}
 				if !failCommit && (c.commits.Load() != 0 || c.rollbacks.Load() != 1) {
@@ -476,7 +477,7 @@ func (r *batchManagerTestRows) Next(dst []driver.Value) error {
 	return nil
 }
 func batchManagerQueueRows(id string) driver.Rows {
-	return &batchManagerTestRows{columns: strings.Split("id,title,role,agent_mode,schedule_mode,cron_expr,next_run_at,schedule_enabled,last_schedule_trigger_at,last_schedule_error,last_run_error,project_id,concurrency,model_retry_max,status,created_at,started_at,completed_at,current_index", ","), rows: [][]driver.Value{{id, "cold", nil, "eino_single", "manual", nil, nil, int64(1), nil, nil, nil, nil, int64(1), int64(3), "pending", "2026-09-29 12:00:00", nil, nil, int64(0)}}}
+	return &batchManagerTestRows{columns: strings.Split("id,title,role,agent_mode,schedule_mode,cron_expr,next_run_at,schedule_enabled,last_schedule_trigger_at,last_schedule_error,last_run_error,project_id,independent_projects,concurrency,model_retry_max,status,created_at,started_at,completed_at,current_index", ","), rows: [][]driver.Value{{id, "cold", nil, "eino_single", "manual", nil, nil, int64(1), nil, nil, nil, nil, int64(0), int64(1), int64(3), "pending", "2026-09-29 12:00:00", nil, nil, int64(0)}}}
 }
 
 func TestBatchManagerColdListsDoNotHoldGlobalLock(t *testing.T) {
@@ -495,7 +496,7 @@ func TestBatchManagerColdListsDoNotHoldGlobalLock(t *testing.T) {
 				if strings.Contains(query, "FROM batch_tasks") {
 					close(entered)
 					<-release
-					return &batchManagerTestRows{columns: strings.Split("id,queue_id,message,conversation_id,status,started_at,completed_at,error,result,ai_channel_id,retry_count", ",")}, nil
+					return &batchManagerTestRows{columns: strings.Split("id,queue_id,message,conversation_id,status,started_at,completed_at,error,result,ai_channel_id,retry_count,project_id", ",")}, nil
 				}
 				return batchManagerQueueRows("cold"), nil
 			}}

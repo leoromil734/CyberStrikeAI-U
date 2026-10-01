@@ -191,6 +191,10 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 					"type":        "string",
 					"description": "队列内子对话绑定的项目 ID（可选，未指定时使用 config.project.default_project_id）",
 				},
+				"independent_projects": map[string]interface{}{
+					"type":        "boolean",
+					"description": "可选：每条任务创建独立项目，名称为目标加随机 ID，隔离项目 facts。需要项目功能与 project:write 权限；不得同时传共享 project_id。重跑沿用各自项目，默认 false 兼容共享项目模式。",
+				},
 				"concurrency": map[string]interface{}{
 					"type":        "integer",
 					"description": "同时执行的子任务数。0 或未填时按任务条数并行，最大 32。",
@@ -249,7 +253,21 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 			n := int(mcpArgFloat(args, "model_retry_max"))
 			modelRetry = &n
 		}
-		queue, createErr := h.batchTaskManager.CreateBatchQueue(title, role, agentMode, scheduleMode, cronExpr, projectID, nextRunAt, concurrency, resolveModelErrorRetryMax(modelRetry), tasks)
+		independent, _ := mcpArgBool(args, "independent_projects")
+		opts := database.BatchQueueCreateOptions{IndependentProjects: independent}
+		if principal, ok := authctx.PrincipalFromContext(ctx); ok {
+			opts.OwnerUserID = principal.UserID
+		}
+		if independent {
+			if h.config == nil || !h.config.Project.Enabled {
+				return batchMCPTextResult("每任务独立项目需要启用项目功能", true), nil
+			}
+			principal, ok := authctx.PrincipalFromContext(ctx)
+			if !ok || !principal.HasPermission("project:write") {
+				return batchMCPTextResult("创建任务独立项目需要 project:write 权限", true), nil
+			}
+		}
+		queue, createErr := h.batchTaskManager.CreateBatchQueue(title, role, agentMode, scheduleMode, cronExpr, projectID, nextRunAt, concurrency, resolveModelErrorRetryMax(modelRetry), tasks, opts)
 		if createErr != nil {
 			return batchMCPTextResult("创建队列失败: "+createErr.Error(), true), nil
 		}
@@ -607,6 +625,12 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		if qid == "" || msg == "" {
 			return batchMCPTextResult("queue_id 与 message 均不能为空", true), nil
 		}
+		if queue, exists := h.batchTaskManager.GetBatchQueue(qid); exists && queue.IndependentProjects {
+			principal, ok := authctx.PrincipalFromContext(ctx)
+			if !ok || !principal.HasPermission("project:write") {
+				return batchMCPTextResult("追加独立项目任务需要 project:write 权限", true), nil
+			}
+		}
 		task, err := h.batchTaskManager.AddTaskToQueue(qid, msg, mcpArgString(args, "ai_channel_id"))
 		if err != nil {
 			return batchMCPTextResult(err.Error(), true), nil
@@ -645,6 +669,12 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		msg := strings.TrimSpace(mcpArgString(args, "message"))
 		if qid == "" || tid == "" || msg == "" {
 			return batchMCPTextResult("queue_id、task_id、message 均不能为空", true), nil
+		}
+		if queue, exists := h.batchTaskManager.GetBatchQueue(qid); exists && queue.IndependentProjects {
+			principal, ok := authctx.PrincipalFromContext(ctx)
+			if !ok || !principal.HasPermission("project:write") {
+				return batchMCPTextResult("编辑独立项目任务需要 project:write 权限", true), nil
+			}
 		}
 		if err := h.batchTaskManager.UpdateTaskMessage(qid, tid, msg); err != nil {
 			return batchMCPTextResult(err.Error(), true), nil
@@ -718,6 +748,8 @@ type batchTaskQueueMCPListItem struct {
 	CompletedAt           *time.Time                `json:"completedAt,omitempty"`
 	CurrentIndex          int                       `json:"currentIndex"`
 	Concurrency           int                       `json:"concurrency"`
+	IndependentProjects   bool                      `json:"independentProjects"`
+	ExecutorActive        bool                      `json:"executorActive,omitempty"`
 	TaskTotal             int                       `json:"task_total"`
 	TaskCounts            map[string]int            `json:"task_counts"`
 	Tasks                 []batchTaskMCPListSummary `json:"tasks"`
@@ -747,6 +779,8 @@ func toBatchTaskQueueMCPListItem(q *BatchTaskQueue) batchTaskQueueMCPListItem {
 	counts := map[string]int{
 		"pending":   0,
 		"running":   0,
+		"paused":    0,
+		"blocked":   0,
 		"completed": 0,
 		"failed":    0,
 		"cancelled": 0,
@@ -782,7 +816,9 @@ func toBatchTaskQueueMCPListItem(q *BatchTaskQueue) batchTaskQueueMCPListItem {
 		CompletedAt:           q.CompletedAt,
 		CurrentIndex:          q.CurrentIndex,
 		Concurrency:           q.Concurrency,
-		TaskTotal:             len(tasks),
+		IndependentProjects:   q.IndependentProjects,
+		ExecutorActive:        q.ExecutorActive,
+		TaskTotal:             len(q.Tasks),
 		TaskCounts:            counts,
 		Tasks:                 tasks,
 	}

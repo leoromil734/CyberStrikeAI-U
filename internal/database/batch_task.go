@@ -23,6 +23,7 @@ type BatchTaskQueueRow struct {
 	LastScheduleError     sql.NullString
 	LastRunError          sql.NullString
 	ProjectID             sql.NullString
+	IndependentProjects   sql.NullInt64
 	Concurrency           sql.NullInt64
 	ModelRetryMax         sql.NullInt64
 	Status                string
@@ -45,6 +46,7 @@ type BatchTaskRow struct {
 	Result         sql.NullString
 	AIChannelID    sql.NullString
 	RetryCount     sql.NullInt64
+	ProjectID      sql.NullString
 }
 
 // CreateBatchQueue 创建批量任务队列
@@ -60,7 +62,15 @@ func (db *DB) CreateBatchQueue(
 	concurrency int,
 	modelRetryMax int,
 	tasks []map[string]interface{},
+	options ...BatchQueueCreateOptions,
 ) error {
+	var opts BatchQueueCreateOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	if opts.IndependentProjects && strings.TrimSpace(projectID) != "" {
+		return fmt.Errorf("每任务独立项目不能同时绑定共享项目")
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("开始事务失败: %w", err)
@@ -78,11 +88,14 @@ func (db *DB) CreateBatchQueue(
 		projectIDVal = strings.TrimSpace(projectID)
 	}
 	_, err = tx.Exec(
-		"INSERT INTO batch_task_queues (id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, project_id, concurrency, model_retry_max, status, created_at, current_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		queueID, title, role, agentMode, scheduleMode, cronExpr, nextRunAtValue, 1, projectIDVal, concurrency, modelRetryMax, "pending", now, 0,
+		"INSERT INTO batch_task_queues (id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, project_id, independent_projects, concurrency, model_retry_max, status, created_at, current_index, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		queueID, title, role, agentMode, scheduleMode, cronExpr, nextRunAtValue, 1, projectIDVal, boolToInt(opts.IndependentProjects), concurrency, modelRetryMax, "pending", now, 0, nullIfEmpty(strings.TrimSpace(opts.OwnerUserID)),
 	)
 	if err != nil {
 		return fmt.Errorf("创建批量任务队列失败: %w", err)
+	}
+	if err := assignBatchResourceTx(tx, opts.OwnerUserID, "batch_task", queueID, now); err != nil {
+		return err
 	}
 
 	// 插入任务
@@ -97,19 +110,34 @@ func (db *DB) CreateBatchQueue(
 		}
 
 		aiChannelID, _ := task["aiChannelId"].(string)
+		taskProjectID := ""
+		if opts.IndependentProjects {
+			project, _ := task["project"].(*Project)
+			if err := insertBatchTaskProjectTx(tx, project, opts.OwnerUserID, now); err != nil {
+				return err
+			}
+			taskProjectID = project.ID
+		}
 		_, err = tx.Exec(
-			"INSERT INTO batch_tasks (id, queue_id, message, ai_channel_id, retry_count, status) VALUES (?, ?, ?, ?, ?, ?)",
-			taskID, queueID, message, strings.TrimSpace(aiChannelID), 0, "pending",
+			"INSERT INTO batch_tasks (id, queue_id, message, ai_channel_id, retry_count, status, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			taskID, queueID, message, strings.TrimSpace(aiChannelID), 0, "pending", nullIfEmpty(taskProjectID),
 		)
 		if err != nil {
 			return fmt.Errorf("创建批量任务失败: %w", err)
+		}
+		registrationProjectID := taskProjectID
+		if registrationProjectID == "" {
+			registrationProjectID = strings.TrimSpace(projectID)
+		}
+		if _, err := RecordTaskTargetsTx(tx, queueID, taskID, message, registrationProjectID, opts.OwnerUserID, now); err != nil {
+			return fmt.Errorf("登记任务目标失败: %w", err)
 		}
 	}
 
 	return tx.Commit()
 }
 
-const batchQueueSelectColumns = `id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, last_schedule_trigger_at, last_schedule_error, last_run_error, project_id, concurrency, model_retry_max, status, created_at, started_at, completed_at, current_index`
+const batchQueueSelectColumns = `id, title, role, agent_mode, schedule_mode, cron_expr, next_run_at, schedule_enabled, last_schedule_trigger_at, last_schedule_error, last_run_error, project_id, independent_projects, concurrency, model_retry_max, status, created_at, started_at, completed_at, current_index`
 
 // GetBatchQueue 获取批量任务队列
 func (db *DB) GetBatchQueue(queueID string) (*BatchTaskQueueRow, error) {
@@ -295,14 +323,14 @@ func (db *DB) CountBatchQueuesForAccess(status, keyword, userID, scope string) (
 
 func batchQueueScanDest(row *BatchTaskQueueRow, createdAt *string) []interface{} {
 	return []interface{}{
-		&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.ModelRetryMax, &row.Status, createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex,
+		&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.IndependentProjects, &row.Concurrency, &row.ModelRetryMax, &row.Status, createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex,
 	}
 }
 
 // GetBatchTasks 获取批量任务队列的所有任务
 func (db *DB) GetBatchTasks(queueID string) ([]*BatchTaskRow, error) {
 	rows, err := db.Query(
-		"SELECT id, queue_id, message, conversation_id, status, started_at, completed_at, error, result, ai_channel_id, retry_count FROM batch_tasks WHERE queue_id = ? ORDER BY rowid ASC",
+		"SELECT id, queue_id, message, conversation_id, status, started_at, completed_at, error, result, ai_channel_id, retry_count, project_id FROM batch_tasks WHERE queue_id = ? ORDER BY rowid ASC",
 		queueID,
 	)
 	if err != nil {
@@ -316,7 +344,7 @@ func (db *DB) GetBatchTasks(queueID string) ([]*BatchTaskRow, error) {
 		if err := rows.Scan(
 			&task.ID, &task.QueueID, &task.Message, &task.ConversationID,
 			&task.Status, &task.StartedAt, &task.CompletedAt, &task.Error, &task.Result,
-			&task.AIChannelID, &task.RetryCount,
+			&task.AIChannelID, &task.RetryCount, &task.ProjectID,
 		); err != nil {
 			return nil, fmt.Errorf("扫描批量任务失败: %w", err)
 		}

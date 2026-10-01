@@ -110,20 +110,25 @@ function renderTargetsTable() {
 function buildTargetRow(item) {
     const target = String(item && item.target != null ? item.target : '');
     const safeTarget = escapeHtml(target);
-    const runCount = parseInt(item && item.runCount, 10) || 0;
+    const runCount = Math.max(0, parseInt(item && item.runCount, 10) || 0);
+    const submittedCount = Math.max(0, parseInt(item && item.submittedCount, 10) || 0);
     const lastTime = formatTargetTime(item && item.lastRunAt);
+    const lastSubmittedTime = formatTargetTime(item && item.lastSubmittedAt);
     const isExpanded = targetsPageState.expanded.has(target);
+    const status = runCount > 0 ? _t('targets.runsUnit', { count: runCount }) : '已登记，尚未执行';
+    const submissionMeta = submittedCount > 0
+        ? '<div class="targets-muted">' + escapeHtml('已登记 ' + submittedCount + ' 个任务') + '</div>' : '';
 
     const lastCell = lastTime
         ? escapeHtml(_tPlain('targets.lastRun', { time: lastTime }))
-        : '<span class="targets-muted">—</span>';
+        : lastSubmittedTime ? escapeHtml('最近登记 ' + lastSubmittedTime) : '<span class="targets-muted">—</span>';
 
     const toggleLabel = isExpanded ? _t('targets.hideRuns') : _t('targets.viewRuns');
 
     const mainRow =
         '<tr class="targets-row' + (isExpanded ? ' is-expanded' : '') + '">' +
             '<td><code class="targets-domain">' + safeTarget + '</code></td>' +
-            '<td><span class="targets-runs">' + escapeHtml(_t('targets.runsUnit', { count: runCount })) + '</span></td>' +
+            '<td><span class="targets-runs">' + escapeHtml(status) + '</span>' + submissionMeta + '</td>' +
             '<td>' + lastCell + '</td>' +
             '<td class="col-actions targets-actions">' +
                 '<button type="button" class="btn-secondary targets-btn" data-action="toggle-runs" data-target="' + safeTarget + '">' +
@@ -156,6 +161,9 @@ function buildTargetDetail(item) {
     const lastTime = formatTargetTime(item && item.lastRunAt);
     if (firstTime) metaParts.push(_tPlain('targets.firstRun', { time: firstTime }));
     if (lastTime) metaParts.push(_tPlain('targets.lastRun', { time: lastTime }));
+    const submittedTime = formatTargetTime(item && item.lastSubmittedAt);
+    if (submittedTime) metaParts.push('最近登记 ' + submittedTime);
+    if (item && item.lastTaskTitle) metaParts.push('任务：' + String(item.lastTaskTitle));
     const metaHtml = metaParts.length
         ? '<div class="targets-detail-meta">' + metaParts.map((s) => escapeHtml(s)).join(' · ') + '</div>'
         : '';

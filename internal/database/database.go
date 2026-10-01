@@ -483,6 +483,7 @@ func (db *DB) initTables() error {
 		last_schedule_error TEXT,
 		last_run_error TEXT,
 		project_id TEXT,
+		independent_projects INTEGER NOT NULL DEFAULT 0,
 		concurrency INTEGER NOT NULL DEFAULT 1,
 		model_retry_max INTEGER NOT NULL DEFAULT 3,
 		status TEXT NOT NULL,
@@ -506,6 +507,8 @@ func (db *DB) initTables() error {
 		result TEXT,
 		ai_channel_id TEXT,
 		retry_count INTEGER NOT NULL DEFAULT 0,
+		project_id TEXT,
+		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
 		FOREIGN KEY (queue_id) REFERENCES batch_task_queues(id) ON DELETE CASCADE
 	);`
 
@@ -873,6 +876,9 @@ func (db *DB) initTables() error {
 	}
 	if _, err := db.Exec(createTargetRunsLastRunIndex); err != nil {
 		return fmt.Errorf("创建target_runs索引失败: %w", err)
+	}
+	if err := db.initTaskTargetHistory(); err != nil {
+		return fmt.Errorf("初始化任务目标登记失败: %w", err)
 	}
 	if _, err := db.Exec(createRobotUserSessionsTable); err != nil {
 		return fmt.Errorf("创建robot_user_sessions表失败: %w", err)
@@ -1482,6 +1488,14 @@ func (db *DB) migrateBatchTaskQueuesTable() error {
 	}
 	if err := db.addColumnIfMissing("batch_tasks", "retry_count", "ALTER TABLE batch_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"); err != nil {
 		db.logger.Warn("添加batch_tasks.retry_count字段失败", zap.Error(err))
+	}
+	for _, column := range []struct{ table, name, statement string }{
+		{"batch_task_queues", "independent_projects", "ALTER TABLE batch_task_queues ADD COLUMN independent_projects INTEGER NOT NULL DEFAULT 0"},
+		{"batch_tasks", "project_id", "ALTER TABLE batch_tasks ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL"},
+	} {
+		if err := db.addColumnIfMissing(column.table, column.name, column.statement); err != nil {
+			return fmt.Errorf("迁移任务项目隔离字段 %s.%s 失败: %w", column.table, column.name, err)
+		}
 	}
 
 	return nil

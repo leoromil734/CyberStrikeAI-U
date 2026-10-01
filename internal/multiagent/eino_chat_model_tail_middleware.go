@@ -67,6 +67,9 @@ func appendEinoChatModelTailMiddlewares(handlers []adk.ChatModelAgentMiddleware,
 		}
 	}
 	handlers = append(handlers, newModelOutputGuardMiddleware(cfg.middlewareConfig, cfg.logger, cfg.phase))
+	// Keep this inside reduction wrappers: compare the actual read result, not
+	// an offload placeholder whose path can change on every invocation.
+	handlers = append(handlers, newReadFileProgressMiddleware())
 	return handlers
 }
 

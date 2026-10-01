@@ -31,8 +31,10 @@ type ExecutionRunFunc func(context.Context) (*ToolResult, error)
 
 type ExecutionPreRunFunc func(context.Context, *ToolExecution) (func(), error)
 
-// ExecutionDoneFunc observes the final persisted state. It is invoked once,
-// including for late completions after an agent has stopped waiting.
+// ExecutionDoneFunc observes the final in-memory state after a persistence
+// attempt. A failed save is logged as an error; this callback does not confirm
+// persistence. It is invoked once, including for late completions after the
+// caller has stopped waiting.
 type ExecutionDoneFunc func(*ToolExecution)
 
 type ExecutionRequest struct {
@@ -283,7 +285,8 @@ func (s *ExecutionService) finishEntry(ctx context.Context, entry *executionEntr
 
 	if s.storage != nil {
 		if saveErr := s.storage.SaveToolExecution(finalExec); saveErr != nil {
-			s.logger.Warn("保存执行记录到数据库失败", zap.Error(saveErr), zap.String("executionId", id))
+			s.logger.Error("保存工具执行终态失败，持久化结果未确认",
+				zap.Error(saveErr), zap.String("executionId", id), zap.String("status", finalExec.Status))
 		}
 	}
 	if onDone != nil {

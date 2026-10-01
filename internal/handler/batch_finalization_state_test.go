@@ -247,8 +247,8 @@ func TestBatchFinalizationBlockedSQLitePersistence(t *testing.T) {
 	}
 	db := &database.DB{DB: sqlDB}
 	for _, stmt := range []string{
-		"CREATE TABLE batch_task_queues (id TEXT PRIMARY KEY, title TEXT, role TEXT, agent_mode TEXT, schedule_mode TEXT, cron_expr TEXT, next_run_at DATETIME, schedule_enabled INTEGER, last_schedule_trigger_at DATETIME, last_schedule_error TEXT, last_run_error TEXT, project_id TEXT, concurrency INTEGER, model_retry_max INTEGER, status TEXT, created_at DATETIME, started_at DATETIME, completed_at DATETIME, current_index INTEGER)",
-		"CREATE TABLE batch_tasks (id TEXT PRIMARY KEY, queue_id TEXT, message TEXT, conversation_id TEXT, status TEXT, started_at DATETIME, completed_at DATETIME, error TEXT, result TEXT, ai_channel_id TEXT, retry_count INTEGER)",
+		"CREATE TABLE batch_task_queues (id TEXT PRIMARY KEY, title TEXT, role TEXT, agent_mode TEXT, schedule_mode TEXT, cron_expr TEXT, next_run_at DATETIME, schedule_enabled INTEGER, last_schedule_trigger_at DATETIME, last_schedule_error TEXT, last_run_error TEXT, project_id TEXT, independent_projects INTEGER DEFAULT 0, concurrency INTEGER, model_retry_max INTEGER, status TEXT, created_at DATETIME, started_at DATETIME, completed_at DATETIME, current_index INTEGER, owner_user_id TEXT)",
+		"CREATE TABLE batch_tasks (id TEXT PRIMARY KEY, queue_id TEXT, message TEXT, conversation_id TEXT, status TEXT, started_at DATETIME, completed_at DATETIME, error TEXT, result TEXT, ai_channel_id TEXT, retry_count INTEGER, project_id TEXT)",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatal(err)

@@ -76,7 +76,7 @@ function getBatchQueueStatusPresentation(queue) {
 
 /** blocked 单独计数，既不是成功也不计入已交付进度。 */
 function batchQueueTaskStats(queue) {
-    const stats = { total: 0, pending: 0, running: 0, completed: 0, blocked: 0, failed: 0, cancelled: 0 };
+    const stats = { total: 0, pending: 0, running: 0, paused: 0, completed: 0, blocked: 0, failed: 0, cancelled: 0 };
     (queue.tasks || []).forEach(task => {
         if (!task) return;
         stats.total++;
@@ -90,7 +90,7 @@ function batchQueueTaskStats(queue) {
 /** 队列是否处于「可改子任务列表/文案」的空闲态（与后端 batch_task_manager.queueAllowsTaskListMutationLocked 对齐） */
 function batchQueueAllowsSubtaskMutation(queue) {
     if (!queue) return false;
-    if (queue.status === 'running') return false;
+    if (queue.status === 'running' || queue.executorActive) return false;
     const hasRunningSubtask = Array.isArray(queue.tasks) && queue.tasks.some(t => t && t.status === 'running');
     if (hasRunningSubtask) return false;
     return queue.status === 'pending' || queue.status === 'paused' || queue.status === 'completed' || queue.status === 'cancelled';
@@ -100,7 +100,7 @@ function batchQueueAllowsSubtaskMutation(queue) {
 function batchQueueCanRunSingleTask(queue, task) {
     if (!queue || !task) return false;
     if (task.status === 'running') return false;
-    if (queue.status === 'running') return false;
+    if (queue.status === 'running' || queue.executorActive) return false;
     return queue.status === 'pending' || queue.status === 'paused' || queue.status === 'completed' || queue.status === 'cancelled';
 }
 
@@ -171,7 +171,7 @@ function updateCompletedTasksHistory(currentTasks) {
     justStopped.forEach(task => {
         const exists = tasksState.completedTasksHistory.some(t => t.conversationId === task.conversationId);
         if (!exists) {
-            const finalStatus = ['completed', 'blocked', 'failed', 'timeout', 'cancelled'].includes(task.status)
+            const finalStatus = ['completed', 'blocked', 'paused', 'failed', 'timeout', 'cancelled'].includes(task.status)
                 ? task.status
                 : 'unknown';
             tasksState.completedTasksHistory.push({
@@ -456,6 +456,7 @@ function renderTasks(tasks) {
     const statusMap = {
         'running': { text: _t('tasks.statusRunning'), class: 'task-status-running' },
         'cancelling': { text: _t('tasks.statusCancelling'), class: 'task-status-cancelling' },
+        'paused': { text: _t('tasks.statusPaused'), class: 'task-status-blocked' },
         'failed': { text: _t('tasks.statusFailed'), class: 'task-status-failed' },
         'timeout': { text: _t('tasks.statusTimeout'), class: 'task-status-timeout' },
         'cancelled': { text: _t('tasks.statusCancelled'), class: 'task-status-cancelled' },
@@ -880,6 +881,16 @@ async function refreshBatchProjectSelectOptions() {
 }
 
 // 显示新建任务模态框
+function handleBatchProjectModeChange() {
+    const checkbox = document.getElementById('batch-queue-independent-projects');
+    const projectSelect = document.getElementById('batch-queue-project-id');
+    if (projectSelect) {
+        projectSelect.disabled = !!(checkbox && checkbox.checked);
+        if (projectSelect.disabled) projectSelect.value = '';
+    }
+    if (typeof refreshBatchFormSelects === 'function') refreshBatchFormSelects();
+}
+
 async function showBatchImportModal() {
     const modal = document.getElementById('batch-import-modal');
     const input = document.getElementById('batch-tasks-input');
@@ -902,6 +913,12 @@ async function showBatchImportModal() {
         }
         if (projectSelect) {
             projectSelect.value = '';
+            projectSelect.disabled = false;
+        }
+        const independentProjectsCheckbox = document.getElementById('batch-queue-independent-projects');
+        if (independentProjectsCheckbox) {
+            independentProjectsCheckbox.checked = false;
+            independentProjectsCheckbox.disabled = typeof hasPermission === 'function' && !hasPermission('project:write');
         }
         if (agentModeSelect) {
             agentModeSelect.value = 'eino_single';
@@ -1027,7 +1044,7 @@ let batchTaskModelByIndex = [];
 
 // ===== 重复目标提醒（新建任务弹窗） =====
 // 命中历史跑过的目标时，在任务文本域上方展示告警横幅，并在提交创建前二次确认。
-const BATCH_TARGET_REMINDER_MIN_LEN = 6;
+const BATCH_TARGET_REMINDER_MIN_LEN = 3;
 const BATCH_TARGET_REMINDER_DEBOUNCE = 600;
 let batchTargetReminderTimer = null;
 let batchTargetReminderHits = [];
@@ -1104,18 +1121,25 @@ async function batchTargetReminderFetch(text) {
     }
 }
 
+function batchTargetReminderMeta(hit) {
+    const runs = Math.max(0, Number(hit && hit.runCount) || 0);
+    const submitted = Math.max(0, Number(hit && hit.submittedCount) || 0);
+    const parts = [];
+    if (runs > 0) parts.push(_tPlain('targets.reminderRuns', { count: runs }));
+    if (submitted > 0) parts.push(_tPlain('targets.reminderSubmitted', { count: submitted }));
+    if (runs === 0) parts.push(_tPlain('targets.reminderNotStarted'));
+    const lastTime = batchTargetReminderFormatTime(hit && (runs > 0 ? hit.lastRunAt : hit.lastSubmittedAt));
+    if (lastTime) parts.push(_tPlain(runs > 0 ? 'targets.reminderLast' : 'targets.reminderLastSubmitted', { time: lastTime }));
+    return parts.join(' · ');
+}
+
 function batchTargetReminderRender(hits) {
     const el = batchTargetReminderEl();
     if (!el) return;
     const list = Array.isArray(hits) ? hits : [];
     const items = list.map(function (hit) {
         const domain = escapeHtml(hit && hit.target ? hit.target : '');
-        const runs = Number(hit && hit.runCount) || 1;
-        let meta = _tPlain('targets.reminderRuns', { count: runs });
-        const lastTime = batchTargetReminderFormatTime(hit && hit.lastRunAt);
-        if (lastTime) {
-            meta += ' · ' + _tPlain('targets.reminderLast', { time: lastTime });
-        }
+        const meta = batchTargetReminderMeta(hit);
         return '<li>'
             + '<span class="target-reminder-domain">' + domain + '</span>'
             + '<span class="target-reminder-meta">' + escapeHtml(meta) + '</span>'
@@ -1315,7 +1339,9 @@ async function createBatchQueue() {
     
     // 获取角色（可选，空字符串表示默认角色）
     const role = roleSelect ? roleSelect.value || '' : '';
-    const projectId = projectSelect ? (projectSelect.value || '').trim() : '';
+    const independentProjects = !!document.getElementById('batch-queue-independent-projects')?.checked;
+    if (independentProjects && typeof requirePermission === 'function' && !requirePermission('project:write')) return;
+    const projectId = !independentProjects && projectSelect ? (projectSelect.value || '').trim() : '';
     const rawMode = agentModeSelect ? agentModeSelect.value : 'eino_single';
     const agentMode = isBatchQueueAgentMode(rawMode) ? rawMode : 'eino_single';
     const scheduleMode = scheduleModeSelect ? (scheduleModeSelect.value === 'cron' ? 'cron' : 'manual') : 'manual';
@@ -1339,17 +1365,14 @@ async function createBatchQueue() {
 
     // 重复目标二次确认：当前输入命中历史目标且尚未确认时，先让用户确认再创建
     if (text && text !== batchTargetReminderAcknowledgedText) {
-        let hits = null;
-        if (batchTargetReminderLastText === text && Array.isArray(batchTargetReminderHits)) {
-            hits = batchTargetReminderHits;
-        } else {
-            hits = await batchTargetReminderFetch(text);
-        }
+        // Recheck at submission: another tab/queue may have registered the
+        // target since the debounced preview returned an empty result.
+        const hits = await batchTargetReminderFetch(text);
+        if (hits === null && !window.confirm(_tPlain('targets.reminderUnavailable'))) return;
         if (hits && hits.length > 0) {
             const detail = hits.map(function (hit) {
                 const name = hit && hit.target ? hit.target : '';
-                const runs = Number(hit && hit.runCount) || 1;
-                return name + '（' + _tPlain('targets.reminderRuns', { count: runs }) + '）';
+                return name + '（' + batchTargetReminderMeta(hit) + '）';
             }).join('\n');
             if (!window.confirm(_tPlain('targets.reminderTasksLead') + '\n\n' + detail)) {
                 return;
@@ -1377,6 +1400,7 @@ async function createBatchQueue() {
                 cronExpr,
                 executeNow,
                 projectId,
+                independentProjects,
                 concurrency,
                 modelRetryMax,
             }),
@@ -1895,7 +1919,9 @@ function renderBatchQueues() {
         if (queue.scheduleMode === 'cron' && queue.cronExpr) {
             scheduleLabel += ` (${queue.cronExpr})`;
         }
-        const configLine = [roleName, agentLabel, scheduleLabel].map(s => escapeHtml(s)).join(' · ');
+        const configParts = [roleName, agentLabel, scheduleLabel];
+        if (queue.independentProjects) configParts.push(_t('batchImportModal.independentProjects'));
+        const configLine = configParts.map(s => escapeHtml(s)).join(' · ');
         const cronPausedNote = queue.scheduleMode === 'cron' && queue.scheduleEnabled === false
             ? ` <span class="batch-queue-inline-warn" title="${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}">(${escapeHtml(_t('batchQueueDetailModal.cronSchedulePausedBadge'))})</span>`
             : '';
@@ -1919,8 +1945,10 @@ function renderBatchQueues() {
                     <div class="batch-queue-item__cluster">
                         <div class="batch-queue-item__status-inline">
                             <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
+                            ${stats.paused > 0 ? `<span class="batch-task-status batch-task-status-blocked">${escapeHtml(_t('tasks.pausedCount', { count: stats.paused }))}</span>` : ''}
+                            ${stats.failed > 0 ? `<span class="batch-task-status batch-task-status-failed">${escapeHtml(_t('tasks.failedCount', { count: stats.failed }))}</span>` : ''}
                             ${stats.blocked > 0 ? `<span class="batch-task-status batch-task-status-blocked" title="${escapeHtml(queue.lastRunError || _t('tasks.blockedRecoveryHint'))}">${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</span>` : ''}
-                            <span class="batch-queue-item__pct">${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
+                            <span class="batch-queue-item__pct" title="${escapeHtml(_t('tasks.processedProgressHint'))}">${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
                         </div>
                         ${pres.sublabel ? `<span class="batch-queue-item__sublabel">${escapeHtml(pres.sublabel)}</span>` : ''}
                     </div>
@@ -2074,8 +2102,9 @@ async function showBatchQueueDetail(queueId) {
             addTaskBtn.style.display = allowSubtaskMutation ? 'inline-block' : 'none';
         }
         if (startBtn) {
-            // 队列继续执行只处理 pending；只有 blocked 时通过单项入口显式重跑。
-            startBtn.style.display = (queue.status === 'pending' || queue.status === 'paused') && (stats.blocked === 0 || stats.pending > 0) ? 'inline-block' : 'none';
+            // Continue pending/paused items; completed/cancelled items require an explicit rerun.
+            startBtn.style.display = (queue.status === 'pending' || queue.status === 'paused') && (stats.pending + stats.paused > 0) ? 'inline-block' : 'none';
+            startBtn.disabled = !!queue.executorActive && queue.status === 'paused';
             if (startBtn && queue.status === 'paused') {
                 startBtn.textContent = _t('tasks.resumeExecute');
             } else if (startBtn && queue.status === 'pending') {
@@ -2103,6 +2132,7 @@ async function showBatchQueueDetail(queueId) {
         const taskStatusMap = {
             'pending': { text: _t('tasks.statusPending'), class: 'batch-task-status-pending' },
             'running': { text: _t('tasks.statusRunning'), class: 'batch-task-status-running' },
+            'paused': { text: _t('tasks.statusPaused'), class: 'batch-task-status-blocked' },
             'completed': { text: _t('tasks.statusCompleted'), class: 'batch-task-status-completed' },
             'blocked': { text: _t('tasks.statusBlocked'), class: 'batch-task-status-blocked' },
             'failed': { text: _t('tasks.failedLabel'), class: 'batch-task-status-failed' },
@@ -2206,6 +2236,7 @@ async function showBatchQueueDetail(queueId) {
                                 ${canEdit ? `<button class="btn-secondary btn-small batch-task-edit-btn" onclick="editBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.edit') + `</button>` : ''}
                                 ${canEdit ? `<button class="btn-secondary btn-small btn-danger batch-task-delete-btn" onclick="deleteBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.delete') + `</button>` : ''}
                             </div>
+                            ${task.projectId ? `<div class="batch-task-time" title="${escapeHtml(task.projectId)}">${escapeHtml(_t('batchImportModal.project'))}: ${escapeHtml(task.projectName || task.projectId)}</div>` : ''}
                             ${task.startedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.startLabel') + `: ${new Date(task.startedAt).toLocaleString()}</div>` : ''}
                             ${retryNote ? `<div class="batch-task-time">${escapeHtml(retryNote)}</div>` : ''}
                             ${task.completedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.completeLabel') + `: ${new Date(task.completedAt).toLocaleString()}</div>` : ''}
@@ -2233,7 +2264,7 @@ async function showBatchQueueDetail(queueId) {
         });
 
         // 仅运行中定时拉取详情；其它状态应停止，避免 innerHTML 重绘把 <details> 等 UI 打回默认态
-        if (queue.status === 'running') {
+        if (queue.status === 'running' || queue.executorActive) {
             startBatchQueueRefresh(queueId);
         } else {
             stopBatchQueueRefresh();
@@ -3188,6 +3219,7 @@ async function saveInlineSchedule() {
 
 // 导出函数
 window.showBatchImportModal = showBatchImportModal;
+window.handleBatchProjectModeChange = handleBatchProjectModeChange;
 window.closeBatchImportModal = closeBatchImportModal;
 window.createBatchQueue = createBatchQueue;
 window.applyBatchDefaultModelToRows = applyBatchDefaultModelToRows;

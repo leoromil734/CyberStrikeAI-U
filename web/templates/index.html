@@ -6028,6 +6028,13 @@
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.roleHint">选择一个角色，所有任务将使用该角色的配置（提示词和工具）执行。</div>
                 </div>
                 <div class="form-group">
+                    <label for="batch-queue-independent-projects" class="batch-execute-now-label">
+                        <input type="checkbox" id="batch-queue-independent-projects" onchange="handleBatchProjectModeChange()" />
+                        <span data-i18n="batchImportModal.independentProjects">每个任务创建独立项目</span>
+                    </label>
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.independentProjectsHint">按目标加随机 ID 命名，隔离各任务的项目事实；重跑沿用本任务项目，不复制其他项目的事实。</div>
+                </div>
+                <div class="form-group">
                     <label for="batch-queue-project-id" data-i18n="batchImportModal.project">所属项目</label>
                     <select id="batch-queue-project-id">
                         <option value="" data-i18n="batchImportModal.projectNone">（未绑定）</option>

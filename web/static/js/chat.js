@@ -1431,9 +1431,13 @@ function chatTargetReminderRender(hits) {
     const canOpen = typeof window.navigateToConversation === 'function';
     const items = list.map(function (hit) {
         const domain = chatTargetReminderEscape(hit && hit.target ? hit.target : '');
-        const runs = Number(hit && hit.runCount) || 1;
-        let meta = chatTargetReminderT('targets.reminderRuns', { count: runs }, '跑过 ' + runs + ' 次');
-        const lastTime = chatTargetReminderFormatTime(hit && hit.lastRunAt);
+        const runs = Math.max(0, Number(hit && hit.runCount) || 0);
+        const submitted = Math.max(0, Number(hit && hit.submittedCount) || 0);
+        let meta = runs > 0
+            ? chatTargetReminderT('targets.reminderRuns', { count: runs }, '跑过 ' + runs + ' 次')
+            : '已登记，尚未执行';
+        if (submitted > 0) meta += ' · 已登记 ' + submitted + ' 个任务';
+        const lastTime = chatTargetReminderFormatTime(hit && (hit.lastRunAt || hit.lastSubmittedAt));
         if (lastTime) {
             meta += ' · ' + chatTargetReminderT('targets.reminderLast', { time: lastTime }, '最近 ' + lastTime);
         }
@@ -1448,8 +1452,11 @@ function chatTargetReminderRender(hits) {
             + openBtn
             + '</li>';
     }).join('');
-    const head = chatTargetReminderEscape(chatTargetReminderT('targets.reminderTitle', null, '以下目标历史上已经跑过'))
-        + ' · ' + chatTargetReminderEscape(chatTargetReminderT('targets.reminderChatLead', null, '本次输入的目标历史上跑过，继续会重复消耗时间与额度。'));
+    const hasSubmissions = list.some(function (hit) { return Number(hit && hit.submittedCount) > 0; });
+    const head = hasSubmissions
+        ? chatTargetReminderEscape('以下目标已有任务登记或运行记录，继续可能重复消耗时间与额度。')
+        : chatTargetReminderEscape(chatTargetReminderT('targets.reminderTitle', null, '以下目标历史上已经跑过'))
+            + ' · ' + chatTargetReminderEscape(chatTargetReminderT('targets.reminderChatLead', null, '本次输入的目标历史上跑过，继续会重复消耗时间与额度。'));
     el.innerHTML = ''
         + '<div class="target-reminder-head">' + head + '</div>'
         + '<ul class="target-reminder-list">' + items + '</ul>'
