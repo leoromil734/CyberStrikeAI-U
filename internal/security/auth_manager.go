@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -221,7 +223,8 @@ func (s Session) ScopeFor(permission string) string {
 	return strings.TrimSpace(s.Scope)
 }
 
-// ValidateToken checks whether the provided token is still valid.
+// ValidateToken checks the token against the user's current RBAC access.
+// 持久化会话中的权限快照不是授权依据，以当前数据库角色为准，避免升级后沿用旧权限。
 // 临近过期的会话会在校验时滑动续期，使持续使用的登录状态不掉线。
 func (a *AuthManager) ValidateToken(token string) (Session, bool) {
 	if strings.TrimSpace(token) == "" {
@@ -230,30 +233,75 @@ func (a *AuthManager) ValidateToken(token string) (Session, bool) {
 
 	a.mu.RLock()
 	session, ok := a.sessions[token]
+	db := a.db
 	a.mu.RUnlock()
 	if !ok {
 		return Session{}, false
 	}
 
 	now := time.Now()
-	if now.After(session.ExpiresAt) {
-		a.mu.Lock()
+	if now.After(session.ExpiresAt) || strings.TrimSpace(session.UserID) == "" {
+		a.RevokeToken(token)
+		return Session{}, false
+	}
+	if db == nil {
+		return Session{}, false
+	}
+	access, err := db.ResolveRBACAccess(session.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			a.RevokeToken(token)
+		}
+		// 数据库暂不可用时拒绝授权，但不永久删除仍可能有效的登录身份。
+		return Session{}, false
+	}
+	if !access.User.Enabled {
+		a.RevokeToken(token)
+		return Session{}, false
+	}
+	roleIDs := make([]string, 0, len(access.Roles))
+	for _, role := range access.Roles {
+		roleIDs = append(roleIDs, role.ID)
+	}
+
+	a.mu.Lock()
+	current, ok := a.sessions[token]
+	// 查库期间可能已经登出、撤销或续期，不能把旧快照重新写回使会话复活。
+	if !ok || current.UserID != session.UserID {
+		a.mu.Unlock()
+		return Session{}, false
+	}
+	now = time.Now()
+	if now.After(current.ExpiresAt) {
 		delete(a.sessions, token)
 		a.mu.Unlock()
 		a.persist()
 		return Session{}, false
 	}
-
-	if a.extendSessionIfNeeded(token, session, now) {
-		a.mu.RLock()
-		session, ok = a.sessions[token]
-		a.mu.RUnlock()
-		if !ok {
-			return Session{}, false
-		}
+	changed := current.Token != token || current.Username != access.User.Username ||
+		current.DisplayName != access.User.DisplayName || current.Scope != access.Scope ||
+		!slices.Equal(current.Roles, roleIDs) || !maps.Equal(current.Permissions, access.Permissions) ||
+		!maps.Equal(current.PermissionScopes, access.PermissionScopes)
+	if changed {
+		current.Token = token
+		current.Username = access.User.Username
+		current.DisplayName = access.User.DisplayName
+		current.Roles = roleIDs
+		current.Permissions = access.Permissions
+		current.PermissionScopes = access.PermissionScopes
+		current.Scope = access.Scope
+		a.sessions[token] = current
 	}
+	a.mu.Unlock()
 
-	return session, true
+	// 只有权限实际变化或发生续期时才写回 Redis，避免每次请求重复持久化。
+	if extended := a.extendSessionIfNeeded(token, current, now); changed && !extended {
+		a.persist()
+	}
+	a.mu.RLock()
+	session, ok = a.sessions[token]
+	a.mu.RUnlock()
+	return session, ok
 }
 
 // slidingRefreshWindow 返回开始考虑滑动续期的时间窗口（临近过期多久内）。

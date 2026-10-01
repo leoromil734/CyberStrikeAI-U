@@ -364,6 +364,7 @@ const PAGE_PERMISSION_MAP = {
     'asset-overview': 'asset:read',
     'asset-library': 'asset:read',
     tasks: 'tasks:read',
+    targets: 'target:read',
     workflows: 'workflow:read',
     projects: 'project:read',
     vulnerabilities: 'vulnerability:read',
