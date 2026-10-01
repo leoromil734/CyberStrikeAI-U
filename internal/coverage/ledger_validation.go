@@ -40,26 +40,37 @@ func ledgerNamespaceID(key string) string {
 	return parts[2]
 }
 
-// ParseLedgerBody accepts the supported JSON/YAML/Markdown field-list forms.
+// ParseLedgerBody accepts JSON/YAML/Markdown fields and a scalar key=value header.
 // The human-readable relationship mirror is not part of the machine object.
-// Syntax errors retain line/field diagnostics; values are never coerced or inferred.
+// Syntax errors retain line/field diagnostics; evidence/counts are never guessed.
 func ParseLedgerBody(body string) (map[string]any, error) {
 	body = strings.TrimSpace(body)
-	var lines []string
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			lines = append(lines, "") // keep source line numbers stable
-			continue
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			lines[i] = "" // keep source line numbers stable
 		}
-		if line == strings.TrimLeft(line, " \t") && (strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ")) {
-			candidate := strings.TrimSpace(trimmed[2:])
-			colon := strings.Index(candidate, ":")
-			if colon > 0 && !strings.ContainsAny(candidate[:colon], "/ .") {
-				line = candidate
+	}
+	header, err := parseLedgerAssignmentHeader(lines)
+	if err != nil {
+		return nil, err
+	}
+	// Only a root Markdown field list uses bullet prefixes as object fields.
+	// In ordinary YAML, an unindented sequence beneath phases: is valid and
+	// must not be flattened into unrelated top-level properties.
+	markdownFields := false
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			_, markdownFields = markdownLedgerField(line)
+			break
+		}
+	}
+	if markdownFields {
+		for i, line := range lines {
+			if field, ok := markdownLedgerField(line); ok {
+				lines[i] = field
 			}
 		}
-		lines = append(lines, line)
 	}
 	normalized := strings.Join(lines, "\n")
 	trimmed := strings.TrimSpace(normalized)
@@ -88,6 +99,15 @@ func ParseLedgerBody(body string) (map[string]any, error) {
 			}
 		}
 		return nil, fmt.Errorf("invalid YAML field %s (line %d): %v; quote strings containing '@' or ': ', or use body_fields", field, lineNumber, err)
+	}
+	if fields == nil && header != nil {
+		fields = make(map[string]any)
+	}
+	for key, value := range header {
+		if _, duplicate := fields[key]; duplicate {
+			return nil, fmt.Errorf("duplicate ledger field %s in assignment header and YAML body", key)
+		}
+		fields[key] = value
 	}
 	if fields == nil {
 		return nil, fmt.Errorf("ledger body must be an object")
@@ -149,11 +169,15 @@ func ValidateLedgerFact(key, body string) error {
 		if !oneOf(status, "active", "completed") {
 			problems = append(problems, "status must be active or completed")
 		}
-		if !oneOf(text(fields, "scope_kind"), "root-domain", "single-url", "ip", "asset-list") {
+		// Startup manifests may omit scope/inventory until those facts are known.
+		// Explicit invalid values still fail here; Check independently requires
+		// all fields and actual inventory equality before any final delivery.
+		_, hasScope := fields["scope_kind"]
+		if (hasScope || status == "completed") && !oneOf(text(fields, "scope_kind"), "root-domain", "single-url", "ip", "asset-list") {
 			problems = append(problems, "scope_kind must describe the authorized scope")
 		}
 		for _, name := range []string{"endpoint_count", "js_count", "risk_unit_count"} {
-			requireCount(name, true)
+			requireCount(name, status == "completed")
 		}
 	case "source":
 		requireText("tool", "target")

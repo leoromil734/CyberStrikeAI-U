@@ -59,16 +59,19 @@ func ReconFactBodyTemplate(factKey string) string {
 	}
 }
 
-const reconSourceFactBodyTemplate = `status: covered|blocked|gap|not-applicable
-raw: <整数>
+const reconSourceFactBodyTemplate = `assessment_id: <与版本化 fact_key 相同的轮次 ID>
+status: pending|active|gap|covered|blocked|not-applicable
+raw: <真实整数，文本输出另放 raw_output>
 unique: <整数>
 incremental: <整数>
 error: <失败原文或 none>
 alt_tried: <替代来源列表或 []>
 tool: <工具名>
-target: <根域/主机>`
+target: <根域/主机>
+evidence: <本轮命令/回包与执行引用，不能只写计数摘要>`
 
-const reconEndpointFactBodyTemplate = `host: <主机>
+const reconEndpointFactBodyTemplate = `assessment_id: <与版本化 fact_key 相同的轮次 ID>
+host: <主机>
 method: <GET|POST|...>
 path: </api/...>
 params: <参数列表或 none>
@@ -78,7 +81,8 @@ runtime_status: discovered|extracted|baselined|risk-mapped|verified|negated|bloc
 value_reason: <价值理由>
 evidence: <状态码/长度/hash 或 blocked 原因>`
 
-const reconPhaseFactBodyTemplate = `status: pending|active|passed|blocked
+const reconPhaseFactBodyTemplate = `assessment_id: <与版本化 fact_key 相同的轮次 ID>
+status: pending|active|passed|blocked
 evidence: <覆盖对象 + 计数 + 证据位置>
 blockers: <原始错误与替代路径或 none>`
 

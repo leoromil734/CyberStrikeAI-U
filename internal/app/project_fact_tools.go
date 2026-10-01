@@ -63,7 +63,9 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			"边渗透边记录：每确认新认知（端口/入口/凭据/可利用点）后立即调用，同 fact_key 覆盖更新，勿等会话结束。" +
 			"禁止仅写结论：summary 须含什么+在哪+如何验证；body 须含复现或账本字段。" +
 			"发现类 fact_key 为 finding|chain|exploit|poc/<slug>；环境类 target|auth|infra|business/<slug>；" +
-			"侦察账本 recon/source|endpoint|phase|asset|js/<slug>（category=recon），source body 须含 status/raw/unique/incremental/error/alt_tried。" +
+			"侦察账本 recon/source|endpoint|phase|asset|js/<slug>（category=recon）；v2 用 recon/{kind}/{assessment_id}/...，正文 assessment_id 与 key 一致，优先 body_fields。" +
+			"source 的 raw/unique/incremental 是真实整数，原始输出用 raw_output，covered 必须有 evidence；工具执行 success 不是覆盖终态。" +
+			"评估清单 schema_version=2、mode=comprehensive、status=active/completed，补齐真实 scope_kind 与 endpoint_count/js_count/risk_unit_count；缺字段的 active 仅保存启动记录，不能通过收尾门禁。" +
 			"同 fact_key 覆盖更新。需当前对话已绑定项目。",
 		ShortDescription: "写入/更新项目事实（含 recon 账本）",
 		InputSchema: map[string]interface{}{
@@ -71,7 +73,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			"properties": map[string]interface{}{
 				"fact_key": map[string]interface{}{
 					"type":        "string",
-					"description": "项目内唯一 key：target/primary_domain、recon/source/subfinder/example.com、recon/endpoint/...、finding/sqli-login 等",
+					"description": "项目内唯一 key：target/primary_domain；v2 用 recon/assessment/{id}、recon/source/{id}/{tool}/{target_id}、recon/phase/{id}/{phase}、recon/endpoint/{id}/{endpoint_id}；旧 recon/source/{tool}/{target} 仅兼容既有笔记",
 				},
 				"category": map[string]interface{}{
 					"type":        "string",
@@ -85,12 +87,12 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				"body": map[string]interface{}{
 					"type": "string",
 					"description": "完整详情（仅 get_project_fact 返回）。发现/利用类须含攻击链与请求响应；" +
-						"recon/source 须含 status/raw/unique/incremental/error/alt_tried；recon/endpoint 须含 host/method/path/runtime_status 等；body 带 endpoint_url/method/assessment_id 时自动生成稳定端点 key，以返回 fact_key 为准。" +
+						"recon/source 须含 status/raw/unique/incremental/error/alt_tried/evidence，raw 为真实整数，文本用 raw_output；版本化账本带 assessment_id；recon/endpoint 须含 host/method/path/runtime_status 等；body 带 endpoint_url/method/assessment_id 时自动生成稳定端点 key，以返回 fact_key 为准。" +
 						"更新已有 fact_key 时若省略或留空 body，将保留库中已有 body（可只改 summary）。",
 				},
 				"body_fields": map[string]interface{}{
 					"type":        "object",
-					"description": "可选：完整结构化正文对象，由宿主安全序列化为 JSON，避免 YAML 中 @、冒号等转义错误。与非空 body 二选一；不是字段补丁。计数必须提供真实整数，不能填 30+。",
+					"description": "可选：完整结构化正文对象，宿主安全序列化 JSON，避免 YAML 的 @、冒号与 key=value 混写错误。与非空 body 二选一，不是字段补丁。assessment_id 须匹配版本化 key，省略时可从 key 同步，显式冲突会拒绝。来源 raw/unique/incremental 为真实整数，不能填 30+；文本输出用 raw_output，covered 附 evidence。",
 				},
 				"confidence": map[string]interface{}{
 					"type":        "string",
@@ -150,6 +152,13 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		factKey = strings.TrimSpace(factKey)
+		var ledgerNotes []string
+		if strings.TrimSpace(strArg(args, "confidence")) != "deprecated" {
+			body, ledgerNotes, err = coverage.NormalizeLedgerWrite(factKey, body)
+			if err != nil {
+				return textResult("错误: 账本未保存: "+err.Error(), true), nil
+			}
+		}
 		canonicalKey, err := coverage.CanonicalEndpointFactKey(factKey, body)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
@@ -219,6 +228,9 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			created, _ = db.GetProjectFactByKey(projectID, created.FactKey)
 		}
 		msg := fmt.Sprintf("事实已保存。\nfact_key: %s\nid: %s\nconfidence: %s", created.FactKey, created.ID, created.Confidence)
+		if len(ledgerNotes) > 0 {
+			msg += "\n账本提示:\n- " + strings.Join(ledgerNotes, "\n- ")
+		}
 		if in, _ := db.ListIncomingProjectFactEdges(projectID, created.FactKey); len(in) > 0 {
 			msg += "\n关系边: " + project.FormatFactLinksText(in)
 		}

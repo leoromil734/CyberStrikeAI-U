@@ -1,6 +1,23 @@
 package projectprompt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestReconTemplatesIncludeRoundIdentityAndSourceEvidence(t *testing.T) {
+	for _, key := range []string{"recon/source/run-a/subfinder/example", "recon/endpoint/run-a/main", "recon/phase/run-a/recon_sources"} {
+		if template := ReconFactBodyTemplate(key); !strings.Contains(template, "assessment_id:") {
+			t.Fatalf("versioned template omits assessment identity: key=%s template=%s", key, template)
+		}
+	}
+	source := ReconFactBodyTemplate("recon/source/run-a/subfinder/example")
+	for _, required := range []string{"raw_output", "真实整数", "evidence:", "active"} {
+		if !strings.Contains(source, required) {
+			t.Errorf("source template omits %q: %s", required, source)
+		}
+	}
+}
 
 func TestIsSparseReconFactBody(t *testing.T) {
 	key := "recon/source/subfinder/example.com"
