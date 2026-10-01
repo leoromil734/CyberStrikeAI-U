@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -85,6 +88,10 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 						"recon/source 须含 status/raw/unique/incremental/error/alt_tried；recon/endpoint 须含 host/method/path/runtime_status 等；body 带 endpoint_url/method/assessment_id 时自动生成稳定端点 key，以返回 fact_key 为准。" +
 						"更新已有 fact_key 时若省略或留空 body，将保留库中已有 body（可只改 summary）。",
 				},
+				"body_fields": map[string]interface{}{
+					"type":        "object",
+					"description": "可选：完整结构化正文对象，由宿主安全序列化为 JSON，避免 YAML 中 @、冒号等转义错误。与非空 body 二选一；不是字段补丁。计数必须提供真实整数，不能填 30+。",
+				},
 				"confidence": map[string]interface{}{
 					"type":        "string",
 					"description": "confirmed | tentative | deprecated；创建默认 tentative，更新时省略或留空保留原值",
@@ -138,9 +145,39 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if len([]rune(summary)) > cfg.Project.FactSummaryMaxRunesEffective() {
 			return textResult(fmt.Sprintf("错误: summary 过长（最多 %d 字）", cfg.Project.FactSummaryMaxRunesEffective()), true), nil
 		}
-		canonicalKey, err := coverage.CanonicalEndpointFactKey(factKey, strArg(args, "body"))
+		body, err := projectFactBodyFromArguments(args)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
+		}
+		factKey = strings.TrimSpace(factKey)
+		canonicalKey, err := coverage.CanonicalEndpointFactKey(factKey, body)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		existing, err := db.GetProjectFactByKey(projectID, canonicalKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return textResult("错误: 读取已有事实失败: "+err.Error(), true), nil
+		}
+		effectiveBody, effectiveConfidence := body, strings.TrimSpace(strArg(args, "confidence"))
+		if existing != nil {
+			if strings.TrimSpace(effectiveBody) == "" {
+				effectiveBody = existing.Body
+			}
+			if effectiveConfidence == "" {
+				effectiveConfidence = existing.Confidence
+			}
+		}
+		// Validate the effective patch before any mutation. Deprecating a corrupt
+		// historical record must remain possible; restoring it requires repair.
+		if effectiveConfidence != "deprecated" {
+			if err := coverage.ValidateLedgerFact(factKey, effectiveBody); err != nil {
+				return textResult("错误: 账本未保存: "+err.Error(), true), nil
+			}
+			if canonicalKey != factKey {
+				if err := coverage.ValidateLedgerFact(canonicalKey, effectiveBody); err != nil {
+					return textResult("错误: 账本未保存: "+err.Error(), true), nil
+				}
+			}
 		}
 		factKey = canonicalKey
 		f := &database.ProjectFact{
@@ -148,7 +185,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			FactKey:                factKey,
 			Category:               strArg(args, "category"),
 			Summary:                summary,
-			Body:                   strArg(args, "body"),
+			Body:                   body,
 			Confidence:             strArg(args, "confidence"),
 			Pinned:                 boolArg(args, "pinned"),
 			RelatedVulnerabilityID: strArg(args, "related_vulnerability_id"),
@@ -366,6 +403,13 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			return textResult("错误: fact_key 必填", true), nil
 		}
 		conf := strArg(args, "confidence")
+		fact, err := db.GetProjectFactByKey(projectID, key)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		if err := coverage.ValidateLedgerFact(key, fact.Body); err != nil {
+			return textResult("错误: 请先修复账本再恢复: "+err.Error(), true), nil
+		}
 		if err := db.RestoreProjectFact(projectID, key, conf); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -378,6 +422,28 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 	if logger != nil {
 		logger.Debug("项目黑板 MCP 工具注册成功")
 	}
+}
+
+// projectFactBodyFromArguments serializes the full object without guessing or
+// coercing any evidence/count. An empty text body retains existing patch semantics.
+func projectFactBodyFromArguments(args map[string]interface{}) (string, error) {
+	body := strArg(args, "body")
+	fields, supplied := args["body_fields"]
+	if !supplied {
+		return body, nil
+	}
+	if strings.TrimSpace(body) != "" {
+		return "", fmt.Errorf("body 与 body_fields 只能提供一个完整正文")
+	}
+	object, ok := fields.(map[string]interface{})
+	if !ok || object == nil {
+		return "", fmt.Errorf("body_fields 必须是完整对象")
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return "", fmt.Errorf("body_fields 无法序列化: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func strArg(args map[string]interface{}, key string) string {

@@ -38,6 +38,7 @@ const (
 	BatchTaskStatusPending   = "pending"
 	BatchTaskStatusRunning   = "running"
 	BatchTaskStatusCompleted = "completed"
+	BatchTaskStatusBlocked   = "blocked" // 执行已停止但未通过最终化检查，需人工恢复或单项重跑。
 	BatchTaskStatusFailed    = "failed"
 	BatchTaskStatusCancelled = "cancelled"
 
@@ -68,7 +69,7 @@ type BatchTask struct {
 	ID             string     `json:"id"`
 	Message        string     `json:"message"`
 	ConversationID string     `json:"conversationId,omitempty"`
-	Status         string     `json:"status"` // pending, running, completed, failed, cancelled
+	Status         string     `json:"status"` // pending, running, completed, blocked, failed, cancelled
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
 	CompletedAt    *time.Time `json:"completedAt,omitempty"`
 	Error          string     `json:"error,omitempty"`
@@ -663,9 +664,20 @@ func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, s
 		return
 	}
 
-	// DB 优先：先持久化，成功后再更新内存，避免重启后状态不一致
+	if status == BatchTaskStatusBlocked && strings.TrimSpace(errorMsg) == "" {
+		errorMsg = "最终化检查未通过，请查看已有对话补充条件或单条重跑。"
+	}
+	// DB 优先：先持久化，成功后再更新内存，避免重启后状态不一致。
+	// blocked 是可恢复的未交付状态，不能留下 completed_at。
 	if m.db != nil {
-		if err := m.db.UpdateBatchTaskStatus(queueID, taskID, status, conversationID, result, errorMsg); err != nil {
+		var err error
+		if status == BatchTaskStatusBlocked {
+			_, err = m.db.Exec("UPDATE batch_tasks SET status = ?, completed_at = NULL, conversation_id = COALESCE(NULLIF(?, ''), conversation_id), result = COALESCE(NULLIF(?, ''), result), error = ? WHERE queue_id = ? AND id = ?",
+				status, conversationID, result, errorMsg, queueID, taskID)
+		} else {
+			err = m.db.UpdateBatchTaskStatus(queueID, taskID, status, conversationID, result, errorMsg)
+		}
+		if err != nil {
 			m.logger.Warn("batch task DB status update failed, skipping memory update",
 				zap.String("queueId", queueID), zap.String("taskId", taskID), zap.Error(err))
 			return
@@ -690,7 +702,9 @@ func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, s
 			if status == BatchTaskStatusRunning && task.StartedAt == nil {
 				task.StartedAt = &now
 			}
-			if status == BatchTaskStatusCompleted || status == BatchTaskStatusFailed || status == BatchTaskStatusCancelled {
+			if status == BatchTaskStatusBlocked {
+				task.CompletedAt = nil
+			} else if status == BatchTaskStatusCompleted || status == BatchTaskStatusFailed || status == BatchTaskStatusCancelled {
 				task.CompletedAt = &now
 			}
 			break
@@ -893,6 +907,13 @@ func (m *BatchTaskManager) ResetQueueForRerun(queueID string) bool {
 	queue, exists := m.loadedQueue(queueID)
 	if !exists {
 		return false
+	}
+
+	for _, task := range queue.Tasks {
+		if task != nil && task.Status == BatchTaskStatusBlocked {
+			// 自动调度/整轮重置不能把未交付项反复跑；由单项入口显式恢复。
+			return false
+		}
 	}
 
 	// DB 优先：先持久化重置，成功后再更新内存，避免 DB 失败导致内存脏状态
@@ -1331,7 +1352,7 @@ func (m *BatchTaskManager) HasRunningTasks(queueID string) bool {
 	return false
 }
 
-// HasPendingOrRunningTasks 队列是否仍有未完成的子任务。
+// HasPendingOrRunningTasks 队列是否仍有可自动调度或正在执行的子任务（blocked 需显式恢复）。
 func (m *BatchTaskManager) HasPendingOrRunningTasks(queueID string) bool {
 	unlock := m.lockQueue(queueID)
 	defer unlock()

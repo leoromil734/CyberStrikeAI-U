@@ -10,8 +10,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Fact is deliberately independent of database and model runtime types.
@@ -25,6 +23,7 @@ type Report struct {
 	AssessmentID string
 	Missing      []string
 	EvidenceRefs []string
+	ValidFacts   int // validated ledger records, used only to detect repair progress
 }
 
 var assessmentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
@@ -44,7 +43,11 @@ func Check(facts []Fact, required bool) Report {
 		fields, err := parseBody(fact.Body)
 		if err != nil || text(fields, "mode") != "comprehensive" {
 			if required {
-				r.Missing = append(r.Missing, fact.Key+": invalid comprehensive manifest")
+				detail := "mode must be comprehensive"
+				if err != nil {
+					detail = err.Error()
+				}
+				r.Missing = append(r.Missing, fact.Key+": invalid comprehensive manifest: "+detail)
 			}
 			continue
 		}
@@ -82,24 +85,41 @@ func Check(facts []Fact, required bool) Report {
 	entries := make(map[string]entry)
 	phaseEntries := make(map[string]entry)
 	sources := make(map[string]bool)
+	inventory := map[string]map[string]bool{"endpoint": {}, "js": {}, "risk": {}}
+	trackInventory := func(key string) {
+		if set, ok := inventory[ledgerKind(key)]; ok {
+			set[key] = true
+		}
+	}
 	for _, fact := range facts {
-		if fact.Key == manifestKey || !strings.HasPrefix(fact.Key, "recon/") {
+		kind := ledgerKind(fact.Key)
+		if fact.Key == manifestKey || kind == "" || kind == "assessment" {
 			continue
+		}
+		inNamespace := ledgerNamespaceID(fact.Key) == r.AssessmentID
+		if inNamespace {
+			// Count stored inventory independently of parse validity. Otherwise a
+			// broken JS body falsely tells the model to reduce js_count by one.
+			trackInventory(fact.Key)
 		}
 		fields, err := parseBody(fact.Body)
 		if err != nil {
-			// An unparseable item in this assessment namespace must not disappear.
-			if strings.Contains(fact.Key, "/"+r.AssessmentID+"/") {
-				r.Missing = append(r.Missing, fact.Key+": invalid ledger body")
+			if inNamespace {
+				r.Missing = append(r.Missing, fact.Key+": invalid ledger body: "+err.Error())
 			}
 			continue
 		}
 		if text(fields, "assessment_id") != r.AssessmentID {
-			if strings.Contains(fact.Key, "/"+r.AssessmentID+"/") {
+			if inNamespace {
 				r.Missing = append(r.Missing, fact.Key+": assessment_id does not match its namespace")
 			}
 			continue
 		}
+		if id := ledgerNamespaceID(fact.Key); id != "" && id != r.AssessmentID {
+			r.Missing = append(r.Missing, fact.Key+": assessment_id does not match its namespace")
+			continue
+		}
+		trackInventory(fact.Key) // compatible legacy keys with an explicit assessment_id
 		if _, duplicate := entries[fact.Key]; duplicate {
 			r.Missing = append(r.Missing, fact.Key+": duplicate ledger key")
 		}
@@ -132,7 +152,11 @@ func Check(facts []Fact, required bool) Report {
 				valid = valid && meaningful(text(fields, "reason"))
 			}
 			if !valid {
-				r.Missing = append(r.Missing, fact.Key+": source needs valid counts, evidence and blocker/alternative details")
+				diagnostic := ""
+				if err := ValidateLedgerFact(fact.Key, fact.Body); err != nil {
+					diagnostic = "; " + err.Error()
+				}
+				r.Missing = append(r.Missing, fact.Key+": source needs valid counts, evidence and blocker/alternative details"+diagnostic)
 			}
 			if valid && status != "not-applicable" {
 				sources[text(fields, "tool")] = true
@@ -169,17 +193,12 @@ func Check(facts []Fact, required bool) Report {
 	if len(sources) == 0 {
 		r.Missing = append(r.Missing, "missing evidenced inventory/baseline source")
 	}
-	for _, inventory := range []struct{ field, prefix string }{
-		{"endpoint_count", "recon/endpoint/"}, {"js_count", "recon/js/"}, {"risk_unit_count", "recon/risk/"},
+	for _, field := range []struct{ field, kind string }{
+		{"endpoint_count", "endpoint"}, {"js_count", "js"}, {"risk_unit_count", "risk"},
 	} {
-		actual := 0
-		for key := range entries {
-			if strings.HasPrefix(key, inventory.prefix) {
-				actual++
-			}
-		}
-		if declared := number(manifest, inventory.field); declared < 0 || declared != actual {
-			r.Missing = append(r.Missing, fmt.Sprintf("%s: %s must equal inventory count %d", manifestKey, inventory.field, actual))
+		actual := len(inventory[field.kind])
+		if declared := number(manifest, field.field); declared < 0 || declared != actual {
+			r.Missing = append(r.Missing, fmt.Sprintf("%s: %s must equal inventory count %d", manifestKey, field.field, actual))
 		}
 	}
 	for key, e := range entries {
@@ -218,37 +237,29 @@ func Check(facts []Fact, required bool) Report {
 		r.EvidenceRefs = append(r.EvidenceRefs, "project_fact:"+key)
 	}
 	r.EvidenceRefs = append(r.EvidenceRefs, "project_fact:"+manifestKey)
+	keys := []string{manifestKey}
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		valid := true
+		for _, problem := range r.Missing {
+			if strings.HasPrefix(problem, key+":") {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			r.ValidFacts++
+		}
+	}
 	sort.Strings(r.Missing)
 	sort.Strings(r.EvidenceRefs)
 	return r
 }
 
 func parseBody(body string) (map[string]any, error) {
-	// Support JSON, YAML and the documented Markdown key/value list format.
-	var lines []string
-	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
-			// Strip only Markdown bullets introducing field names, not YAML list items.
-			candidate := strings.TrimSpace(trimmed[2:])
-			colon := strings.Index(candidate, ":")
-			if colon > 0 && !strings.ContainsAny(candidate[:colon], "/ .") {
-				line = candidate
-			}
-		}
-		lines = append(lines, line)
-	}
-	var fields map[string]any
-	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &fields); err != nil {
-		return nil, err
-	}
-	if fields == nil {
-		return nil, fmt.Errorf("ledger body must be an object")
-	}
-	return fields, nil
+	return ParseLedgerBody(body)
 }
 func text(f map[string]any, key string) string {
 	v, ok := f[key].(string)

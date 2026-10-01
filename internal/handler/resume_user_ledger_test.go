@@ -7,6 +7,7 @@ import (
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/tooloutput"
 	"go.uber.org/zap"
 )
 
@@ -51,8 +52,8 @@ func TestCoverageContinuationIsBoundedAndPreservesExclusions(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		checks = append(checks, strings.Repeat("未处理", 200))
 	}
-	text := formatCoverageContinueMessage(checks)
-	if len([]rune(text)) > 5000 || !strings.Contains(text, "保留用户排除项") || !strings.Contains(text, "其余缺口") {
+	text, path := coverageContinuationMessage(checks, tooloutput.SpillOpts{RootDir: t.TempDir(), ExecutionID: "all-checks.json"})
+	if path == "" || len([]rune(text)) > 5000 || !strings.Contains(text, "保留用户排除项") || !strings.Contains(text, "read_file") || !strings.Contains(text, "全部缺口") {
 		t.Fatalf("unbounded or misleading continuation: %d", len([]rune(text)))
 	}
 }

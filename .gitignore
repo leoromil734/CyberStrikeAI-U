@@ -6,6 +6,7 @@ data/
 *.sqlite
 *.sqlite3
 doc/
+others/*
 # Local configuration and secrets
 config.yaml
 config.local.yaml

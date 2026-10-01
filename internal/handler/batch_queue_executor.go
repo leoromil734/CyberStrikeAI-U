@@ -99,10 +99,26 @@ func (h *AgentHandler) tryFinalizeBatchQueue(queueID string) {
 	}
 
 	lastRunErr := ""
+	var blockedReasons []string
 	for _, t := range queue.Tasks {
-		if t != nil && t.Status == BatchTaskStatusFailed && t.Error != "" {
+		if t == nil {
+			continue
+		}
+		if t.Status == BatchTaskStatusBlocked {
+			blockedReasons = append(blockedReasons, fmt.Sprintf("任务 %s: %s", t.ID, t.Error))
+		} else if t.Status == BatchTaskStatusFailed && t.Error != "" {
 			lastRunErr = t.Error
 		}
+	}
+	if len(blockedReasons) > 0 {
+		blockedCount := len(blockedReasons)
+		if lastRunErr != "" {
+			blockedReasons = append(blockedReasons, lastRunErr)
+		}
+		h.batchTaskManager.SetLastRunError(queueID, strings.Join(blockedReasons, "\n"))
+		h.batchTaskManager.UpdateQueueStatus(queueID, BatchQueueStatusPaused)
+		h.logger.Info("批量任务队列存在未最终化的子任务，已暂停等待恢复", zap.String("queueId", queueID), zap.Int("blockedCount", blockedCount))
+		return
 	}
 	h.batchTaskManager.SetLastRunError(queueID, lastRunErr)
 	h.batchTaskManager.UpdateQueueStatus(queueID, BatchQueueStatusCompleted)
@@ -180,19 +196,15 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 6*time.Hour)
 
 	registered := false
-	finishStatus := "completed"
+	// 默认失败；只有最终化检查通过后才允许登记 completed。
+	finishStatus := BatchTaskStatusFailed
+	var decision agentfinalizer.Decision
 
 	defer func() {
 		h.batchTaskManager.SetTaskCancel(queueID, task.ID, nil)
 		timeoutCancel()
 		if registered {
-			if h.taskEventBus != nil {
-				ev := StreamEvent{Type: "done", Message: "", Data: map[string]interface{}{"conversationId": conversationID}}
-				if b, err := json.Marshal(ev); err == nil {
-					h.taskEventBus.Publish(conversationID, append(append([]byte("data: "), b...), '\n', '\n'))
-				}
-			}
-			h.tasks.FinishTask(conversationID, finishStatus)
+			h.finishBatchSubTask(conversationID, finishStatus, decision)
 		}
 		cancelWithCause(nil)
 	}()
@@ -264,11 +276,11 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	// 最终化治理：候选文本先过 finalizer，未收敛时按原因自动续跑（含等待仍在跑的异步工具）。
 	segFinalMessage := finalMessage
 	segHistory := []agent.ChatMessage{}
-	finalizationAutoContinueAttempt := 0
+	finalizationAutoContinueAttempt := finalizationContinuationState{}
 	upstreamErrorRetries := 0
 	var resultMA *multiagent.RunResult
 	var runErr error
-	var decision agentfinalizer.Decision
+	var cumulativeMCPExecutionIDs []string
 	for {
 		resultMA, runErr = nil, nil
 		for attempt := 0; ; attempt++ {
@@ -307,7 +319,9 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 			break
 		}
 
-		decision = h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, resultMA.MCPExecutionIDs)
+		cumulativeMCPExecutionIDs = mergeMCPExecutionIDLists(cumulativeMCPExecutionIDs, resultMA.MCPExecutionIDs)
+		resultMA.MCPExecutionIDs = cumulativeMCPExecutionIDs
+		decision = h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, cumulativeMCPExecutionIDs)
 		// 上游网关以 HTTP 200 返回错误正文：不能当成功交付，按可重试的模型错误处理。
 		if decision.CompletionReason == agentfinalizer.ReasonUpstreamErrorText {
 			if upstreamErrorRetries < maxRetry {
@@ -361,7 +375,16 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		return
 	}
 
-	h.logger.Info("批量任务执行成功", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
+	decision = finalizationStoppedDecision(decision, &finalizationAutoContinueAttempt)
+	decision = batchSubTaskDeliveryDecision(resultMA, decision)
+	finishStatus = decision.Status
+	errorMsg := ""
+	if !decision.Finalizable {
+		errorMsg = finalizationBlockedMessage(decision)
+		h.logger.Info("批量任务执行已停止但未达到交付条件", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.String("status", finishStatus), zap.String("completionReason", decision.CompletionReason))
+	} else {
+		h.logger.Info("批量任务执行成功", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
+	}
 
 	resText := resultMA.Response
 	mcpIDs := resultMA.MCPExecutionIDs
@@ -393,7 +416,60 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		}
 	}
 
-	h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, BatchTaskStatusCompleted, resText, "", conversationID)
+	batchStatus := finishStatus
+	if batchStatus == "timeout" {
+		// 会话运行历史保留 timeout；批量项延续原有 failed 表示执行超时的约定。
+		batchStatus = BatchTaskStatusFailed
+	}
+	h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, resText, errorMsg, conversationID)
+}
+
+// batchSubTaskDeliveryDecision 将批量交付状态与 RunResult 对齐；nil runErr 不是成功凭据。
+func batchSubTaskDeliveryDecision(result *multiagent.RunResult, decision agentfinalizer.Decision) agentfinalizer.Decision {
+	if decision.Finalizable {
+		decision.Status = BatchTaskStatusCompleted
+	} else {
+		decision.Finalized = false
+		switch decision.Status {
+		case BatchTaskStatusFailed, BatchTaskStatusCancelled, "timeout":
+			// 保留显式的失败、取消和超时决策。
+		default:
+			decision.Status = BatchTaskStatusBlocked
+		}
+	}
+	if result != nil {
+		result.Status = decision.Status
+		result.Finalized = decision.Finalized
+		result.CompletionReason = decision.CompletionReason
+		result.EvidenceVerified = decision.EvidenceVerified
+		result.EvidenceRefs = append([]string(nil), decision.EvidenceRefs...)
+		result.PendingExecutionIDs = append([]string(nil), decision.PendingExecutionIDs...)
+		result.MissingChecks = append([]string(nil), decision.MissingChecks...)
+	}
+	return decision
+}
+
+// batchSubTaskDoneEvent 携带真实收尾状态及阻断详情，不能由 done 推断为成功。
+func batchSubTaskDoneEvent(conversationID, finishStatus string, decision agentfinalizer.Decision) StreamEvent {
+	if decision.Status != finishStatus {
+		decision.CompletionReason = finishStatus
+	}
+	decision.Status = finishStatus
+	if finishStatus != BatchTaskStatusCompleted {
+		decision.Finalizable = false
+		decision.Finalized = false
+	}
+	return StreamEvent{Type: "done", Data: finalizationResponsePayload(decision, map[string]interface{}{"conversationId": conversationID})}
+}
+
+func (h *AgentHandler) finishBatchSubTask(conversationID, finishStatus string, decision agentfinalizer.Decision) {
+	if h.taskEventBus != nil {
+		if b, err := json.Marshal(batchSubTaskDoneEvent(conversationID, finishStatus, decision)); err == nil {
+			h.taskEventBus.Publish(conversationID, append(append([]byte("data: "), b...), '\n', '\n'))
+		}
+	}
+	// FinishTask 会关闭事件流，因此必须在 done 发布后调用。
+	h.tasks.FinishTask(conversationID, finishStatus)
 }
 
 func (h *AgentHandler) handleBatchSubTaskRunError(

@@ -19385,6 +19385,26 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
     border: 1px solid rgba(108, 117, 125, 0.3);
 }
 
+.task-status-blocked,
+.batch-task-status-blocked {
+    background: rgba(255, 193, 7, 0.12);
+    color: #b8860b;
+    border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.task-blocked-reason,
+.batch-task-blocked-reason,
+.bq-alert--blocked {
+    color: #b8860b;
+    background: rgba(255, 193, 7, 0.08);
+    border-left: 3px solid #b8860b;
+    padding: 8px;
+    margin-top: 8px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .task-status-unknown {
     background: var(--bg-secondary);
     color: var(--text-secondary);

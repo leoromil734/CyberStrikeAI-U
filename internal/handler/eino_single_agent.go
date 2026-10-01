@@ -193,7 +193,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	// 同一请求内分段续跑时，主代理 iteration 事件按偏移累计，避免 UI 出现「第3轮 → 第1轮」回跳。
 	var mainIterationOffset int
 	var emptyResponseContinueAttempt int
-	var finalizationAutoContinueAttempt int
+	var finalizationAutoContinueAttempt finalizationContinuationState
 	var finalizationDecision agentfinalizer.Decision
 
 	for {
@@ -256,6 +256,9 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		}
 
 		if runErr == nil {
+			if result == nil {
+				result = &multiagent.RunResult{}
+			}
 			mw := &h.config.MultiAgent.EinoMiddleware
 			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, false, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
@@ -370,6 +373,10 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 
 	timeoutCancel()
 
+	finalizationDecision = finalizationStoppedDecision(finalizationDecision, &finalizationAutoContinueAttempt)
+	applyFinalizationDecisionToResult(result, finalizationDecision)
+	taskStatus = finalizationDecision.Status
+	h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
 	h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_single", cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
 
@@ -387,7 +394,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		"mcpExecutionIds": cumulativeMCPExecutionIDs,
 		"agentMode":       "eino_single",
 	}))
-	sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+	sendEvent("done", "", finalizationResponsePayload(finalizationDecision, map[string]interface{}{"conversationId": conversationID}))
 }
 
 // EinoSingleAgentLoop Eino ADK 单代理非流式对话。
@@ -445,8 +452,9 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 	var result *multiagent.RunResult
 	var runErr error
 	var emptyResponseContinueAttempt int
-	var finalizationAutoContinueAttempt int
+	var finalizationAutoContinueAttempt finalizationContinuationState
 	var decision agentfinalizer.Decision
+	var cumulativeMCPExecutionIDs []string
 	for {
 		result, runErr = multiagent.RunEinoSingleChatModelAgent(
 			taskCtx,
@@ -471,6 +479,11 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": runErr.Error()})
 			return
 		}
+		if result == nil {
+			result = &multiagent.RunResult{}
+		}
+		cumulativeMCPExecutionIDs = mergeMCPExecutionIDLists(cumulativeMCPExecutionIDs, result.MCPExecutionIDs)
+		result.MCPExecutionIDs = cumulativeMCPExecutionIDs
 		if h.tryContinueOnEinoEmptyResponse(taskCtx, &h.config.MultiAgent.EinoMiddleware, prep.ConversationID, result, &emptyResponseContinueAttempt, &curHist, &curMsg, false, progressCallback) {
 			continue
 		}
@@ -481,6 +494,8 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		break
 	}
 
+	decision = finalizationStoppedDecision(decision, &finalizationAutoContinueAttempt)
+	applyFinalizationDecisionToResult(result, decision)
 	h.persistFinalizationDecision(prep.ConversationID, prep.AssistantMessageID, "eino_single", result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		_ = h.db.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput)

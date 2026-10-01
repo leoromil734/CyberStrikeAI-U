@@ -74,6 +74,19 @@ function getBatchQueueStatusPresentation(queue) {
     return { ...base, ...empty };
 }
 
+/** blocked 单独计数，既不是成功也不计入已交付进度。 */
+function batchQueueTaskStats(queue) {
+    const stats = { total: 0, pending: 0, running: 0, completed: 0, blocked: 0, failed: 0, cancelled: 0 };
+    (queue.tasks || []).forEach(task => {
+        if (!task) return;
+        stats.total++;
+        if (Object.prototype.hasOwnProperty.call(stats, task.status) && task.status !== 'total') {
+            stats[task.status]++;
+        }
+    });
+    return stats;
+}
+
 /** 队列是否处于「可改子任务列表/文案」的空闲态（与后端 batch_task_manager.queueAllowsTaskListMutationLocked 对齐） */
 function batchQueueAllowsSubtaskMutation(queue) {
     if (!queue) return false;
@@ -151,39 +164,23 @@ function saveCompletedTasksHistory() {
     }
 }
 
-// 更新已完成任务历史
+// 更新停止执行的任务历史。列表消失仅说明不再活跃，不能推断为成功。
 function updateCompletedTasksHistory(currentTasks) {
-    // 保存当前所有任务作为快照（用于下次比较）
     const currentTaskIds = new Set(currentTasks.map(t => t.conversationId));
-    
-    // 如果是首次加载，只需要保存当前任务快照
-    if (tasksState.allTasks.length === 0) {
-        return;
-    }
-    
-    const previousTaskIds = new Set(tasksState.allTasks.map(t => t.conversationId));
-    
-    // 找出刚完成的任务（之前存在但现在不存在的）
-    // 只要任务从列表中消失了，就认为它已完成
-    const justCompleted = tasksState.allTasks.filter(task => {
-        return previousTaskIds.has(task.conversationId) && !currentTaskIds.has(task.conversationId);
-    });
-    
-    // 将刚完成的任务添加到历史中
-    justCompleted.forEach(task => {
-        // 检查是否已存在（避免重复添加）
+    const justStopped = tasksState.allTasks.filter(task => !currentTaskIds.has(task.conversationId));
+    justStopped.forEach(task => {
         const exists = tasksState.completedTasksHistory.some(t => t.conversationId === task.conversationId);
         if (!exists) {
-            // 如果任务状态不是最终状态，标记为completed
-            const finalStatus = ['completed', 'failed', 'timeout', 'cancelled'].includes(task.status) 
-                ? task.status 
-                : 'completed';
-            
+            const finalStatus = ['completed', 'blocked', 'failed', 'timeout', 'cancelled'].includes(task.status)
+                ? task.status
+                : 'unknown';
             tasksState.completedTasksHistory.push({
                 conversationId: task.conversationId,
-                message: task.title || task.message || '未命名任务',
+                message: task.title || task.message || _t('tasks.unnamedTask'),
                 startedAt: task.startedAt,
                 status: finalStatus,
+                completionReason: task.completionReason || '',
+                error: task.error || '',
                 completedAt: new Date().toISOString()
             });
         }
@@ -232,7 +229,8 @@ async function loadTasks() {
             }
         }
         
-        // 保存所有任务
+        // 保留上一份活跃快照，先更新历史，再替换当前列表。
+        updateCompletedTasksHistory(activeTasks);
         tasksState.allTasks = activeTasks;
         
         // 更新已完成任务历史（从后端API获取）
@@ -249,7 +247,9 @@ async function loadTasks() {
                     conversationId: t.conversationId,
                     message: t.message || '未命名任务',
                     startedAt: t.startedAt,
-                    status: t.status || 'completed',
+                    status: t.status || 'unknown',
+                    completionReason: t.completionReason || '',
+                    error: t.error || '',
                     completedAt: t.completedAt || new Date().toISOString()
                 })),
                 ...localHistory
@@ -263,9 +263,6 @@ async function loadTasks() {
             }
             
             saveCompletedTasksHistory();
-        } else {
-            // 如果后端API不可用，仍然使用前端逻辑更新历史
-            updateCompletedTasksHistory(activeTasks);
         }
         
         updateTaskStats(activeTasks);
@@ -462,7 +459,9 @@ function renderTasks(tasks) {
         'failed': { text: _t('tasks.statusFailed'), class: 'task-status-failed' },
         'timeout': { text: _t('tasks.statusTimeout'), class: 'task-status-timeout' },
         'cancelled': { text: _t('tasks.statusCancelled'), class: 'task-status-cancelled' },
-        'completed': { text: _t('tasks.statusCompleted'), class: 'task-status-completed' }
+        'completed': { text: _t('tasks.statusCompleted'), class: 'task-status-completed' },
+        'blocked': { text: _t('tasks.statusBlocked'), class: 'task-status-blocked' },
+        'unknown': { text: _t('tasks.unknown'), class: 'task-status-unknown' }
     };
 
     // 分离当前任务和历史任务
@@ -518,8 +517,9 @@ function renderTaskItem(task, statusMap, isHistory = false) {
         : '';
 
     const status = statusMap[task.status] || { text: task.status, class: 'task-status-unknown' };
-    const isFinalStatus = ['failed', 'timeout', 'cancelled', 'completed'].includes(task.status);
-    const canCancel = !isFinalStatus && task.status !== 'cancelling' && !isHistory;
+    const isStoppedStatus = ['failed', 'timeout', 'cancelled', 'completed', 'blocked', 'unknown'].includes(task.status);
+    const canCancel = !isStoppedStatus && task.status !== 'cancelling' && !isHistory;
+    const blockedReason = task.status === 'blocked' ? (task.error || task.completionReason || _t('tasks.blockedRecoveryHint')) : '';
     const isSelected = tasksState.selectedTasks.has(task.conversationId);
     const duration = (task.status === 'running' || task.status === 'cancelling') 
         ? calculateDuration(task.startedAt) 
@@ -561,6 +561,7 @@ function renderTaskItem(task, statusMap, isHistory = false) {
                     ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewConversation('${task.conversationId}')">` + _t('tasks.viewConversation') + `</button>` : ''}
                 </div>
             </div>
+            ${blockedReason ? `<div class="task-blocked-reason"><strong>${escapeHtml(_t('tasks.blockedReasonLabel'))}:</strong> ${escapeHtml(blockedReason)}</div>` : ''}
             ${task.conversationId ? `
                 <div class="task-details">
                     <span class="task-id-label">` + _t('tasks.conversationIdLabel') + `:</span>
@@ -1874,23 +1875,7 @@ function renderBatchQueues() {
     list.innerHTML = queues.map(queue => {
         const pres = getBatchQueueStatusPresentation(queue);
         
-        // 统计任务状态
-        const stats = {
-            total: queue.tasks.length,
-            pending: 0,
-            running: 0,
-            completed: 0,
-            failed: 0,
-            cancelled: 0
-        };
-        
-        queue.tasks.forEach(task => {
-            if (task.status === 'pending') stats.pending++;
-            else if (task.status === 'running') stats.running++;
-            else if (task.status === 'completed') stats.completed++;
-            else if (task.status === 'failed') stats.failed++;
-            else if (task.status === 'cancelled') stats.cancelled++;
-        });
+        const stats = batchQueueTaskStats(queue);
         
         const progress = stats.total > 0 ? Math.round((stats.completed + stats.failed + stats.cancelled) / stats.total * 100) : 0;
         // 允许删除待执行、已完成或已取消状态的队列
@@ -1934,6 +1919,7 @@ function renderBatchQueues() {
                     <div class="batch-queue-item__cluster">
                         <div class="batch-queue-item__status-inline">
                             <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
+                            ${stats.blocked > 0 ? `<span class="batch-task-status batch-task-status-blocked" title="${escapeHtml(queue.lastRunError || _t('tasks.blockedRecoveryHint'))}">${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</span>` : ''}
                             <span class="batch-queue-item__pct">${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
                         </div>
                         ${pres.sublabel ? `<span class="batch-queue-item__sublabel">${escapeHtml(pres.sublabel)}</span>` : ''}
@@ -2075,6 +2061,7 @@ async function showBatchQueueDetail(queueId) {
         batchQueuesState.currentQueueId = queueId;
         const pres = getBatchQueueStatusPresentation(queue);
         const allowSubtaskMutation = batchQueueAllowsSubtaskMutation(queue);
+        const stats = batchQueueTaskStats(queue);
 
         if (title) {
             // textContent 本身会做转义；这里不要再 escapeHtml，否则会把 && 显示成 &amp;...（看起来像“变形/乱码”）
@@ -2087,8 +2074,8 @@ async function showBatchQueueDetail(queueId) {
             addTaskBtn.style.display = allowSubtaskMutation ? 'inline-block' : 'none';
         }
         if (startBtn) {
-            // pending状态显示"开始执行"，paused状态显示"继续执行"
-            startBtn.style.display = (queue.status === 'pending' || queue.status === 'paused') ? 'inline-block' : 'none';
+            // 队列继续执行只处理 pending；只有 blocked 时通过单项入口显式重跑。
+            startBtn.style.display = (queue.status === 'pending' || queue.status === 'paused') && (stats.blocked === 0 || stats.pending > 0) ? 'inline-block' : 'none';
             if (startBtn && queue.status === 'paused') {
                 startBtn.textContent = _t('tasks.resumeExecute');
             } else if (startBtn && queue.status === 'pending') {
@@ -2117,6 +2104,7 @@ async function showBatchQueueDetail(queueId) {
             'pending': { text: _t('tasks.statusPending'), class: 'batch-task-status-pending' },
             'running': { text: _t('tasks.statusRunning'), class: 'batch-task-status-running' },
             'completed': { text: _t('tasks.statusCompleted'), class: 'batch-task-status-completed' },
+            'blocked': { text: _t('tasks.statusBlocked'), class: 'batch-task-status-blocked' },
             'failed': { text: _t('tasks.failedLabel'), class: 'batch-task-status-failed' },
             'cancelled': { text: _t('tasks.statusCancelled'), class: 'batch-task-status-cancelled' }
         };
@@ -2180,6 +2168,7 @@ async function showBatchQueueDetail(queueId) {
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.taskTotal'))}</span><span class="bq-kv__v">${queue.tasks.length}</span></div>
                 ${queue.scheduleMode === 'cron' ? `<div class="bq-kv bq-kv--block"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAuto'))}</span><span class="bq-kv__v bq-kv__v--control"><label class="bq-cron-toggle"><input type="checkbox" ${queue.scheduleEnabled !== false ? 'checked' : ''} onchange="updateBatchQueueScheduleEnabled(this.checked)" /><span class="bq-cron-toggle__hint">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}</span></label></span></div>` : ''}
             </section>
+            ${stats.blocked > 0 ? `<div class="bq-alert bq-alert--blocked"><strong>${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</strong><p>${escapeHtml(_t('tasks.blockedRecoveryHint'))}</p></div>` : ''}
             ${queue.lastScheduleError ? `<div class="bq-alert bq-alert--err"><strong>${escapeHtml(_t('batchQueueDetailModal.lastScheduleError'))}</strong><p>${escapeHtml(queue.lastScheduleError)}</p></div>` : ''}
             ${queue.lastRunError ? `<div class="bq-alert bq-alert--err"><strong>${escapeHtml(_t('batchQueueDetailModal.lastRunError'))}</strong><p>${escapeHtml(queue.lastRunError)}</p></div>` : ''}
             ${pres.callout ? `<div class="batch-queue-cron-callout batch-queue-cron-callout--compact"><span class="batch-queue-cron-callout-icon" aria-hidden="true">\u21BB</span><p>${escapeHtml(pres.callout)}</p></div>` : ''}
@@ -2220,7 +2209,7 @@ async function showBatchQueueDetail(queueId) {
                             ${task.startedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.startLabel') + `: ${new Date(task.startedAt).toLocaleString()}</div>` : ''}
                             ${retryNote ? `<div class="batch-task-time">${escapeHtml(retryNote)}</div>` : ''}
                             ${task.completedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.completeLabel') + `: ${new Date(task.completedAt).toLocaleString()}</div>` : ''}
-                            ${task.error ? `<div class="batch-task-error">` + _t('batchQueueDetailModal.errorLabel') + `: ${escapeHtml(task.error)}</div>` : ''}
+                            ${task.error ? `<div class="${task.status === 'blocked' ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(task.status === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
                             ${task.result ? `<div class="batch-task-result">` + _t('batchQueueDetailModal.resultLabel') + `: ${escapeHtml(task.result.substring(0, 200))}${task.result.length > 200 ? '...' : ''}</div>` : ''}
                         </div>
                     `;

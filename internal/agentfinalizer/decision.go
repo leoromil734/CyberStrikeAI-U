@@ -64,6 +64,7 @@ type Decision struct {
 	ConversationID       string   `json:"conversationId,omitempty"`
 	AssistantMessageID   string   `json:"messageId,omitempty"`
 	CandidateResponseLen int      `json:"candidateResponseLen,omitempty"`
+	CoverageValidFacts   int      `json:"coverageValidFacts,omitempty"`
 }
 
 // Input 判定输入。Response 为候选文本，其余为运行时状态与策略。
@@ -196,6 +197,7 @@ func Decide(db *database.DB, in Input) Decision {
 	}
 
 	coverage := coverageForDelivery(db, in)
+	d.CoverageValidFacts = coverage.ValidFacts
 	if coverage.Active && len(coverage.Missing) > 0 {
 		d.Status = StatusInProgress
 		d.CompletionReason = ReasonCoverageIncomplete

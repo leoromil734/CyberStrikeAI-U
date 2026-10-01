@@ -593,7 +593,7 @@ func scanProjectFactRow(row *sql.Row) (*ProjectFact, error) {
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("事实不存在")
+			return nil, fmt.Errorf("事实不存在: %w", err)
 		}
 		return nil, err
 	}
