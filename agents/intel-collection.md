@@ -59,6 +59,8 @@ max_iterations: 0
 
 ## 独有职责
 
+- 初始线上信息收集必须先实际调用 `fofa_search`，再补其他公开来源。锁面只查当前host/IP，自由跳只查当前一种子；上游本轮同范围有效调用证据可复用，离线审阅不新开查询。成功零结果留原件，缺工具/key/配额或失败记blocked与替代证据，其他来源不冒充FOFA、不用N/A跳过；细节见 `skills/recon-osint-playbook/references/fofa-first.md`。
+
 - 聚合证书、DNS、历史 URL、互联网测绘、公开仓库和已公开泄露线索，保存来源与采集时间。
 - 每个来源 `upsert_project_fact` 为 `recon/source/{tool}/{target_slug}`，body 含 status/raw/unique/incremental/error/alt_tried。
 - 对候选资产做归属分层：confirmed、probable、unresolved。confirmed 全量交接；**probable 且有关联证据的疑似下游**（范围内页面/JS/接口/跳转/证书带出的 host）也要交接，由 `recon` 做存活确认和入口枚举后再进验证。仅凭名称相似、CDN/第三方库域、或已坐实参股/非全资的 unresolved 只记录不交接。

@@ -36,13 +36,14 @@ metadata:
 ## 最小执行顺序（提高完成率）
 
 ```text
-被动 OSINT → 子域多源 → DNS 清洗 → 空间引擎交叉 → 技术栈指纹 → 主动端口/HTTP
+范围定界 → 必调 FOFA → 被动 OSINT/子域多源 → DNS 清洗 → 技术栈指纹 → 主动端口/HTTP
 ```
 
+0. **FOFA 必调**：初始线上信息收集（Quick/Standard/Deep、SRC 锁面/自由跳）先实际调用 `fofa_search`，规则读 `references/fofa-first.md`。成功零结果留 covered 原件；缺工具/key/配额或失败留 blocked 与替代证据，不用其他引擎冒充 FOFA；上游本轮有效证据可复用，离线审阅不新开查询。
 1. **被动**：Google/Bing/Baidu dork、WHOIS、证书 CT、GitHub 泄露关键字（可用 `exec` 调 dig/curl/whois；无专用工具时不要空跑）。
 2. **子域**：至少两个异构来源，禁止单工具宣称完整。
 3. **DNS**：`dnsx`/`dnsenum`/`fierce` 验证 A/AAAA/CNAME/MX/TXT；识别通配。
-4. **空间引擎**：`fofa_search` / `shodan_search` / `zoomeye_search` / `quake_search` 用域名、证书、favicon、body 交叉。
+4. **空间引擎补充**：首步 `fofa_search` 后，`shodan_search` / `zoomeye_search` / `quake_search` 只补当前范围缺口，不替代 FOFA 必调。
 5. **指纹**：`httpx`（title/tech/status）；再决定 `nuclei` 模板范围（结果仅 tentative）。
 6. **主动**：`naabu`/`masscan`/`rustscan` 分层端口 → 高价值 `nmap -sCV`；`httpx` 存活与标题。
 
@@ -52,7 +53,7 @@ metadata:
 | --- | --- | --- | --- |
 | 子域被动 | `subfinder` | `amass`、`oneforall` | `upsert_project_fact` → `recon/source/{tool}/{target}` |
 | DNS | `dnsx` | `dnsenum`、`fierce`、`exec`(dig) | 同上 + 通配基线 |
-| 空间测绘 | `fofa_search` | `shodan_search`、`zoomeye_search`、`quake_search` | 资产增量 fact |
+| 初始测绘（必调） | `fofa_search` | 其他引擎仅补充，FOFA 失败仍 blocked | `recon/source/{assessment_id}/fofa_search/{target_id}` |
 | HTTP 存活/指纹 | `httpx` | `exec`+curl | 存活列表 |
 | 端口 | `naabu` | `masscan`、`rustscan`、`nmap`、`fscan` | 开放端口 fact |
 | 历史 URL | `waybackurls`、`gau` | `katana` 主动爬 | `recon/endpoint/*` |

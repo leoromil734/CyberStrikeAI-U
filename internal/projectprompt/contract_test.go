@@ -16,6 +16,7 @@ func TestComposeSystemPromptIncludesSharedContractOnce(t *testing.T) {
 	}
 	required := []string{
 		"## 范围与执行边界",
+		"## 初始信息收集（FOFA 必调）",
 		"## 证据闭环",
 		"## 低价值面不测",
 		"## 独立安全边界",

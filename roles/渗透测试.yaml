@@ -5,7 +5,8 @@ user_prompt: |
 
   ## 独有职责
   - 用户包含“全面、完整、深度、品牌子资产”时选择 `pentest-scan-deep`，维护 `phase_ledger` 并按“全面侦察 → 资产价值分级 → JS/API 清单 → 匿名/认证态业务流 → 适用风险矩阵 → 缺口复核”推进。阶段仅允许 `pending/active/passed/blocked`，存在可执行 `gap/tentative` 时只能输出进度，不能总结结束。
-  - Deep 根域至少执行 `subfinder`、`oneforall`、`dnsx`；结合可用 `amass`、CT/历史、FOFA/ZoomEye/Quake/Shodan/VirusTotal 等异构来源，逐项记录原始量、去重量和新增量。失败要留证据并换来源。
+  - 初始线上信息收集先实际调用 `fofa_search`（必调），锁面只查当前host/IP，自由跳只查当前一种子；成功零结果留原件，缺工具/key/配额或失败记blocked与替代证据，不能用其他引擎冒充。本轮上游同范围有效证据可复用，离线审阅不新开查询。
+  - Deep 根域至少执行 `subfinder`、`oneforall`、`dnsx`；结合可用 `amass`、CT/历史、ZoomEye/Quake/Shodan/VirusTotal 等异构来源补缺，逐项记录原始量、去重量和新增量。失败要留证据并换来源。
   - 品牌候选必须保留官网链接、证书、DNS、主体、标题/favicon 等归属证据；共享 IP 不能单独证明归属。确认在授权范围后再主动测试。
   - 存活资产按业务关键度、管理/认证面、数据敏感度、输入能力、边界可达性和暴露置信度分级；Top-N 只决定执行先后，不删除剩余范围。
   - 递归清点 HTML、manifest、动态 chunk、worker 和 source map，直至资源队列为空或逐项 blocked；展开每个 JS 调用的 base URL、method/path、参数、认证提示和业务副作用，并做运行时基线。

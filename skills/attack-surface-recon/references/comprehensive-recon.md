@@ -9,10 +9,10 @@
 | 被动子域 | `subfinder` + `oneforall`；可用时补 `amass` | raw、去重后、相对前序增量、错误 |
 | 证书/历史 | CT、历史 URL、DNS 历史或公开搜索至少一类 | 来源、首次/末次观察、候选域名 |
 | 品牌关联 | 官网链接、证书 SAN、注册主体、favicon/标题、共享分析标识，以及范围内页面/JS/接口带出的下游 host | 关联依据、置信度；有关联证据的 probable 下游进入浅测，仅名称相似或参股主体只记录 |
-| 空间测绘 | FOFA/ZoomEye/Quake/Shodan/VirusTotal 中可用来源 | 查询、命中、与品牌/域名的关联证据 |
+| 首步测绘（必调） | `fofa_search` 实际调用，所有线上范围必需；其他引擎仅补缺 | query、范围、时间、raw/unique/incremental、执行/原件、失败与替代证据 |
 | DNS 验证 | `dnsx` + 随机标签通配基线 | A/AAAA/CNAME、解析链、wildcard |
 
-同类工具可因缺依赖、额度、网络或平台限制而失败；失败写 `blocked` 并使用异构替代来源。只有工具成功但增量为 0 才能记录“无新增”，不能把空结果解释为不存在资产。
+初始收集先 FOFA，再补子域/DNS/HTTP；锁面只查当前host/IP、自由跳只查当前一种子，详细规则见根路径 `skills/recon-osint-playbook/references/fofa-first.md`。上游本轮同范围真实证据可复用，离线审阅不新开查询。缺依赖、额度、网络或平台限制时写真实 `blocked` 并补异构来源；FOFA不能因此写covered或N/A。成功零结果保存原件与零计数，不等于不存在资产。
 
 ## 2. 资产价值评分
 

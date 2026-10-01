@@ -4,9 +4,9 @@
 >
 > **全量 nuclei 不当进度。** nuclei 只在需要已知 CVE / 暴露面（actuator、swagger、已知中间件）时辅助；禁止把「全量模板扫一遍」当本站矩阵。
 >
-> 调搜用 `fofa_search`（内置）或外部 MCP `get_alerts`，不要自己 curl。Key 在 `config.yaml` 的 `fofa.api_key` 或 `mcp-servers/fofa_MCP/.env`：主号 → backup → backup2，限流自动切。限流闸认 `dig-scope` §2.1.4。**禁止**把 email / key 写进本文件或对话。
+> 初始线上信息收集必须先实际调用 `fofa_search`；锁面也要查指定 host/IP，但不搜全集团。详细口径见 `rules/dig-scope-workflow.md` §0.3 与根路径 `skills/recon-osint-playbook/references/fofa-first.md`。外部 MCP `get_alerts` 只补缺，不能替代本次 FOFA。凭据由 `config.yaml` 的 `fofa.api_key` 或 `FOFA_API_KEY` 注入，不自己 curl，不打印 key。缺工具/key/配额、调用失败真实记 blocked；成功零结果保存原始回包，不标目标安全。限流闸认 `dig-scope` §2.1.4，备用账号仅按实际已配置能力使用，不假定自动切换。
 
-### FOFA 最短语法（备忘，不是开场）
+### FOFA 起手最短语法（必调后按当前种子补缺）
 
 ```
 qbase64：查询语句 UTF-8 再 Base64

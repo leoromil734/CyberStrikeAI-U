@@ -41,6 +41,12 @@ subfinder example.com: raw=120 unique=98 incremental=98 status=covered
 - 工具失败/未装 → `status=blocked`，`error` 非空，且 `alt_tried` 至少一项或说明无可用替代。
 - 尚未执行 → 不得写 covered；保持 gap 或不写该 key。
 
+### FOFA 必经来源
+
+初始线上信息收集先实际调用 `fofa_search`；所有范围（含固定URL/IP/资产清单）都需本轮FOFA来源，其他引擎只能补缺。规则见根路径 `skills/recon-osint-playbook/references/fofa-first.md`。完整query、目标范围、采集时间和本次执行/原件在evidence中关联；raw按实际返回条目计，不把远端total写成已获取量。
+
+成功零结果用covered与零计数；未调用为gap。缺工具/key/配额、权限/网络/限流失败用blocked并附原始原因/替代证据，不伪造执行，不用not-applicable跳过，不写“FOFA已完成”。绑定v2轮次时用 `recon/source/{assessment_id}/fofa_search/{target_id}`；旧key只兼容笔记。锁面不出圈，上游本轮同范围真实证据可复用。
+
 ## 3. `recon/endpoint/*` body 必填字段
 
 ```text
@@ -65,7 +71,7 @@ evidence: <覆盖对象 + 计数 + 证据位置>
 blockers: <原始错误与替代路径；无则 none>
 ```
 
-Deep 根域：`recon/phase/recon_sources` 标 `passed` 前，至少存在：
+所有线上范围交接前先存在本轮 `fofa_search` 来源（covered或有证据blocked，不能N/A替代）；Deep根域的 `recon/phase/recon_sources` 标 `passed` 前还需：
 
 - `recon/source/subfinder/*`（covered 或 blocked+alt）
 - `recon/source/oneforall/*` 或等价异构子域来源的 blocked 记录

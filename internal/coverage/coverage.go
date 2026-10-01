@@ -183,6 +183,9 @@ func Check(facts []Fact, required bool) Report {
 			r.Missing = append(r.Missing, "missing recon/phase/"+r.AssessmentID+"/"+phase)
 		}
 	}
+	if !sources["fofa_search"] {
+		r.Missing = append(r.Missing, "missing evidenced recon/source for fofa_search (required initial reconnaissance source for every scope)")
+	}
 	if scope == "root-domain" {
 		for _, tool := range []string{"subfinder", "oneforall", "dnsx"} {
 			if !sources[tool] {

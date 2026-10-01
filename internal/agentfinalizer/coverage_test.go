@@ -38,7 +38,7 @@ func coverageTestDB(t *testing.T) (*database.DB, string, string, string) {
 func persistCoverage(t *testing.T, db *database.DB, project, conversation, phaseStatus string) {
 	t.Helper()
 	body := "schema_version: 2\nassessment_id: run-a\nmode: comprehensive\nstatus: active\nscope_kind: single-url\nendpoint_count: 0\njs_count: 0\nrisk_unit_count: 0"
-	facts := []database.ProjectFact{{FactKey: "recon/assessment/run-a", Body: body}, {FactKey: "recon/source/httpx/run-a", Body: "assessment_id: run-a\ntool: httpx\ntarget: https://example.com\nstatus: covered\nraw: 1\nunique: 1\nincremental: 1\nevidence: execution:baseline"}}
+	facts := []database.ProjectFact{{FactKey: "recon/assessment/run-a", Body: body}, {FactKey: "recon/source/httpx/run-a", Body: "assessment_id: run-a\ntool: httpx\ntarget: https://example.com\nstatus: covered\nraw: 1\nunique: 1\nincremental: 1\nevidence: execution:baseline"}, {FactKey: "recon/source/run-a/fofa_search/example", Body: "assessment_id: run-a\ntool: fofa_search\ntarget: https://example.com\nstatus: covered\nraw: 0\nunique: 0\nincremental: 0\nevidence: execution:fofa-empty-result"}}
 	for _, phase := range []string{"recon_sources", "asset_ranking", "frontend_api", "auth_workflows", "risk_matrix", "gap_review"} {
 		status := "passed"
 		if phase == "risk_matrix" {
@@ -93,6 +93,23 @@ func TestDecideCoverageIgnoresOtherConversationAndOldTurn(t *testing.T) {
 	in.RequireCoverageEvidence = false
 	if d := Decide(db, in); !d.Finalizable {
 		t.Fatalf("old turn blocked ordinary answer: %+v", d)
+	}
+}
+
+func TestDecideCoverageBlocksMissingFOFAEvenWithOtherSources(t *testing.T) {
+	db, project, conversation, message := coverageTestDB(t)
+	persistCoverage(t, db, project, conversation, "passed")
+	if _, err := db.Exec("DELETE FROM project_facts WHERE project_id = ? AND fact_key = ?", project, "recon/source/run-a/fofa_search/example"); err != nil {
+		t.Fatal(err)
+	}
+	in := Input{ConversationID: conversation, AssistantMessageID: message, Response: "信息收集与覆盖已完成。"}
+	d := Decide(db, in)
+	if d.Finalizable || d.CompletionReason != ReasonCoverageIncomplete || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "fofa_search") {
+		t.Fatalf("missing FOFA source did not block finalization: %+v", d)
+	}
+	persistCoverage(t, db, project, conversation, "passed")
+	if d := Decide(db, in); !d.Finalizable {
+		t.Fatalf("FOFA evidence repair did not unblock finalization: %+v", d)
 	}
 }
 

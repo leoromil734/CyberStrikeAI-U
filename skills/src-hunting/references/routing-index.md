@@ -74,7 +74,7 @@
 
 ## 产品与证据增量（只在现场信号命中后读取）
 
-这些是根目录路径；可直接 read_file 短 reference，不要求知识服务开启，不常驻叠载多个领域。SRC 的低价值排除、身份预算和动态确认门槛优先。
+这些是根目录路径；可直接 read_file 短 reference，不要求知识服务开启，不常驻叠载多个领域。SRC 的低价值排除、身份预算和动态确认门槛优先。初始线上信息收集先实际调用 `fofa_search`（必调），锁面不出圈；细节见 `skills/recon-osint-playbook/references/fofa-first.md` 和 dig-scope §0.3。
 
 - 已确认 Next.js/NestJS/FastAPI/Django 与具体动作/依赖边界：切 `framework-security-testing`，只读对应框架 reference。
 - 已确认 Supabase/Firebase 项目 key/规则/对象：切 `managed-backend-security`，public key 不等于漏洞。

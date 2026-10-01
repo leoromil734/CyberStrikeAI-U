@@ -11,7 +11,7 @@ func validLedger(scope string) []Fact {
 	for _, phase := range phases {
 		facts = append(facts, Fact{"recon/phase/run-a/" + phase, "assessment_id: run-a\nstatus: passed\nevidence: execution:baseline"})
 	}
-	for _, tool := range []string{"subfinder", "oneforall", "dnsx"} {
+	for _, tool := range []string{"fofa_search", "subfinder", "oneforall", "dnsx"} {
 		facts = append(facts, Fact{"recon/source/" + tool + "/example", "assessment_id: run-a\nstatus: covered\ntool: " + tool + "\ntarget: example.com\nraw: 2\nunique: 2\nincremental: 1\nevidence: execution:source"})
 	}
 	facts = append(facts,

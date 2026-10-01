@@ -17,7 +17,7 @@ metadata:
 
 # 攻击面测绘（增强版）
 
-输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游已有结果时只补缺口。
+输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游本轮已有真实 FOFA 证据时复用，不重复查询，缺来源时先补首步。
 
 - 完整矩阵、资产评分与 JS/API：`references/comprehensive-recon.md`
 - 来源/端点 fact 与退出门禁：`references/recon-fact-schema.md`（Deep 必读）
@@ -26,9 +26,10 @@ metadata:
 
 ## 工具流水线（MCP 名 = 实际调用名）
 
+0. 初始线上信息收集必须先实际调用 `fofa_search`；范围、零结果、阻断、原件与续跑复用按`recon-osint-playbook` 的 FOFA 起手规则。锁面只查当前 host/IP，不搜全集团；其他引擎只能补充，缺工具/key/配额留 blocked，不冒充成功。
 1. 根域：Quick=`subfinder`+CT；Standard=`subfinder`+异构来源+`dnsx`；Deep=`subfinder` + `oneforall` + 补 amass/CT/历史/空间测绘，逐项记 raw/增量。
 2. `dnsx` 清洗与通配基线；品牌关联先记证据再主动测。
-3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。空间引擎：`fofa_search`/`shodan_search`/`zoomeye_search`/`quake_search`（有 key 才调）。
+3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。`shodan_search`/`zoomeye_search`/`quake_search` 按可用性补缺，不替代首步 FOFA。
 4. Web：`katana`/`gau`/`waybackurls` + JS/`jsluice` → `recon/endpoint/*`。
 5. 参数/路径：`arjun`/`x8`/`ffuf`（可补 `gobuster`/`dirsearch`/`feroxbuster`），先建 SPA catch-all 基线。
 6. `nuclei` 仅 tentative，禁止直接 `record_vulnerability`。
@@ -37,6 +38,7 @@ metadata:
 
 | 阶段 | 优先 MCP | 备选 |
 | --- | --- | --- |
+| 首步 FOFA（必调） | `fofa_search` | 失败留 blocked；其他来源只补缺 |
 | 子域 | `subfinder`、`oneforall` | `amass` |
 | DNS | `dnsx` | `dnsenum`/`fierce` |
 | HTTP/端口 | `httpx`、`naabu` | `nmap`/`masscan`/`fscan` |

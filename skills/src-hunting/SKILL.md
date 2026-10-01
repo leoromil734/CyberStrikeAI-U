@@ -44,7 +44,7 @@ metadata:
 
 自由跳按 `references/rules/dig-scope-workflow.md` §1.0.1：搜一个种子 → 去重去废去非存活 → 活面挖完 → 才搜下一个。禁止多种子一次搜完，禁止中途问「要不要继续」。任务目录认 `references/rules/desktop-task-folder.md`；资产/入口同时 `upsert_project_fact`。
 
-进站打法认 dig-scope §4；价值顺序与类型矩阵认 `references/rules/src-value-hunting.md` §1.1/§3。登录页先找业务面。测绘用 `fofa_search` 或外部 MCP `get_alerts`；FOFA 语法见 `references/recon-methodology.md`。
+进站打法认 dig-scope §4；价值顺序与类型矩阵认 `references/rules/src-value-hunting.md` §1.1/§3。初始线上信息收集必须先实际调用 `fofa_search`，锁面只查当前 host/IP；外部 `get_alerts` 仅补充，不能替代。缺工具/key/配额或失败记 blocked；成功零结果保存原件。本轮上游同范围真实证据可复用。FOFA 起手口径认 dig-scope §0.3，语法见 `references/recon-methodology.md`。
 
 ## 专题路由
 
@@ -61,7 +61,8 @@ metadata:
 
 | 场景 | 优先 | 备选 |
 |---|---|---|
-| 测绘/存活 | `fofa_search` / `httpx` | 外部 `get_alerts` |
+| 起手测绘（必调） | `fofa_search` | 外部 `get_alerts` 只补充 |
+| 存活 | `httpx` | — |
 | JS/API | `jsluice` | `katana`、`gau` |
 | SQLi/XSS/OOB | `sqlmap` / `dalfox` / `interactsh-client` | 手工、`dnslog` |
 | 落库 | `list_vulnerabilities` → `record_vulnerability` | `upsert_project_fact` |
