@@ -41,6 +41,14 @@ metadata:
 - 如果运行时行为与源码冲突，优先检查构建版本、缓存、代理重写和配置；仍不一致时以运行时证据为准。
 - 只有目标侧可复现且影响成立才记录漏洞；静态可达但动态不可达写 tentative 或负结果。
 
+## 按需深化
+
+- 校验值与消费值、共享字段正常/错误/重试/异步生命周期：`references/semantic-differential.md`。
+- npx/npm exec/构建或 MCP stdio 选择身份与缺失回退：`references/package-executor-identity.md`。
+- 依赖图/公告符号可达性按需切 `component-vuln-intel`；实际框架权限按需切 `framework-security-testing`。
+- 获准 diff/补丁/历史 PoC 验收切 `security-regression-testing`，不是新的扫描深度。
+- n8n/插件定义只读审计在 `ai-llm-app-attack` 对应 reference；CI/IaC 产物在 `infra-control-plane-testing` 对应 reference。静态审阅不自动触发在线工作流或部署。
+
 ## 交付
 
 输出路由/入口映射、数据流链、安全检查位置、动态请求与响应证据、运行时差异、已否定分支和建议修复位置。修复建议优先放在最靠近安全边界的共享校验层，而不是逐入口打补丁。

@@ -72,6 +72,23 @@
 | CORS | `cors-test.md` **勿开、勿挖** |
 | LLM 越狱/提示绕过 | `llm-security-test.md` **勿开**；有真实工具执行才走 `agent-tool-exec-test.md` |
 
+## 产品与证据增量（只在现场信号命中后读取）
+
+这些是根目录路径；可直接 read_file 短 reference，不要求知识服务开启，不常驻叠载多个领域。SRC 的低价值排除、身份预算和动态确认门槛优先。
+
+- 已确认 Next.js/NestJS/FastAPI/Django 与具体动作/依赖边界：切 `framework-security-testing`，只读对应框架 reference。
+- 已确认 Supabase/Firebase 项目 key/规则/对象：切 `managed-backend-security`，public key 不等于漏洞。
+- Vault/消息/监控/SCM-CI/IaC/IdP/CMS-LMS 具体产品、凭据或产物：切 `infra-control-plane-testing`，端口/非404不触发；state非实时事实，读消息可有副作用。
+- OpenAPI/Postman 继承/未解引用：`skills/api-security-testing/references/contract-driven-testing.md`；工具仅 lint，不完成覆盖。
+- 幂等键/支付签名/订单读回：`skills/api-security-testing/references/idempotency-webhook-verification.md`，保留没动钱和审核不测规则。
+- 校验与消费表示、字段生命周期：`skills/source-aware-whitebox/references/semantic-differential.md`；无Shell选项/配置：`skills/web-attack-methods/references/argument-injection.md`。
+- npx/npm exec/stdio启动：`skills/source-aware-whitebox/references/package-executor-identity.md`；依赖图/公告符号：`skills/component-vuln-intel/references/dependency-reachability.md`。不注册争议名、不运行陌生包。
+- postMessage/窗口/worker：`skills/web-attack-methods/references/browser-state-security.md`；Electron IPC：`skills/binary-mobile-reversing/references/electron-ipc-boundaries.md`。
+- IPA/移动保护/服务端attestation：`skills/binary-mobile-reversing/references/ios-artifact-audit.md` 或 `skills/binary-mobile-reversing/references/mobile-protection-map.md`；本地可改变不自动洞。
+- OCI digest/层/SBOM：`skills/cloud-attack-methods/references/oci-image-assessment.md`；扫描命中仍 tentative。
+- n8n/插件定义只读数据流：`skills/ai-llm-app-attack/references/workflow-definition-audit.md`；MCP审批：`skills/ai-llm-app-attack/references/mcp-effective-authority.md`，readOnlyHint不是授权；**勿开 LLM 泛越狱教材**。
+- 否定候选/OOB归属/历史复测：`skills/pentest-verification/references/counterevidence.md`、`skills/pentest-verification/references/oob-provenance.md`、`skills/pentest-verification/references/retest-lifecycle.md`，只选当前一篇；diff/补丁专审切 `security-regression-testing`。
+
 ## 增量回查规则
 
 - 回包出现新 `id/url/token/internal host/download path`：先写 fact/本站队列，再按本索引加载新增专题；新增入口/身份/版本时重新映射运行时基线与风险矩阵，旧负结果不继承。

@@ -26,6 +26,9 @@ API 测试优先建立「端点 × 身份 × 对象归属 × 动作」差分矩�
 - BOLA/BFLA/字段授权/批量赋值/双身份：`references/authorization-matrix.md`
 - JWT/OAuth/API key/session/撤销/scope：`references/token-auth.md`
 - SSRF/业务流/回调/GraphQL/异常：`references/business-server-side.md`
+- OpenAPI/Postman 契约、认证继承、逐操作基线：`references/contract-driven-testing.md`（schema 工具只做 lint）
+- 幂等键或支付 Webhook 的签名/主体绑定/状态读回：`references/idempotency-webhook-verification.md`
+- 已确认 Supabase/Firebase 切换 `managed-backend-security`；IdP 产品管理资源切换 `infra-control-plane-testing`，不叠载整个领域。
 
 ## CSS / OWASP API 手册（按需）
 

@@ -6,6 +6,14 @@ metadata:
   tags: [渗透测试, penetration-testing, 红队]
 ---
 
+## 按需专题
+
+- IPA/Info.plist/entitlement/Keychain/ATS：`references/ios-artifact-audit.md`。
+- 本地保护、pinning/RASP、服务端 attestation：`references/mobile-protection-map.md`；本地可改变不自动是服务端漏洞。
+- Electron renderer→preload→IPC→主进程权限：`references/electron-ipc-boundaries.md`；桥或配置存在不等于 RCE。
+
+SRC 先 `src-hunting` 定界，按当前产物选一篇；静态命中保持 tentative，真实目标侧新增权限才 confirmed。不自动安装、启动陌生项目或部署；既有 Android/固件资料按实际场景复用。
+
 ## APK / EXE / 二进制逆向
 
 ```

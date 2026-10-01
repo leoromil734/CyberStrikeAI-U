@@ -7,6 +7,10 @@ metadata:
   tags: [渗透测试, penetration-testing, 红队]
 ---
 
+## 按需深化与安全边界
+
+包执行器身份/本地bin/registry缺失回退交 `source-aware-whitebox` 的对应 reference；依赖图/公告可达性交 `component-vuln-intel`。获准补丁/diff复测切 `security-regression-testing`；SCM/CI/IaC 产物权限切 `infra-control-plane-testing`。只做当前现场专题，静态命中保持 tentative，不运行陌生项目或自动安装。
+
 ## 源码狩猎
 
 ```
@@ -18,5 +22,5 @@ JS混淆破解(RC4+base64字符串数组模式): 1)提取字符串数组(var a0G
 静态扫描: semgrep --config=auto 快扫 / CodeQL建库写query (taint求解+变体分析方法论见 `zero-day-discovery`)
 Secrets深挖: trufflehog/gitleaks 扫git全历史+docker镜像层+npm/PyPI tarball+前端bundle(--only-verified区分死活密钥)
 框架Patch Diff: clone前后版本 diff → 修了什么=漏洞在哪 | 依赖链: composer.json/npm audit/pip-audit
-供应链/CI: 依赖混淆(内部包名抢注公共registry) | GHA命令注入${{github.event.issue.title}} | self-hosted runner接管 | .npmrc/.pypirc凭据
+供应链/CI: 已有产物中的包执行器身份/缺失回退与CI令牌/工作流信任边界；内部包名/模板注入仅候选，不注册争议名、不执行陌生包、不自动触发工作流或创建持久访问。
 ```

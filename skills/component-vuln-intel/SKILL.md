@@ -53,7 +53,7 @@ metadata:
   browser_navigate: https://www.reddit.com/r/netsec/search/?q={C}&sort=new&t=month
   browser_navigate: https://www.exploit-db.com/search?q={C}
 
-7.扩展链(必做): 搜完{C}后,提取其依赖清单(package.json/pom.xml/requirements.txt/go.mod)→对每个依赖重复1-6
+7.依赖深化: 有清单/锁文件/构建或镜像产物时读 references/dependency-reachability.md，固定版本与漏洞库时间，回溯直接/间接引入链，再选择适用公告和受影响符号。not_imported不等于安全，grep不等于调用图；不对每个依赖重复全渠道搜索，不自动安装/更新库/pull镜像，所有结果仍tentative。
 
 🔴搜索受阻处理序列(碰到403/验证码/空结果/超时→按序执行不放弃):
   ①换UA: curl -H "User-Agent: Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" "{URL}"

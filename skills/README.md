@@ -58,6 +58,11 @@ Eino Skill 中间件只在配置启用时向模型披露索引；模型调用 `s
 - 组件版本情报：`component-vuln-intel`，输出保持 tentative。
 - 云 / LLM / AD / 后渗透：`cloud-attack-methods`、`ai-llm-app-attack`、`active-directory-attack`、`post-exploitation`（均挂了 CSS 手册 references + 工具表）。
 - 浏览器与标准客户端稳定边缘差分：先排除状态差异，再 `cdn-tls-fingerprint`。
+- 已确认 Next.js/NestJS/FastAPI/Django 安全边界：切 `framework-security-testing`，只读对应框架。
+- 已确认 Supabase/Firebase 项目/对象：切 `managed-backend-security`，区分真实授权引擎。
+- Vault、消息缓存、监控数据源、SCM/CI、IaC 产物、IdP 或 CMS/LMS 产品权限：切 `infra-control-plane-testing`，每次一份 reference；端口/非404不是可靠触发。
+- 获准 diff、补丁或历史 PoC：切 `security-regression-testing`；它是工作流，不是第四扫描深度。
+- OCI、iOS、移动保护、Electron、n8n 和 MCP 审批在现有云/移动/AI 入口按需展开；已有 AD、Android、固件知识复用，不重复注册近义技能。
 
 ### 外部知识来源（取长补短）
 
@@ -67,6 +72,15 @@ Eino Skill 中间件只在配置启用时向模型披露索引；模型调用 `s
 - **做**高触发 `description` 关键词 + 按阶段挂载 references + 路由器强制「先 recon 后利用」+ **系统工具名映射表**。
 
 扫描、搜索、版本匹配和静态命中都只是 tentative 线索；只有 `pentest-verification` 定义的目标侧证据闭环完成后，才能记录 confirmed 漏洞。负结果同样需要保留测试条件和 Do-Not-Repeat。
+
+### 三项目知识增量（2026-10-01）
+
+本次对照 Strix `007ed1a`、NeuroSploit `5d4e7e0`、Dark-Moon `cb0d9b8`，只引入知识与 skills，不移植运行引擎、全局提示、部署或其他架构设计。能力/来源/落点及正反案例见 `docs/knowledge-skill-integration/manifest.json`，说明与许可见同目录 README 和 licenses。
+
+- 知识库保存独立原理/验证资料；短 references 保存可直接执行的决策流程，不依赖知识服务开启。
+- 新增四个独立入口保留 SRC 让路、一次一个领域和验证规则；旧入口保留并挂按需资料。
+- Apache/MIT 归属保留；Dark-Moon 已记录用户原作者改编许可，本批文档仍保留原 GPLv3 标注和完整文本，根 LICENSE 不变。
+- 内容/引用/路由测试和临时库目录扫描为离线验收；没有自动调用 embedding、重建现网索引或测试外部目标，未以文件数宣称发现率提升。
 
 ## 包内容
 

@@ -21,6 +21,12 @@ metadata:
 | 云 IAM / 存储 / 网络 WAF | `云IAM*` / `云存储*` / `云网络*` |
 | Serverless / 多云 | `无服务器*` / `多云*` |
 
+### 按现场深化
+
+- 固定 OCI 镜像、层、SBOM 与公告可达性：`references/oci-image-assessment.md`；标签/扫描命中不代表目标漏洞。
+- Terraform/Terragrunt state/plan、Vault、消息缓存、监控后台、CI 产品权限：切 `infra-control-plane-testing`，只读当前 reference；state 不等于实时部署，消息读取可能有副作用。
+- Supabase/Firebase 多授权引擎：切 `managed-backend-security`；其他云/IAM/AD 已有资料不重复预载。
+
 ### 系统工具补全（场景 → MCP）
 
 | 场景 | 优先工具 | 备选 | 备注 |

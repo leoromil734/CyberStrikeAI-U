@@ -43,6 +43,8 @@ metadata:
 
 REST/GraphQL、BOLA 优先 `api-security-testing`。组件情报用 `component-vuln-intel`（tentative）；确认用 `pentest-verification`。
 
+数组执行/选项/配置二次解析读 `references/argument-injection.md`；postMessage/窗口/worker 状态读 `references/browser-state-security.md`。具体框架边界切换 `framework-security-testing`；CMS/LMS/电商产品对象切换 `infra-control-plane-testing`，只读命中专题。
+
 ## 共同流程
 
 1. 保存正常请求：URL、方法、参数、header、Cookie、身份、响应。

@@ -16,6 +16,12 @@ metadata:
 
 优先：`LLM提示注入与安全防护-PromptInjectionDefense.md`、`大模型红队测试-LLMRedTeaming.md`、`AI Agent权限与访问控制-AgentAuthorization.md`、`LLM数据泄露与隐私保护-DataLeakagePrivacy.md`。
 
+### 按需边界审计
+
+- n8n/插件/Skill 本地定义、节点连接与不可信数据→工具效果：`references/workflow-definition-audit.md`。只读定义不自动触发线上 webhook。
+- MCP server/schema/args/credential/target/expiry 审批绑定：`references/mcp-effective-authority.md`。readOnlyHint 不是授权，真实副作用才确认。
+- SRC 先 `src-hunting` 定界并保留 LLM 泛越狱教材排除；本次仅采用无害标记、批准策略和受控工具，不新增 PAIR/TAP 算法或自动安装。
+
 ### 系统工具补全（场景 → MCP）
 
 | 场景 | 优先工具 | 备选 | 备注 |
