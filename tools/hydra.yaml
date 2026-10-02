@@ -9,8 +9,9 @@ description: |
   **调用约定（必读）：**
   - 必须提供 **用户名**：`username`（-l）或 `username_file`（-L）至少其一
   - 必须提供 **口令**：`password`（-p）、`password_file`（-P）或 `-C`（经 `additional_args`）至少其一
-  - **先用小字典试跑**（几十～几百条），确认目标可达再扩大；禁止默认使用 rockyou 等超大字典
-  - 默认已启用：找到即停（-f）、并行 4（-t）、忽略 restore（-I）；长任务请设 `output_file`
+  - 按 credential-stuffing 统一小预算验证：每账号≤8、每入口≤5账号/40组合/5分钟，禁止全量 `-L` × `-P`、rockyou 或成功试跑后自动扩大；先核对有限候选对文件
+  - 默认启用：找到即停（-f）、并行 1（-t）、全局认证间隔 3 秒（-c）、连接间隔 3 秒（-W）、忽略 restore（-I）；-W 只限制连接间隔，不能替代 -c；仍须外部计时/取消保证总时限及命中/锁定/验证码/MFA/429/异常停止
+  - 支持范围内 SSH、数据库及 SMTP/IMAP/POP3 等实际提供密码认证的服务；精简字典说明见 skills/credential-stuffing/references/lite-wordlists.md
 
   **CLI 顺序：** `hydra [选项] <target> <service>`（本工具已按此顺序组参，勿把 target 写在选项前）
 
@@ -51,11 +52,18 @@ parameters:
     default: true
   - name: "tasks"
     type: "int"
-    description: "每目标并行连接数（-t）；SSH 等建议 4，默认 4"
+    description: "每目标并行连接数（-t）；简单弱口令默认 1，用户更严格限制优先"
     required: false
     flag: "-t"
     format: "flag"
-    default: 4
+    default: 1
+  - name: "attempt_interval"
+    type: "int"
+    description: "全局认证尝试间隔秒数（-c，强制 -t 1），简单弱口令默认 3；-W 仅连接间隔不能替代它"
+    required: false
+    flag: "-c"
+    format: "flag"
+    default: 3
   - name: "wait_time"
     type: "int"
     description: "单次连接等待响应秒数（-w），默认 16（低于 Hydra 默认 32，减少挂起感）"
@@ -65,11 +73,11 @@ parameters:
     default: 16
   - name: "wait_between"
     type: "int"
-    description: "每线程连接间隔秒数（-W），默认 1"
+    description: "每线程连接间隔秒数（-W），简单弱口令默认 3"
     required: false
     flag: "-W"
     format: "flag"
-    default: 1
+    default: 3
   - name: "output_file"
     type: "string"
     description: "将结果写入文件（-o），长任务建议指定"

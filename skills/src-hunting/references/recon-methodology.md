@@ -28,6 +28,14 @@ Quake / 凤鸟只补**当前种子**缺口，不当开场必跑。语法对照�
 
 # Recon and Methodology
 
+## 品牌 IP 分类与精简补充字典
+
+品牌扩测时逐个解析 IP 保存范围、CNAME/ASN 和 CDN 证据；只有当前 IP 已证实为 Cloudflare/Akamai 等 CDN 边缘才排除裸 IP 扩测，域名业务仍继续。**Hetzner 等云/托管商不是 CDN**，范围内非 CDN IP 必须作为独立资产枚举服务/入口并做品牌关联补缺，不因供应商名字跳过。CDN unknown 留 gap/blocked，不默认排除；共享 IP/ASN 不代表品牌归属，不扩供应商网段或无关租户。
+
+分类字段、浅测边界与阶段证据读根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §2.1；少量 DNS/路径/API 补缺字典读 `skills/credential-stuffing/references/lite-wordlists.md`，默认不用全集。固定 URL/资产清单任务仍服从原范围，不能借品牌关联扩圈。
+
+范围内 SSH、数据库、SMTP/IMAP/POP3 认证入口也须交接一轮简单弱口令验证，按 `credential-stuffing.md` 统一小预算；不把“不爆破”当作免测依据。
+
 
 ## 1. RECON HIERARCHY
 

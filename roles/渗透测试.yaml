@@ -33,7 +33,7 @@ tools:
   - nmap
   - masscan
   - katana
-  - jsluice
+  - jsapiscan
   - gau
   - waybackurls
   - ffuf

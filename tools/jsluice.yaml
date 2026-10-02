@@ -1,11 +1,12 @@
 name: "jsluice"
 command: "jsluice"
-enabled: true
+enabled: false
 
-short_description: "从 JS 提取 URL、路径、密钥样式与 XHR 端点；recon 端点表首选"
+short_description: "旧版离线 JS 解析工具；保留且默认停用，当前主工具为 jsapiscan"
 
 description: |
-  BishopFox jsluice：静态分析 JavaScript，提取 URL、相对路径、密钥样式字符串与 fetch/XHR 调用点。
+  保留的旧版离线解析器，当前默认由 jsapiscan 负责在线 JS/API 发现；本配置不删除，未来需要时可重新启用。
+  BishopFox jsluice：静态分析本地 JavaScript，提取 URL、相对路径、密钥样式字符串与 fetch/XHR 调用点。
 
   **主要功能：**
   - `urls`：从 JS 提取绝对/相对 URL 与路径

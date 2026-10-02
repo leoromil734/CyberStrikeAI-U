@@ -17,6 +17,7 @@ func TestComposeSystemPromptIncludesSharedContractOnce(t *testing.T) {
 	required := []string{
 		"## 范围与执行边界",
 		"## 初始信息收集（FOFA 必调）",
+		"## 资产、弱口令与 JS 覆盖",
 		"## 证据闭环",
 		"## 低价值面不测",
 		"## 独立安全边界",
@@ -82,7 +83,7 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"raw_output",
 		"success≠covered",
 		"status、raw、unique、incremental、error、alt_tried",
-		"jsluice",
+		"jsapiscan",
 		"recon/endpoint/",
 		"不得 record_vulnerability",
 		"可执行“下一步”",

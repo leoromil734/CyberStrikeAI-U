@@ -10,7 +10,7 @@ tools:
   - katana
   - gau
   - waybackurls
-  - jsluice
+  - jsapiscan
   - ffuf
   - dirsearch
   - nuclei
@@ -66,7 +66,7 @@ max_iterations: 0
 ## 独有职责
 
 - 验证资产到服务的映射，补齐 HTTP 路径、API/GraphQL schema、参数、上传、回调、管理面和历史入口。
-- 递归清点入口 HTML、manifest、懒加载 chunk、worker 和 source map；优先 `jsluice` 提取 URL/路径，再补 WebSocket、认证/刷新与环境配置；每个端点 `upsert_project_fact` 为 `recon/endpoint/*`（字段见 recon-fact-schema）。
+- 递归清点入口 HTML、manifest、懒加载 chunk、worker 和 source map；必须工具 `jsapiscan` 从入口 URL 发现/保存资源 + 实际 `grep/rg` 检索全部下载原源码两路提取 URL/调用点，补相对前缀、模板拼接、WebSocket 与认证配置，记录两路命令/hash/计数，合并逐端点 `recon/endpoint/*`；缺任一路留 gap/blocked（方法见 comprehensive-recon.md §4）。
 - 用随机不存在路径建立 SPA/catch-all 基线；相同状态、长度和 shell hash 只能否定当前猜测路径，不能批量否定 JS 中的真实接口。
 - 标出身份边界、租户/角色边界、客户端到服务端边界及外部依赖；把注册、激活、登录、找回和登出入口交给 `penetration` 建立认证态。
 - 对入口按业务价值、可控输入、边界强度和证据可得性排序。

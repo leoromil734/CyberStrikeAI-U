@@ -34,7 +34,7 @@ tools:
   - ffuf
   - dirsearch
   - katana
-  - jsluice
+  - jsapiscan
   - wpscan
   - trivy
   - prowler

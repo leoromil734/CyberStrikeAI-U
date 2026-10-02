@@ -24,7 +24,8 @@
         })();
     </script>
     <link rel="stylesheet" href="/static/css/style.css?v=20260929-3">
-    <link rel="stylesheet" href="/static/css/experience.css">
+    <link rel="stylesheet" href="/static/css/experience.css?v=20261002-ui1">
+    <link rel="stylesheet" href="/static/css/targets.css?v=20261002-ui1">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
     <script src="/static/js/router.js?v=20260929-perf1"></script>
@@ -1652,58 +1653,89 @@
                 <!-- 证据驱动的跨任务经验管理 -->
                 <div id="page-experience-memory" class="page">
                     <div class="page-header">
-                        <h2 data-i18n="experience.title">经验记忆</h2>
+                        <div class="experience-heading">
+                            <span class="experience-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14M3 3h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5v17h-5a4 4 0 0 0-4 1 4 4 0 0 0-4-1H3V3Z"/></svg></span>
+                            <div><h2 data-i18n="experience.title">经验记忆</h2><p data-i18n="experience.subtitle">沉淀有证据的方法，在明确条件内审核与复用。</p></div>
+                        </div>
                         <div class="page-header-actions">
-                            <button class="btn-secondary" onclick="ExperienceMemory.refresh()" data-i18n="common.refresh">刷新</button>
-                            <button class="btn-primary" data-require-permission="experience:write" onclick="ExperienceMemory.newProposal()" data-i18n="experience.new">新增候选</button>
+                            <button type="button" class="btn-secondary" onclick="ExperienceMemory.refresh()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15"/></svg><span data-i18n="common.refresh">刷新</span></button>
+                            <button type="button" class="btn-primary" data-require-permission="experience:write" onclick="ExperienceMemory.newProposal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-i18n="experience.new">新增候选</span></button>
                         </div>
                     </div>
-                    <div class="page-content">
-                        <p class="form-hint" data-i18n="experience.hint">自动学习只生成私有候选。审核后才复用；历史成功不证明当前目标，共享前请移除客户数据和凭据。</p>
-                        <div class="knowledge-filters">
-                            <label><span data-i18n="experience.status">状态</span><select id="experience-status" onchange="ExperienceMemory.refresh()">
-                                <option value="" data-i18n="experience.all">全部</option>
-                                <option value="candidate" data-i18n="experience.candidate">候选</option>
-                                <option value="verified" data-i18n="experience.verified">条件内已验证</option>
-                                <option value="needs_review" data-i18n="experience.needsReview">待复核</option>
-                                <option value="deprecated" data-i18n="experience.deprecated">已废弃</option>
-                            </select></label>
-                            <label><span data-i18n="experience.kind">类型</span><select id="experience-kind" onchange="ExperienceMemory.refresh()">
-                                <option value="" data-i18n="experience.all">全部</option>
-                                <option value="tool_repair" data-i18n="experience.toolRepair">工具修复</option>
-                                <option value="vulnerability_method" data-i18n="experience.vulnerability">漏洞验证方法</option>
-                                <option value="workflow" data-i18n="experience.workflow">工作流</option>
-                                <option value="negative_result" data-i18n="experience.negative">失败反例</option>
-                            </select></label>
-                            <label><span data-i18n="experience.project">项目 ID（可选）</span><input id="experience-project" type="text" /></label>
-                            <label><span data-i18n="common.search">搜索</span><input id="experience-query" type="search" onkeydown="if(event.key==='Enter') ExperienceMemory.refresh()" /></label>
-                            <button class="btn-secondary" onclick="ExperienceMemory.refresh()" data-i18n="common.search">搜索</button>
+                    <div class="page-content experience-content">
+                        <div class="experience-guidance">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/></svg>
+                            <div><strong data-i18n="experience.evidenceFirst">证据优先，审核后复用</strong><p data-i18n="experience.hint">自动学习只生成私有候选。审核后才复用；历史成功不证明当前目标，共享前请移除客户数据和凭据。</p></div>
                         </div>
-                        <div id="experience-list" aria-live="polite"></div>
-                        <div id="experience-pagination" class="page-header-actions"></div>
-                        <section id="experience-detail" hidden>
-                            <div class="page-header-actions">
-                                <button class="btn-secondary" onclick="ExperienceMemory.close()" data-i18n="common.close">关闭</button>
-                                <button class="btn-secondary" data-require-permission="experience:export" onclick="ExperienceMemory.exportSkill()" data-i18n="experience.export">导出技能包</button>
-                                <button class="btn-secondary" onclick="ExperienceMemory.history()" data-i18n="experience.history">版本历史</button>
+                        <div class="experience-overview" role="group" aria-label="本页经验概览" data-i18n="experience.overviewLabel" data-i18n-attr="aria-label" data-i18n-skip-text="true">
+                            <div class="experience-stat"><span data-i18n="experience.pageEntries">本页经验</span><strong id="experience-stat-count">—</strong><small data-i18n="experience.pageStatsHint">仅统计当前页可访问的记录</small></div>
+                            <div class="experience-stat experience-stat--verified"><span data-i18n="experience.verified">条件内已验证</span><strong id="experience-stat-verified">—</strong><small data-i18n="experience.verifiedHint">复用时仍需匹配环境条件</small></div>
+                            <div class="experience-stat experience-stat--review"><span data-i18n="experience.pendingReview">候选 / 待复核</span><strong id="experience-stat-review">—</strong><small data-i18n="experience.pendingReviewHint">本页尚需审核的经验</small></div>
+                            <div class="experience-stat"><span data-i18n="experience.shared">跨项目共享</span><strong id="experience-stat-shared">—</strong><small data-i18n="experience.sharedHint">本页共享范围为跨项目的记录</small></div>
+                        </div>
+                        <section class="experience-filter-panel" aria-labelledby="experience-filter-title">
+                            <div class="experience-panel-heading"><h3 id="experience-filter-title" data-i18n="experience.filters">筛选经验</h3><button type="button" class="btn-secondary experience-reset" onclick="ExperienceMemory.resetFilters()" data-i18n="experience.resetFilters">重置筛选</button></div>
+                            <div class="knowledge-filters experience-filters" role="search">
+                                <label for="experience-status"><span data-i18n="experience.status">状态</span><select id="experience-status" onchange="ExperienceMemory.refresh()">
+                                    <option value="" data-i18n="experience.all">全部</option>
+                                    <option value="candidate" data-i18n="experience.candidate">候选</option>
+                                    <option value="verified" data-i18n="experience.verified">条件内已验证</option>
+                                    <option value="needs_review" data-i18n="experience.needsReview">待复核</option>
+                                    <option value="deprecated" data-i18n="experience.deprecated">已废弃</option>
+                                </select></label>
+                                <label for="experience-kind"><span data-i18n="experience.kind">类型</span><select id="experience-kind" onchange="ExperienceMemory.refresh()">
+                                    <option value="" data-i18n="experience.all">全部</option>
+                                    <option value="tool_repair" data-i18n="experience.toolRepair">工具修复</option>
+                                    <option value="vulnerability_method" data-i18n="experience.vulnerability">漏洞验证方法</option>
+                                    <option value="workflow" data-i18n="experience.workflow">工作流</option>
+                                    <option value="negative_result" data-i18n="experience.negative">失败反例</option>
+                                </select></label>
+                                <label for="experience-project"><span data-i18n="experience.project">项目 ID（可选）</span><input id="experience-project" type="text" data-i18n="experience.projectPlaceholder" data-i18n-attr="placeholder" placeholder="输入项目 ID" onkeydown="if(event.key==='Enter') ExperienceMemory.refresh()" /></label>
+                                <label for="experience-query" class="experience-search-field"><span data-i18n="common.search">搜索</span><span class="experience-search-input"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><input id="experience-query" type="search" data-i18n="experience.searchPlaceholder" data-i18n-attr="placeholder" placeholder="搜索经验标题或摘要" onkeydown="if(event.key==='Enter') ExperienceMemory.refresh()" /></span></label>
+                                <button type="button" class="btn-primary" onclick="ExperienceMemory.refresh()" data-i18n="common.search">搜索</button>
                             </div>
-                            <pre id="experience-detail-json" class="experience-pre"></pre>
-                            <div id="experience-evidence"></div>
-                            <div data-require-permission="experience:write">
-                                <label for="experience-editor" data-i18n="experience.editor">候选正文与证据（JSON；修改后需重新审核）</label>
-                                <textarea id="experience-editor" class="experience-editor" spellcheck="false"></textarea>
-                                <button class="btn-primary" onclick="ExperienceMemory.save()" data-i18n="experience.saveCandidate">保存候选</button>
+                        </section>
+                        <div class="experience-list-heading"><h3 data-i18n="experience.library">经验列表</h3><span id="experience-list-meta"></span></div>
+                        <div id="experience-list" class="experience-list" aria-live="polite" aria-busy="false"></div>
+                        <div id="experience-pagination" class="page-header-actions experience-pagination"></div>
+                        <section id="experience-detail" class="experience-detail" aria-labelledby="experience-detail-title" hidden>
+                            <div class="experience-detail-heading">
+                                <div><span class="experience-eyebrow" data-i18n="experience.detail">经验详情</span><h3 id="experience-detail-title"></h3><div id="experience-detail-meta" class="experience-item-meta"></div></div>
+                                <div class="page-header-actions">
+                                    <button type="button" class="btn-secondary" id="experience-export" data-require-permission="experience:export" onclick="ExperienceMemory.exportSkill()" data-i18n="experience.export">导出技能包</button>
+                                    <button type="button" class="btn-secondary" id="experience-history" onclick="ExperienceMemory.history()" data-i18n="experience.history">版本历史</button>
+                                    <button type="button" class="btn-secondary" onclick="ExperienceMemory.close()" data-i18n="common.close">关闭</button>
+                                </div>
                             </div>
-                            <div data-require-permission="experience:review" class="experience-review">
-                                <h3 data-i18n="experience.review">审核决定</h3>
-                                <label for="experience-review-status" data-i18n="experience.status">状态</label>
-                                <select id="experience-review-status"><option value="verified" data-i18n="experience.verified">条件内已验证</option><option value="needs_review" data-i18n="experience.needsReview">待复核</option><option value="deprecated" data-i18n="experience.deprecated">已废弃</option><option value="candidate" data-i18n="experience.candidate">候选</option></select>
-                                <label for="experience-review-scope" data-i18n="experience.scope">共享范围</label>
-                                <select id="experience-review-scope"><option value="private" data-i18n="experience.private">个人私有</option><option value="project" data-i18n="experience.projectScope">原项目内</option><option value="shared" data-i18n="experience.shared">跨项目共享</option></select>
-                                <label for="experience-review-note" data-i18n="experience.reviewNote">审核依据（必填）</label>
-                                <textarea id="experience-review-note" rows="3"></textarea>
-                                <button class="btn-primary" onclick="ExperienceMemory.review()" data-i18n="experience.submitReview">提交审核</button>
-                                <details><summary data-i18n="experience.confirmOutcome">确认本次复用结果（JSON）</summary><textarea id="experience-outcome" class="experience-editor" spellcheck="false"></textarea><button class="btn-secondary" onclick="ExperienceMemory.confirmOutcome()" data-i18n="common.save">保存</button></details>
+                            <div class="experience-detail-grid">
+                                <div class="experience-detail-main">
+                                    <section class="experience-detail-panel">
+                                        <div class="experience-panel-heading"><h4 data-i18n="experience.recordData">记录 / 版本 / 证据数据</h4><span class="experience-format-badge">JSON</span></div>
+                                        <pre id="experience-detail-json" class="experience-pre" tabindex="0"></pre>
+                                        <div class="experience-panel-heading"><h4 data-i18n="experience.evidence">执行证据</h4><span id="experience-evidence-count" class="experience-panel-note"></span></div>
+                                        <div id="experience-evidence" class="experience-evidence"></div>
+                                    </section>
+                                    <section class="experience-detail-panel experience-edit-panel" data-require-permission="experience:write">
+                                        <label for="experience-editor" data-i18n="experience.editor">候选正文与证据（JSON；修改后需重新审核）</label>
+                                        <textarea id="experience-editor" class="experience-editor" spellcheck="false"></textarea>
+                                        <div class="experience-panel-actions"><button type="button" class="btn-primary" onclick="ExperienceMemory.save()" data-i18n="experience.saveCandidate">保存候选</button></div>
+                                    </section>
+                                </div>
+                                <section data-require-permission="experience:review" class="experience-detail-panel experience-review">
+                                    <h4 data-i18n="experience.review">审核决定</h4>
+                                    <p class="experience-panel-note" data-i18n="experience.reviewHint">核对执行证据与适用条件，填写审核依据后提交。</p>
+                                    <p id="experience-review-draft-hint" class="experience-panel-note" data-i18n="experience.reviewDraftHint" hidden>保存候选后才能审核或确认复用结果。</p>
+                                    <div id="experience-review-fields">
+                                        <label for="experience-review-status" data-i18n="experience.status">状态</label>
+                                        <select id="experience-review-status"><option value="verified" data-i18n="experience.verified">条件内已验证</option><option value="needs_review" data-i18n="experience.needsReview">待复核</option><option value="deprecated" data-i18n="experience.deprecated">已废弃</option><option value="candidate" data-i18n="experience.candidate">候选</option></select>
+                                        <label for="experience-review-scope" data-i18n="experience.scope">共享范围</label>
+                                        <select id="experience-review-scope"><option value="private" data-i18n="experience.private">个人私有</option><option value="project" data-i18n="experience.projectScope">原项目内</option><option value="shared" data-i18n="experience.shared">跨项目共享</option></select>
+                                        <label for="experience-review-note" data-i18n="experience.reviewNote">审核依据（必填）</label>
+                                        <textarea id="experience-review-note" rows="4" data-i18n="experience.reviewPlaceholder" data-i18n-attr="placeholder" placeholder="说明证据、条件与共享范围的审核依据"></textarea>
+                                        <button type="button" class="btn-primary" onclick="ExperienceMemory.review()" data-i18n="experience.submitReview">提交审核</button>
+                                        <details class="experience-outcome-panel"><summary data-i18n="experience.confirmOutcome">确认本次复用结果（JSON）</summary><textarea id="experience-outcome" class="experience-editor" spellcheck="false" data-i18n="experience.confirmOutcome" data-i18n-attr="aria-label" aria-label="确认本次复用结果（JSON）"></textarea><button type="button" class="btn-secondary" onclick="ExperienceMemory.confirmOutcome()" data-i18n="common.save">保存</button></details>
+                                    </div>
+                                </section>
                             </div>
                         </section>
                     </div>
@@ -2873,28 +2905,38 @@
                 <!-- 目标历史页面 -->
                 <div id="page-targets" class="page">
                     <div class="page-header">
-                        <h2 data-i18n="targets.title">目标历史</h2>
+                        <div class="targets-heading">
+                            <span class="targets-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>
+                            <div><h2 data-i18n="targets.title">目标历史</h2><p class="targets-subtitle" data-i18n="targets.subtitle">回溯已登记或运行的目标，查看记录并减少重复任务。</p></div>
+                        </div>
                         <div class="page-header-actions">
-                            <button class="btn-secondary" onclick="refreshTargetsPage()" data-i18n="common.refresh">刷新</button>
+                            <button type="button" class="btn-secondary" onclick="refreshTargetsPage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3M18 18A8 8 0 0 1 5 15"/></svg><span data-i18n="common.refresh">刷新</span></button>
                         </div>
                     </div>
-                    <div class="page-content">
-                        <p class="targets-subtitle" data-i18n="targets.subtitle">登记历史上真正跑过的目标（按对话去重），发起新任务或新对话时用于重复提示。</p>
-                        <p class="targets-backfill-hint" data-i18n="targets.backfillHint">服务启动时会自动从历史对话回填，无需手工导入。</p>
-                        <div class="targets-toolbar">
-                            <label class="targets-search-wrap">
-                                <svg class="targets-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                    <circle cx="11" cy="11" r="7"></circle>
-                                    <path d="M20 20L16 16"></path>
-                                </svg>
-                                <input type="search" id="targets-search" autocomplete="off"
-                                    data-i18n="targets.searchPlaceholder" data-i18n-attr="placeholder"
-                                    placeholder="搜索域名，例如 hfm.com" />
-                            </label>
-                            <span class="targets-total" id="targets-total"></span>
+                    <div class="page-content targets-content">
+                        <div class="targets-overview" role="group" aria-label="目标历史概览" data-i18n="targets.overviewLabel" data-i18n-attr="aria-label" data-i18n-skip-text="true">
+                            <div class="targets-stat"><span data-i18n="targets.matchingTargets">筛选结果</span><strong id="targets-stat-total">—</strong><small data-i18n="targets.matchingTargetsHint">当前关键字匹配的全部目标</small></div>
+                            <div class="targets-stat targets-stat--executed"><span data-i18n="targets.pageExecuted">本页已运行</span><strong id="targets-stat-executed">—</strong><small data-i18n="targets.pageExecutedHint">至少有一次运行记录的目标</small></div>
+                            <div class="targets-stat targets-stat--registered"><span data-i18n="targets.pageRegistered">本页尚未运行</span><strong id="targets-stat-registered">—</strong><small data-i18n="targets.pageRegisteredHint">已登记，尚无运行记录的目标</small></div>
                         </div>
-                        <div id="targets-table-body" class="targets-table-body"></div>
-                        <div id="targets-pagination" class="pagination-container pagination-fixed"></div>
+                        <div class="targets-backfill-notice"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg><p class="targets-backfill-hint" data-i18n="targets.backfillHint">创建任务时自动登记目标，运行开始时另计执行；服务启动时从原始任务和用户输入补漏。</p></div>
+                        <section class="targets-board" aria-labelledby="targets-list-title">
+                            <div class="targets-toolbar">
+                                <div class="targets-list-heading"><h3 id="targets-list-title" data-i18n="targets.historyList">历史目标</h3><span class="targets-total" id="targets-total"></span></div>
+                                <div class="targets-search-controls" role="search">
+                                    <label class="targets-search-wrap" for="targets-search">
+                                        <span class="targets-sr-only" data-i18n="targets.searchLabel">搜索目标</span>
+                                        <svg class="targets-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20L16 16"/></svg>
+                                        <input type="search" id="targets-search" autocomplete="off" aria-describedby="targets-search-hint"
+                                            data-i18n="targets.searchPlaceholder" data-i18n-attr="placeholder" placeholder="搜索目标关键字，例如 example.com" />
+                                    </label>
+                                    <button type="button" id="targets-search-clear" class="btn-secondary" onclick="clearTargetsSearch()" data-i18n="common.clearSearch" hidden>清除搜索</button>
+                                </div>
+                            </div>
+                            <p id="targets-search-hint" class="targets-search-hint" data-i18n="targets.searchHint">输入关键字自动筛选；展开运行记录可回到原对话。</p>
+                            <div id="targets-table-body" class="targets-table-body" aria-live="polite" aria-busy="false"></div>
+                            <div id="targets-pagination" class="pagination-container pagination-fixed"></div>
+                        </section>
                     </div>
                 </div>
 
@@ -6815,7 +6857,7 @@
     <script src="/static/vendor/xterm-addon-fit.js"></script>
     <script src="/static/js/terminal.js"></script>
     <script src="/static/js/knowledge.js"></script>
-    <script src="/static/js/experience.js"></script>
+    <script src="/static/js/experience.js?v=20261002-ui1"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
     <script src="/static/js/projects.js?v=20260717-1"></script>
@@ -6823,7 +6865,7 @@
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js"></script>
-    <script src="/static/js/targets.js?v=20260929-1"></script>
+    <script src="/static/js/targets.js?v=20261002-ui1"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>
     <script src="/static/js/roles.js"></script>

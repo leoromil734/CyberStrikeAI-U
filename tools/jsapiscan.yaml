@@ -1,0 +1,259 @@
+name: "jsapiscan"
+command: "/usr/local/bin/jsapiscan"
+enabled: true
+short_description: "JSAPIscan 发现 JS/chunk 与 API 候选；保存源码，再用 grep/rg 补提取"
+description: |
+  JSAPIscan 官方 v1.1.2 Linux/amd64 发布版，通过本项目 Python 启动器运行。
+  参考 https://github.com/ruisika/jsapiscan，但参数以已校验二进制实际运行结果为准。
+  启动器核对固定 SHA-256，使用专用非 root 用户、systemd 文件系统隔离、独立结果目录和总超时。
+  服务编排要求 Linux/systemd 的 root 宿主；上游进程本身使用 csai-jsapiscan，不以 root 运行。
+
+  **默认职责：** URL → HTML/JS/chunk 发现 → 保存 JS → API/路由/敏感字符串候选。
+  这是会发送 HTTP GET 的爬取工具，不是原 jsluice 的离线文件解析替代命令；不能传本地 JS 当 URL。
+  只提供 url 或 targets_file 其中一个。直接分析现有本地文件仍使用 exec + grep/rg；jsluice 保留但默认停用，可按需恢复。
+  每次结果写入 /var/lib/jsapiscan/runs/run-*/，工具回包包含 work_dir、stdout_file、manifest 和候选预览。
+  上游 -o 是 txt/html 输出类型；-op 由启动器限制为本轮内部文件名，不能当任意目录或覆盖生产文件。
+  原件 CSV（URL/Method/Length/Body/Status）、保存的 JS 和工具日志需按回包路径读取，预览不是完整端点清单。
+
+  **JS 双通道与证据：** 必须随后对全部保存的 JS/chunk/worker/source map 原源码实际执行 grep/rg，
+  追踪 baseURL、相对路径、模板拼接、axios/fetch/XHR、方法与参数；两路合并去重，保留来源/hash/计数。
+  默认 api_tests=false；上游仍可能对发现路径做 GET 基线/补探，不能宣称完全不访问 API。
+  API 测试、外链、无头浏览器和个人信息提取仅在当前范围与前提允许时显式启用。
+  默认 GET-only；只有 api_tests=true、get_only=false、allow_post_retry=true 三项明确指定时才允许 GET 405 后 POST 重试。
+  external_links/collect_external_links 默认 false；跨域资源不自动获得主动测试授权，domainblock 是黑名单而不是授权白名单。
+  gorog/Rod 无头模式可能下载浏览器并增加上下文/资源需求，不默认启用；仅在所需浏览器和网络条件可控时使用。
+  header_file 优先于内联 headers，避免凭据进入命令参数/执行日志；同一次运行二者不能同时设置。
+
+  **已验证的版本差异：** GitHub 发布标签 v1.1.2，内部 build 版本为 v1.0.1-9-g111b7a2-dirty；来源 hash 已匹配，但无法源码复现。
+  帮助页虽然列 -Ineedparms，实际正常解析会报 flag provided but not defined；本适配不传该参数，参数通过源码检索补齐。
+  -sc 表示“不显示这些状态码”，不是仅保留状态码；不建议在全面侦察时隐藏 401/403/405 等重要证据。
+  maxreq/maxhtml/maxapi 是类别预算，不等于全局 HTTP 请求计数；任何达到深度/次数/时间边界的项须记 gap/blocked。
+  不接受 0 或负数表示不限，不提供可绕过边界的 additional_args；更严任务预算优先。
+  CSV 200、关键字命中、组件版本和“漏洞.txt”只能是 tentative，不得直接 record_vulnerability；需独立对照验证。
+
+  **示例：**
+  - 首轮：url=https://app.example.com，默认保存源码、校验 TLS，API/外链/无头关闭。
+  - 批量：targets_file=/path/to/in-scope-urls.txt（最多20条），不与 url 混用。
+  - 认证态：header_file=/path/to/task-headers.txt（已知范围内测试身份，进度不打印密钥）。
+  - 受控 GET 验证：api_tests=true，max_api_tests=100，get_only=true。
+  - 更深 chunk：depth=10，max_js_requests=2000，仍受 total_timeout_seconds 限制，不把截断队列写为已全覆盖。
+
+parameters:
+  - name: "url"
+    aliases: ["target", "u"]
+    type: "string"
+    description: "范围内 HTTP/HTTPS URL，可逗号分隔最多20个；不接受本地文件或带用户名/密码的 URL；与 targets_file 二选一。"
+    required: false
+    flag: "-u"
+    format: "flag"
+  - name: "targets_file"
+    aliases: ["file", "input_file", "f"]
+    type: "string"
+    description: "已存在的 UTF-8 URL 清单，每行一个，最多20个唯一范围内目标，文件≤128KiB；与 url 二选一。"
+    required: false
+    existing_file: true
+    flag: "-f"
+    format: "flag"
+  - name: "threads"
+    type: "int"
+    description: "顶层目标并行数 -t，1–5，默认1；上游 -u 单目标强制1，不代表 chunk 并发也为1。"
+    default: 1
+    flag: "-t"
+    format: "flag"
+  - name: "fetch_threads"
+    type: "int"
+    description: "单目标同层 JS/HTML 抓取并发 -ft，1–10，默认2；不是全局请求速率保证。"
+    default: 2
+    flag: "-ft"
+    format: "flag"
+  - name: "depth"
+    type: "int"
+    description: "爬取深度 -d，1–16，默认8；达到上限仍有资源队列时留 gap/blocked。"
+    default: 8
+    flag: "-d"
+    format: "flag"
+  - name: "request_timeout_seconds"
+    type: "int"
+    description: "单次请求超时 -time，1–60秒，默认8；不是整轮执行总超时。"
+    default: 8
+    flag: "-time"
+    format: "flag"
+  - name: "max_js_requests"
+    type: "int"
+    description: "单 URL JS 类请求预算 -maxreq，1–10000，默认1000；不等于包括初始探测在内的全部 HTTP 请求数。"
+    default: 1000
+    flag: "-maxreq"
+    format: "flag"
+  - name: "max_html_requests"
+    type: "int"
+    description: "单 URL HTML 请求预算 -maxhtml，1–200，默认40。"
+    default: 40
+    flag: "-maxhtml"
+    format: "flag"
+  - name: "max_api_tests"
+    type: "int"
+    description: "启用 API 测试后的单目标数量预算 -maxapi，1–3000，默认200；0不限被启动器拒绝。"
+    default: 200
+    flag: "-maxapi"
+    format: "flag"
+  - name: "total_timeout_seconds"
+    type: "int"
+    description: "启动器与 systemd 的整轮总超时，1–1800秒，默认300；超时保留原件并标未完成。"
+    default: 300
+    flag: "--total-timeout"
+    format: "flag"
+  - name: "output_format"
+    type: "string"
+    description: "上游 -o 输出类型，txt（推荐）或 html；不是输出文件路径，不支持 JSON。启动器另返回 JSON 清单。"
+    default: "txt"
+    options: ["txt", "html"]
+    flag: "-o"
+    format: "flag"
+  - name: "output_name"
+    type: "string"
+    description: "本轮独立结果目录内的 -op 文件名，如 scan.txt；只允许简单文件名，禁止路径/../覆盖其它轮次。"
+    default: "scan.txt"
+    flag: "-op"
+    format: "flag"
+  - name: "headers"
+    type: "string"
+    description: "内联请求头 -header，格式 Key:Value 后换行或 CRLF；更推荐 header_file，避免凭据进参数日志；二者不可同时填。"
+    flag: "-header"
+    format: "flag"
+  - name: "header_file"
+    aliases: ["headers_file"]
+    type: "string"
+    description: "已存在的请求头文件≤128KiB，多行 Key:Value；只有 Cookie 值的文件由上游作为 Cookie。启动器复制到本轮受限目录，原文件不修改。"
+    existing_file: true
+    flag: "-header-file"
+    format: "flag"
+  - name: "proxy"
+    type: "string"
+    description: "HTTP 代理 -p，例如 http://127.0.0.1:8080；此代理必须在范围和网络策略内，不用代理轮换绕限流。"
+    flag: "-p"
+    format: "flag"
+  - name: "hide_status_codes"
+    type: "string"
+    description: "-sc 不显示的状态码，逗号分隔；不是仅保留这些状态码，全面收集默认不隐藏。"
+    flag: "-sc"
+    format: "flag"
+  - name: "append_keywords"
+    type: "string"
+    description: "-gjca 在默认敏感关键字上追加，逗号分隔，例如 password,secret_key,internal_api；命中仍待验证。"
+    flag: "-gjca"
+    format: "flag"
+  - name: "only_keywords"
+    type: "string"
+    description: "-gjc 仅使用这些关键字并替换默认集合，逗号分隔；明确需要时使用，以免减少覆盖。"
+    flag: "-gjc"
+    format: "flag"
+  - name: "js_prefix"
+    type: "string"
+    description: "-basejspath JS 路径前缀，会生成有前缀/无前缀两次请求；须有实际前端配置证据，不盲目扩量。"
+    flag: "-basejspath"
+    format: "flag"
+  - name: "api_prefix"
+    type: "string"
+    description: "-baseapipath API 前缀，同样生成有前缀/无前缀两次请求；不凭一个 SPA 200 认定有效接口。"
+    flag: "-baseapipath"
+    format: "flag"
+  - name: "external_suffixes"
+    type: "string"
+    description: "-extlinksuffix 外链资源后缀，逗号分隔；仅 external_links=true 时有意义，默认 .js,.mjs,.html,.htm。"
+    default: ".js,.mjs,.html,.htm"
+    flag: "-extlinksuffix"
+    format: "flag"
+  - name: "external_depth"
+    type: "int"
+    description: "-extlinkdepth 外链深度，1–3，默认1；不自动扩大授权范围。"
+    default: 1
+    flag: "-extlinkdepth"
+    format: "flag"
+  - name: "blocked_domains"
+    type: "string"
+    description: "-domainblock 跳过的域名，逗号分隔；上游默认含常见第三方域。黑名单不等于已定义范围白名单。"
+    flag: "-domainblock"
+    format: "flag"
+  - name: "rod_options"
+    type: "string"
+    description: "-rod Rod 的选项字符串，仅明确需要无头浏览器时设置；不是 shell 命令，不建议覆盖默认浏览器来源。"
+    flag: "-rod"
+    format: "flag"
+  - name: "api_tests"
+    type: "bool"
+    description: "-api 开启上游 API 未授权测试，默认false；资源发现仍可能做 GET 补探，测试命中不是 confirmed。"
+    default: false
+    flag: "-api"
+    format: "flag"
+  - name: "get_only"
+    type: "bool"
+    description: "-aget 只用 GET，默认true；即使省略该字段，启动器仍默认 GET-only，除非明确 allow_post_retry。"
+    default: true
+    flag: "-aget"
+    format: "flag"
+  - name: "allow_post_retry"
+    type: "bool"
+    description: "显式允许 GET 405 后 POST 重试；必须 api_tests=true 且 get_only=false，默认false；方法/副作用必须在任务范围内。"
+    default: false
+    flag: "--allow-post-retry"
+    format: "flag"
+  - name: "verify_tls"
+    type: "bool"
+    description: "-tlsverify 校验 TLS，系统默认true；仅范围内确有自签证书等原因时显式false。"
+    default: true
+    flag: "-tlsverify"
+    format: "flag"
+  - name: "save_js"
+    type: "bool"
+    description: "-savejs 保存原 JS，默认true，用于 hash/grep/rg/调用上下文复核；没有源码原件不能宣称 JS 双通道已完成。"
+    default: true
+    flag: "-savejs"
+    format: "flag"
+  - name: "headless"
+    type: "bool"
+    description: "-gorog 开启 Rod 无头浏览器，默认false；可能下载浏览器和增加网络行为，当前基础隔离检查未覆盖此模式。"
+    default: false
+    flag: "-gorog"
+    format: "flag"
+  - name: "external_links"
+    type: "bool"
+    description: "-extlink 主动扫描外链，默认false；仅外链 host 也明确在范围内才开启。"
+    default: false
+    flag: "-extlink"
+    format: "flag"
+  - name: "collect_external_links"
+    type: "bool"
+    description: "-wl 收集页面外部域名链接，默认false；收集到的第三方域名先记录，不因此自动扫描。"
+    default: false
+    flag: "-wl"
+    format: "flag"
+  - name: "proxy_api_only"
+    type: "bool"
+    description: "-pa 只对 API 测试走代理，默认false；须同时有 proxy 和 api_tests，爬取仍直连。"
+    default: false
+    flag: "-pa"
+    format: "flag"
+  - name: "personal_data"
+    type: "bool"
+    description: "-person 开启手机号/身份证等个人信息提取，默认false；输出按项目证据权限保存。"
+    default: false
+    flag: "-person"
+    format: "flag"
+  - name: "evil_keywords"
+    type: "bool"
+    description: "-ey 恶意内容关键词匹配，默认false；只形成线索，不据命中判后门或已利用。"
+    default: false
+    flag: "-ey"
+    format: "flag"
+  - name: "scan_public_libraries"
+    type: "bool"
+    description: "-scan-libs 对常见公开库也扫 secret/JWT，默认false以减少库变量误报；全面原源码 grep 仍须执行。"
+    default: false
+    flag: "-scan-libs"
+    format: "flag"
+  - name: "key_files_only"
+    type: "bool"
+    description: "-K 仅打印关键文件，默认false；只改变展示，不可用来缩减完整资源账本。"
+    default: false
+    flag: "-K"
+    format: "flag"

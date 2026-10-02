@@ -3,13 +3,13 @@ name: attack-surface-recon
 description: >-
   攻击面测绘 / 信息收集 / 侦察 / recon / OSINT / 子域名枚举 / DNS / 端口存活 / httpx /
   资产发现 / JS API 提取 / 目录参数 / 证书透明度 / FOFA Shodan ZoomEye Quake /
-  wayback / katana / jsluice / arjun / x8 / ffuf / 覆盖账本 / recon fact /
+  wayback / katana / jsapiscan / arjun / x8 / ffuf / 覆盖账本 / recon fact /
   退出门禁 / Deep 硬闸门。用于 Surface、摸底、打点前资产清单、阶段 ledger；
   用户说「信息收集」「收集信息」「侦察」「找资产」「扫子域」「全面侦察」
   「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
   已有 SRC、漏洞赏金、挖集团/品牌上下文时以 `src-hunting` 为领域入口，本 skill 仅在
   独立侦察/覆盖账本阶段加载；不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
-allowed-tools: subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
+allowed-tools: exec subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsapiscan arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
 metadata:
   tags: [渗透测试, penetration-testing, recon, osint, information-gathering]
   source_augment: Hi-FullHouse/CyberSecurity-Skills
@@ -28,9 +28,9 @@ metadata:
 
 0. 初始线上信息收集必须先实际调用 `fofa_search`；范围、零结果、阻断、原件与续跑复用按`recon-osint-playbook` 的 FOFA 起手规则。锁面只查当前 host/IP，不搜全集团；其他引擎只能补充，缺工具/key/配额留 blocked，不冒充成功。
 1. 根域：Quick=`subfinder`+CT；Standard=`subfinder`+异构来源+`dnsx`；Deep=`subfinder` + `oneforall` + 补 amass/CT/历史/空间测绘，逐项记 raw/增量。
-2. `dnsx` 清洗与通配基线；品牌关联先记证据再主动测。
+2. `dnsx` 清洗与通配基线；逐 IP 记录 CDN/范围证据，已证实 CDN 边缘不扩裸 IP；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，共享 IP 不推定归属。细节见 comprehensive-recon.md §2.1。
 3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。`shodan_search`/`zoomeye_search`/`quake_search` 按可用性补缺，不替代首步 FOFA。
-4. Web：`katana`/`gau`/`waybackurls` + JS/`jsluice` → `recon/endpoint/*`。
+4. Web：`katana`/`gau`/`waybackurls` + JS/`jsapiscan` + 实际 `grep/rg` 检索全部原源码 → 合并 `recon/endpoint/*`；命令与两路证据见 comprehensive-recon.md §4。
 5. 参数/路径：`arjun`/`x8`/`ffuf`（可补 `gobuster`/`dirsearch`/`feroxbuster`），先建 SPA catch-all 基线。
 6. `nuclei` 仅 tentative，禁止直接 `record_vulnerability`。
 
@@ -42,7 +42,7 @@ metadata:
 | 子域 | `subfinder`、`oneforall` | `amass` |
 | DNS | `dnsx` | `dnsenum`/`fierce` |
 | HTTP/端口 | `httpx`、`naabu` | `nmap`/`masscan`/`fscan` |
-| 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsluice` | — |
+| 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsapiscan` | — |
 | 参数 | `arjun`、`x8`、`ffuf` | 目录爆破工具 |
 | 落库 | `upsert_project_fact` | `list_project_facts`/`search_project_facts` |
 

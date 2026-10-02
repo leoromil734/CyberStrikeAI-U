@@ -198,7 +198,7 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 	for _, required := range []string{
 		"subfinder` + `oneforall",
 		"`dnsx`",
-		"jsluice",
+		"jsapiscan",
 		"recon-fact-schema.md",
 		"全面/Deep 侦察只有在以下账本",
 	} {
@@ -217,7 +217,7 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 		"discovered → extracted → baselined → risk-mapped",
 		"账号 A/可行账号 B",
 		"不能生成最终渗透总结",
-		"jsluice",
+		"jsapiscan",
 		"recon/endpoint/*",
 	} {
 		if !strings.Contains(string(comprehensive), required) {
@@ -250,7 +250,7 @@ func TestDeepAssessmentSkillsRequireCoverageAndContinuation(t *testing.T) {
 		"尚未展开 JS 路由表",
 		"“下一步建议”",
 		"recon/source/subfinder/*",
-		"jsluice",
+		"jsapiscan",
 	} {
 		if !strings.Contains(deep, required) {
 			t.Errorf("pentest-scan-deep missing exit gate %q", required)
@@ -383,7 +383,7 @@ func TestBundledOOBToolDeclarationsUseRegisteredName(t *testing.T) {
 	projectRoot := filepath.Dir(root)
 	// The filename is interactsh.yaml, but name (not filename or command) is
 	// the registered tool identifier used by skills, roles and agents.
-	for file, want := range map[string]string{"interactsh.yaml": "interactsh-client", "jsluice.yaml": "jsluice"} {
+	for file, want := range map[string]string{"interactsh.yaml": "interactsh-client", "jsluice.yaml": "jsluice", "jsapiscan.yaml": "jsapiscan"} {
 		var tool struct {
 			Name string `yaml:"name"`
 		}
@@ -454,7 +454,7 @@ func TestBundledOOBToolDeclarationsUseRegisteredName(t *testing.T) {
 			}
 			check(path, declaration.Tools)
 			if dir == "roles" && containsBundledTool([]string{"渗透测试.yaml", "Web应用扫描.yaml", "API安全测试.yaml", "综合漏洞扫描.yaml"}, filepath.Base(path)) {
-				for _, want := range []string{"jsluice", "interactsh-client"} {
+				for _, want := range []string{"jsapiscan", "interactsh-client"} {
 					if !containsBundledTool(declaration.Tools, want) {
 						t.Errorf("%s missing workflow tool %q", path, want)
 					}

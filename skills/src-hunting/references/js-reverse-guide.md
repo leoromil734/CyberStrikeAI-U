@@ -23,26 +23,13 @@
 关注: 含用户数据的接口（/user/, /api/, /order/, /account/）
 ```
 
-### 2. 从 JS 源码批量提取接口
+### 2. 从 JS 源码批量提取接口（工具 + 命令双通道）
 
-```javascript
-// 在 evaluate_script 中执行，提取页面所有 XHR 路径
-() => {
-  const scripts = Array.from(document.querySelectorAll('script[src]'))
-    .map(s => s.src);
-  return scripts;
-}
-```
+所有已下载 JS/chunk/worker 和 source map 展开的原源码都要进入两路账本：第一路 `jsapiscan` 从范围内入口/JS URL 发现并保存资源（不能传本地文件），再实际执行 `grep/rg` 检索原件。不是工具失败才改 grep，也不能只抽 `"/api/"` 或几个代表 chunk。下载时保留 URL、文件/hash、抓取状态和新增资源队列，HTML 内联脚本同样落盘。纯离线任务用本地解析替代在线爬取；旧 `jsluice` 保留、默认停用，必要时显式恢复。当前发布版 `-Ineedparms` 虽出现在帮助中，实际会报错，不传该参数，按调用上下文补齐参数。
 
-```bash
-# 下载所有 JS 文件，grep 接口路径
-for url in $(cat js_files.txt); do
-  curl -s "$url" | grep -oP '"(/api/[^"]+)"' | tr -d '"'
-done | sort -u > discovered_apis.txt
+完整命令、来源计数与退出门禁读根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §4。命令要覆盖绝对/相对 URL、fetch/axios/XHR、baseURL/apiHost/urlPrefix、模板字符串/拼接及 WebSocket/GraphQL；按调用上下文恢复方法、参数、前缀。分别保存工具和命令的 raw/unique/incremental，再合并为 `recon/endpoint/*`，保留两路来源。
 
-# 关键词搜索
-grep -E "(userId|uid|token|sign|order|payment)" discovered_apis.txt
-```
+`grep -rnoHE` 抽候选、`grep -rnHE` 找调用点，`rg -n -o` 可等价替代；对输入源码不能 `head` 截断，minified bundle 的完整命中保存文件再按位置读上下文。转义、变量拼接和动态配置无法直接解析时留具体 `gap/blocked`，必要时结合运行时调用闭合；正则命中不保证接口完整或可达。缺任一路证据不能标“JS 已覆盖”。
 
 ### 3. 使用 search_in_sources 搜索
 

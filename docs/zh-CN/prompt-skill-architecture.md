@@ -93,8 +93,9 @@ recon_sources → asset_ranking → frontend_api → auth_workflows
 关键阶段的验收边界：
 
 - **侦察**：Deep 根域强制执行 `subfinder`、`oneforall`、`dnsx`，再按类别使用可用的证书透明度、历史数据、品牌证据和空间测绘来源。异构来源按 raw、去重后、增量统计；工具失败不会被解释为“无资产”。
-- **资产分级**：共享 IP 不能独立证明品牌归属；确认范围内的资产按业务、认证/管理、数据、输入、边界和暴露证据评分。Top-N 只控制顺序。
-- **JS/API**：资源按 `queued → fetched → analyzed → expanded` 递归；端点按 `discovered → extracted → baselined → risk-mapped → verified/negated/blocked` 推进。SPA shell 的统一 200 只能否定猜测路径，不能批量否定真实调用。
+- **资产分级**：逐解析 IP 记录范围、CNAME/ASN/服务与 CDN 分类证据。已证实 Cloudflare/Akamai 等边缘只排除裸 IP 扩测，品牌业务域名仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务/入口。unknown 留缺口，共享 IP 不单独证明品牌归属，不扫供应商网段或无关租户。Top-N 只控制顺序。
+- **JS/API**：资源按 `queued → fetched → analyzed → expanded` 递归；所有下载 JS/chunk/worker/source map 原源码必须有 `jsapiscan`（首选）+ 实际 `grep/rg` 两路检索证据，保留文件/hash、命令与 raw/unique/incremental。端点合并去重后按 `discovered → extracted → baselined → risk-mapped → verified/negated/blocked` 推进。工具零结果不能替代源码搜索，正则命中也不保证动态接口完整。SPA shell 的统一 200 不能批量否定真实调用。
+- **弱口令**：范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 的密码认证入口必须做一轮简单尝试；侦察角色识别后交接验证。每账号累计≤8次、每入口≤5账号/40候选组合/300秒，并发1、间隔≥3秒；默认对/对照/重试共用预算，命中、挑战、MFA、锁定、限流或异常即停。不全量组合字典，缺身份/保护机制阻断须具体记录，协议无密码能力须证据 N/A。精简字典与可复现安装见 `skills/credential-stuffing/references/lite-wordlists.md`，安装不自动扫描。
 - **身份态**：范围允许时创建最少账号；需要对象授权差分时使用账号 A/B 与各自测试对象。邀请、实名、人工审批不可达时记阻断。发现并验证漏洞优先，程度可控，不因“怕影响”跳过必要验证。
 - **验证**：根据真实端点能力映射认证/会话、对象/功能授权、注入、服务端处理、文件、代理边缘、业务状态机/并发和组件暴露。扫描命中只创建候选；合理候选必须目标侧验证。
 
@@ -138,7 +139,7 @@ references        => 只有入口决策命中专题时读取一个相关文件
 
 | 对象 | 静态预算 | 约束目的 |
 | --- | ---: | --- |
-| 共享核心契约 | 约 2–3K 字符 | 所有模式稳定携带，避免上下文基础成本失控 |
+| 共享核心契约 | 单代理组合≤5600字符（含联网检索与记忆指引） | 所有模式稳定携带；细节下沉 reference，不靠提高预算解决漏测 |
 | 单个角色正文 | 不超过 4K 字符 | 保持角色职责清晰，不重复共享规则 |
 | 宽泛 Skill 入口 | 不超过 3K 字符 | 只保留决策树，把矩阵下沉到 references |
 | 项目事实索引 | 由 `ProjectConfig` 动态限制 | 长会话可恢复，同时不注入完整历史 |

@@ -18,7 +18,7 @@ user_prompt: |
 
   ## 推荐顺序
   1) 明确 URL/范围/认证态；写 target/* fact
-  2) httpx 指纹（含 cdn）+ katana/gau/waybackurls 扩入口；jsluice 对已下载 JS 展开逐端点 method/path，ffuf/dirsearch 仅补路径
+  2) httpx 指纹（含 cdn）+ katana/gau/waybackurls 扩入口；jsapiscan 从入口 URL 发现并保存 JS，结合 grep/rg 对原源码展开逐端点 method/path，ffuf/dirsearch 仅补路径
   3) CDN 只标注；标准客户端持续停在边缘且同条件浏览器到业务层时，先排除 Cookie/JS/限流/IP，再做 curl_cffi 单请求诊断；确认后才替换受影响接口请求
   4) nuclei 限域线索（非结案）；arjun/paramspider 补参数
   5) 按入口验证高影响问题：SQLi→sqlmap；能打到他人会话的 XSS→dalfox；SSRF/盲洞→interactsh-client+手测；越权出手机号/证件/正文、上传能读敏感文件或执行→手测。打不到他人会话的 XSS、只有标题摘要的越权、无密钥敏感路径、无危害上传不测
@@ -30,7 +30,7 @@ icon: "🌐"
 tools:
   - httpx
   - katana
-  - jsluice
+  - jsapiscan
   - gau
   - waybackurls
   - ffuf
