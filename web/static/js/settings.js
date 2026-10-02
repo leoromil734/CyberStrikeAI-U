@@ -2556,6 +2556,8 @@ function writeAIChannelToMainForm(id) {
     if (baseEl) baseEl.value = ch.base_url || '';
     const modelEl = document.getElementById('openai-model');
     if (modelEl) modelEl.value = ch.model || '';
+    const modelSelect = document.getElementById('openai-model-select');
+    if (modelSelect) modelSelect.value = ch.model || '';
     const maxTokensEl = document.getElementById('openai-max-total-tokens');
     if (maxTokensEl) maxTokensEl.value = ch.max_total_tokens || 120000;
     const maxCompletionTokensEl = document.getElementById('openai-max-completion-tokens');
@@ -2569,8 +2571,11 @@ function writeAIChannelToMainForm(id) {
     if (profileEl) profileEl.value = ['auto', 'deepseek_compat', 'openai_compat', 'output_config_effort'].includes(String(r.profile || '').toLowerCase()) ? String(r.profile || '').toLowerCase() : 'auto';
     const allowEl = document.getElementById('openai-reasoning-allow-client');
     if (allowEl) allowEl.checked = r.allow_client_reasoning !== false;
+    // Programmatic value changes do not emit change events. Refresh the visible
+    // dropdowns explicitly, without turning a server-loaded channel into a draft.
     syncModelListFetchButtons();
-    syncAIChannelEditorPreview();
+    refreshSettingsCustomSelects();
+    syncSelectedAIChannelUI();
 }
 
 function displayAIChannelName(id, ch) {
