@@ -4,13 +4,21 @@ import (
 	"context"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/tooloutput"
+	"cyberstrike-ai/internal/workspaceguard"
+	"fmt"
 	"os/exec"
 )
 
 func prepareNativeShell(ctx context.Context, cmd *exec.Cmd, command string) (*boundedOutputCollector, *tooloutput.Tee, func(), int, error) {
 	runtime, ok := mcp.LocalExecutionRuntimeFromContext(ctx)
 	if !ok {
+		if err := prepareWorkspaceCommand(ctx, cmd); err != nil {
+			return nil, nil, func() {}, 0, err
+		}
 		return nil, nil, func() {}, 0, nil
+	}
+	if workspaceguard.FromContext(ctx) == nil {
+		return nil, nil, func() {}, 0, fmt.Errorf("native execute has no trusted workspace policy")
 	}
 	release := func() {}
 	if runtime.Acquire != nil {
@@ -22,6 +30,10 @@ func prepareNativeShell(ctx context.Context, cmd *exec.Cmd, command string) (*bo
 	}
 	executor := &Executor{spillRootDir: runtime.SpillRoot}
 	if err := executor.applyExecutionArtifactEnv(ctx, cmd); err != nil {
+		release()
+		return nil, nil, func() {}, 0, err
+	}
+	if err := prepareWorkspaceCommand(ctx, cmd); err != nil {
 		release()
 		return nil, nil, func() {}, 0, err
 	}

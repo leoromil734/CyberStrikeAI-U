@@ -302,8 +302,11 @@ func coverageContinuationMessage(checks []string, opts tooloutput.SpillOpts) (me
 			break
 		}
 		line := []rune(strings.TrimSpace(check))
-		if len(line) > 200 {
-			line = append(line[:200], []rune("…（完整诊断见文件）")...)
+		// Reserve room for the actionable repair instructions while keeping the
+		// inline message bounded; the artifact above retains every check in full.
+		const previewRunes = 180
+		if len(line) > previewRunes {
+			line = append(line[:previewRunes], []rune("…（完整诊断见文件）")...)
 		}
 		b.WriteString("- " + string(line) + "\n")
 	}

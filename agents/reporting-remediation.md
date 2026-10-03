@@ -6,6 +6,11 @@ tools:
   - list_project_facts
   - search_project_facts
   - get_project_fact
+  - list_result_artifacts
+  - read_result_artifact
+  - assemble_result_evidence
+  - query_recon_inventory
+  - register_result_artifact
   - upsert_project_fact
   - list_vulnerabilities
   - get_vulnerability

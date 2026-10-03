@@ -33,7 +33,11 @@ func prepareEinoSkills(
 	}
 	needLocalBackend := ma.EinoMiddleware.ReductionEnable
 	newLocalBackend := func() (*localbk.Local, error) {
-		backend, backendErr := localbk.NewBackend(ctx, &localbk.Config{})
+		backend, backendErr := localbk.NewBackend(ctx, &localbk.Config{
+			ValidateCommand: func(string) error {
+				return fmt.Errorf("trusted filesystem backend execute is disabled; use the sandboxed streaming shell")
+			},
+		})
 		if backendErr != nil {
 			return nil, fmt.Errorf("eino local backend: %w", backendErr)
 		}
@@ -121,7 +125,7 @@ func subAgentFilesystemMiddleware(
 		return nil, nil
 	}
 	return filesystem.New(ctx, &filesystem.MiddlewareConfig{
-		Backend: loc,
+		Backend: wrapModelFilesystem(ctx, loc),
 		StreamingShell: &einoStreamingShellWrap{
 			prepareExecutionContext: firstPrepareExecution(prepareExecutionContext),
 			inner:                   security.NewEinoStreamingShell(),
@@ -158,7 +162,7 @@ func reductionReadFileMiddleware(ctx context.Context, loc *localbk.Local) (adk.C
 	}
 	prompt := reductionReadFilePrompt
 	return filesystem.New(ctx, &filesystem.MiddlewareConfig{
-		Backend:             loc,
+		Backend:             wrapModelFilesystem(ctx, loc),
 		LsToolConfig:        disabled(),
 		ReadFileToolConfig:  &filesystem.ToolConfig{},
 		WriteFileToolConfig: disabled(),

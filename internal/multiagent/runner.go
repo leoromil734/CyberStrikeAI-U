@@ -26,6 +26,7 @@ import (
 	"cyberstrike-ai/internal/reasoning"
 	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/vision"
+	"cyberstrike-ai/internal/workspaceguard"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
@@ -92,6 +93,11 @@ func RunDeepAgent(
 	if appCfg == nil || ma == nil || ag == nil {
 		return nil, fmt.Errorf("multiagent: 配置或 Agent 为空")
 	}
+	policy, policyErr := security.NewWorkspacePolicy(appCfg, projectID, conversationID)
+	if policyErr != nil {
+		return nil, fmt.Errorf("multiagent workspace: %w", policyErr)
+	}
+	ctx = workspaceguard.WithPolicy(ctx, policy)
 	ctx = vision.WithSessionConfig(ctx, appCfg.Vision, appCfg.OpenAI)
 
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
@@ -286,6 +292,7 @@ func RunDeepAgent(
 			})
 
 			subInstrFinal := project.AppendVisionImageAnalysisIfReady(instr, appCfg.Vision.Ready())
+			subInstrFinal = project.AppendSystemPromptBlock(subInstrFinal, project.BuildWorkspaceBlock(policy.Workspace))
 			subInstrFinal = project.AppendSystemPromptBlock(subInstrFinal, ag.ExperienceInstruction(ctx, subDefs))
 			subInstrFinal = injectToolNamesOnlyInstruction(ctx, subInstrFinal, subTools, subToolSearchActive)
 			if logger != nil {
@@ -412,7 +419,7 @@ func RunDeepAgent(
 	var deepBackend filesystem.Backend
 	var deepShell filesystem.StreamingShell
 	if einoLoc != nil && einoFSTools {
-		deepBackend = einoLoc
+		deepBackend = wrapModelFilesystem(ctx, einoLoc)
 		deepShell = &einoStreamingShellWrap{
 			prepareExecutionContext: ag.PrepareLocalExecutionContext,
 			inner:                   security.NewEinoStreamingShell(),

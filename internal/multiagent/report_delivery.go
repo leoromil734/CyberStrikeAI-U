@@ -12,7 +12,11 @@ import (
 
 // CoverageContinuationHeader identifies an internal repair segment, not a new
 // user request. Keep this shared with the handler that creates the instruction.
-const CoverageContinuationHeader = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。只补当前评估缺口，不重复已完成步骤，不扩大授权范围，保留用户排除项。查阅 pentest-blackboard/references/coverage-contract.md 并读取相应事实；blocked/N/A 必须有原始证据和具体原因，不得把未测改成已覆盖。\n修复完成后必须重新输出本次任务的完整最终报告（含结论、覆盖、发现、负结果与限制），同步必要更正；不要只回复计数已对齐或账本已修复。\n"
+const CoverageContinuationHeader = coverageRepairInstructionPrefix + "只补本轮缺口，保留用户排除项，不重复、不扩范围。读 pentest-blackboard/references/coverage-contract.md；blocked/N/A 须原始证据，未测不能算覆盖。\n" +
+	"实际工作尚未执行就先做或委派，再用 upsert_project_fact.body_fields 写 recon/phase/*；报告不代替落库，未执行不得 passed。\n" +
+	"从本轮 recon/source/* 取真实 execution_id，query_recon_inventory(execution_id, grouped=true, offset=0) 分页取 key 填 inventory_group_key。discovery-* 是数据库标识，勿 glob/grep 盲找或编造。原件用 list_result_artifacts/read_result_artifact；库存候选本身不证明已测试。\n" +
+	"常驻工具按当前 schema 调用，搜索空不证明缺失；工具缺失记配置阻断并继续可执行项。\n" +
+	"get_project_fact/list_project_facts 回读核实。缺口解决再交完整最终报告：结论、覆盖、发现、负结果、限制。\n"
 
 const coverageRepairInstructionPrefix = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。"
 

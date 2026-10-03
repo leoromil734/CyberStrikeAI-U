@@ -17,6 +17,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/tooloutput"
+	"cyberstrike-ai/internal/workspaceguard"
 
 	"github.com/creack/pty"
 	"github.com/google/uuid"
@@ -134,6 +135,11 @@ func (e *Executor) buildToolIndex() {
 
 // ExecuteTool 执行安全工具
 func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (*mcp.ToolResult, error) {
+	var workspaceErr error
+	ctx, workspaceErr = e.workspaceContext(ctx)
+	if workspaceErr != nil {
+		return nil, workspaceErr
+	}
 	e.logger.Debug("ExecuteTool被调用",
 		zap.String("toolName", toolName),
 		zap.Strings("argumentNames", argumentNames(args)),
@@ -253,6 +259,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		return nil, fmt.Errorf("allocate execution artifacts: %w", err)
 	}
 	e.applyToolCredentialEnv(cmd, toolName)
+	if err := prepareWorkspaceCommand(ctx, cmd, toolCredentialKeys(toolName)...); err != nil {
+		return nil, err
+	}
 	e.attachToolStdin(cmd, toolConfig, args)
 	_ = prepareShellCmdSession(cmd)
 
@@ -278,6 +287,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 				return nil, envErr
 			}
 			e.applyToolCredentialEnv(cmd2, toolName)
+			if err := prepareWorkspaceCommand(ctx, cmd2, toolCredentialKeys(toolName)...); err != nil {
+				return nil, err
+			}
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, cb, e.toolOutputMaxBytes, spill)
@@ -295,6 +307,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 				return nil, envErr
 			}
 			e.applyToolCredentialEnv(cmd2, toolName)
+			if err := prepareWorkspaceCommand(ctx, cmd2, toolCredentialKeys(toolName)...); err != nil {
+				return nil, err
+			}
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, nil, e.toolOutputMaxBytes, spill)
@@ -1098,6 +1113,9 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 
 	// 检测是否为后台命令（包含 & 符号，但不在引号内）
 	isBackground := IsBackgroundShellCommand(command)
+	if isBackground && workspaceguard.FromContext(ctx) != nil {
+		return &mcp.ToolResult{IsError: true, Content: []mcp.Content{{Type: "text", Text: "隔离工作区不支持脱管后台命令。请去掉末尾 &，使用平台 execution_id / wait_tool_execution 管理长任务。"}}}, nil
+	}
 
 	// 构建命令
 	var cmd *exec.Cmd
@@ -1109,6 +1127,9 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	}
 	ConfigureShellCmdForAgentExecute(cmd)
 	if err := e.applyExecutionArtifactEnv(ctx, cmd); err != nil {
+		return nil, err
+	}
+	if err := prepareWorkspaceCommand(ctx, cmd); err != nil {
 		return nil, err
 	}
 
@@ -1138,6 +1159,12 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 			pidCmd = exec.CommandContext(ctx, shell, "-c", pidCommand)
 		}
 		ConfigureShellCmdForAgentExecute(pidCmd)
+		if err := e.applyExecutionArtifactEnv(ctx, pidCmd); err != nil {
+			return nil, err
+		}
+		if err := prepareWorkspaceCommand(ctx, pidCmd); err != nil {
+			return nil, err
+		}
 
 		// 获取stdout管道
 		stdout, err := pidCmd.StdoutPipe()
@@ -1259,6 +1286,12 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 				cmd2.Dir = workDir
 			}
 			ConfigureShellCmdForAgentExecute(cmd2)
+			if err := e.applyExecutionArtifactEnv(ctx, cmd2); err != nil {
+				return nil, err
+			}
+			if err := prepareWorkspaceCommand(ctx, cmd2); err != nil {
+				return nil, err
+			}
 			output, err = runCommandWithPTY(ctx, cmd2, cb, e.toolOutputMaxBytes, spill)
 		}
 	} else {
@@ -1270,6 +1303,12 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 				cmd2.Dir = workDir
 			}
 			ConfigureShellCmdForAgentExecute(cmd2)
+			if err := e.applyExecutionArtifactEnv(ctx, cmd2); err != nil {
+				return nil, err
+			}
+			if err := prepareWorkspaceCommand(ctx, cmd2); err != nil {
+				return nil, err
+			}
 			output, err = runCommandWithPTY(ctx, cmd2, nil, e.toolOutputMaxBytes, spill)
 		}
 	}
@@ -1656,6 +1695,13 @@ func (e *Executor) applyToolCredentialEnv(cmd *exec.Cmd, toolName string) {
 		setCommandEnvFallback(cmd, "FOFA_API_KEY", e.credentialConfig.FOFA.APIKey)
 		setCommandEnvFallback(cmd, "FOFA_BASE_URL", e.credentialConfig.FOFA.BaseURL)
 	}
+}
+
+func toolCredentialKeys(toolName string) []string {
+	if toolName == "fofa_search" {
+		return []string{"FOFA_API_KEY", "FOFA_BASE_URL"}
+	}
+	return nil
 }
 
 func setCommandEnvFallback(cmd *exec.Cmd, key, fallback string) {

@@ -584,6 +584,10 @@ func (s *Server) handleCallTool(requestCtx context.Context, msg *Message) *Messa
 	baseCtx, timeoutCancel := s.effectiveHTTPToolCallDeadline(requestCtx)
 	defer timeoutCancel()
 	execCtx, runCancel := context.WithCancel(baseCtx)
+	// Protocol calls need the same service-generated execution/workspace binding
+	// as in-process ExecutionService workers; never inherit the application's CWD.
+	execCtx = WithMCPExecutionID(execCtx, executionID)
+	execCtx = storedExecutionProjectContext(execCtx, s.storage, executionID)
 	s.registerRunningCancel(executionID, runCancel)
 	defer func() {
 		runCancel()

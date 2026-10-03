@@ -1066,12 +1066,17 @@ func EnableConfiguredCredentialTools(cfg *Config) {
 }
 
 type SecurityConfig struct {
-	Tools                  []ToolConfig `yaml:"tools,omitempty"`                 // 向后兼容：支持在主配置文件中定义工具
-	ToolsDir               string       `yaml:"tools_dir,omitempty"`             // 工具配置文件目录（新方式）
-	ToolDescriptionMode    string       `yaml:"tool_description_mode,omitempty"` // 工具描述模式: "short" | "full"，默认 short
-	MaxConcurrentTools     int          `yaml:"max_concurrent_tools,omitempty" json:"maxConcurrentTools,omitempty"`
-	MaxConcurrentPerTool   int          `yaml:"max_concurrent_per_tool,omitempty" json:"maxConcurrentPerTool,omitempty"`
-	MaxConcurrentPerTarget int          `yaml:"max_concurrent_per_target,omitempty" json:"maxConcurrentPerTarget,omitempty"`
+	// LocalSandboxRuntimePaths are administrator-reviewed, read-only tool installations.
+	// Never include the application root, configuration, home directories or data stores.
+	LocalSandboxRuntimePaths []string `yaml:"local_sandbox_runtime_paths,omitempty" json:"localSandboxRuntimePaths,omitempty"`
+	// Writable vendor subdirectories are backed by private per-workspace state, never the host installation.
+	LocalSandboxWritableRuntimePaths []string     `yaml:"local_sandbox_writable_runtime_paths,omitempty" json:"localSandboxWritableRuntimePaths,omitempty"`
+	Tools                            []ToolConfig `yaml:"tools,omitempty"`                 // 向后兼容：支持在主配置文件中定义工具
+	ToolsDir                         string       `yaml:"tools_dir,omitempty"`             // 工具配置文件目录（新方式）
+	ToolDescriptionMode              string       `yaml:"tool_description_mode,omitempty"` // 工具描述模式: "short" | "full"，默认 short
+	MaxConcurrentTools               int          `yaml:"max_concurrent_tools,omitempty" json:"maxConcurrentTools,omitempty"`
+	MaxConcurrentPerTool             int          `yaml:"max_concurrent_per_tool,omitempty" json:"maxConcurrentPerTool,omitempty"`
+	MaxConcurrentPerTarget           int          `yaml:"max_concurrent_per_target,omitempty" json:"maxConcurrentPerTarget,omitempty"`
 }
 
 type DatabaseConfig struct {

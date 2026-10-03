@@ -4,6 +4,7 @@ import (
 	"context"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/tooloutput"
+	"cyberstrike-ai/internal/workspaceguard"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,9 @@ func (s *EinoStreamingShell) ExecuteStreaming(ctx context.Context, input *filesy
 		return nil, fmt.Errorf("command is required")
 	}
 
+	if workspaceguard.FromContext(ctx) != nil && (input.RunInBackendGround || IsBackgroundShellCommand(input.Command)) {
+		return nil, fmt.Errorf("隔离工作区不支持脱管后台命令；去掉 &，使用 execution_id / wait_tool_execution 管理长任务")
+	}
 	sr, w := schema.Pipe[*filesystem.ExecuteResponse](100)
 	if input.RunInBackendGround {
 		go runShellInBackground(ctx, input.Command, w)

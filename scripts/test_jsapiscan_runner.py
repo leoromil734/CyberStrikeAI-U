@@ -4,10 +4,13 @@ import csv
 import hashlib
 import io
 import json
+import os
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 import signal
+import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -60,13 +63,14 @@ class JSAPIscanRunnerTests(unittest.TestCase):
         environment = patch.dict(runner.os.environ)
         environment.start()
         self.addCleanup(environment.stop)  # unittest.enterContext requires Python 3.11+.
-        runner.os.environ.pop("CSAI_EXECUTION_ID", None)
+        for name in ("CSAI_EXECUTION_ID", "CSAI_WORKSPACE_SANDBOX", "CSAI_ARTIFACT_DIR"):
+            runner.os.environ.pop(name, None)
 
     def args(self, *values):
         with redirect_stderr(io.StringIO()):
             return runner.make_parser().parse_args(list(values))
 
-    def fake_environment(self, stack, root, clock, duration=0, code=0, result="success", cancellation=None, callback=None, ignore_terminate=False):
+    def fake_environment(self, stack, root, clock, duration=0, code=0, result="success", cancellation=None, callback=None, ignore_terminate=False, workspace=False):
         binary = root / "verified-binary"
         binary.write_bytes(b"fixture binary")
         account = SimpleNamespace(pw_uid=997, pw_gid=997)
@@ -77,7 +81,11 @@ class JSAPIscanRunnerTests(unittest.TestCase):
         stack.enter_context(patch.object(runner.sys, "platform", "linux"))
         stack.enter_context(patch.object(runner, "pwd", SimpleNamespace(getpwnam=lambda _name: account)))
         stack.enter_context(patch.object(runner.os, "geteuid", return_value=0, create=True))
-        stack.enter_context(patch.object(runner.os, "chown", create=True))
+        ownership = stack.enter_context(patch.object(runner.os, "chown", create=True))
+        if workspace:
+            self.workspace_context(stack, root)
+            stack.enter_context(patch.dict(runner.os.environ, CSAI_ARTIFACT_DIR=str(root)))
+            stack.enter_context(patch.object(runner, "pwd", None))
         stack.enter_context(patch.object(runner.time, "monotonic", side_effect=clock.monotonic))
         if cancellation:
             stack.enter_context(patch.object(cancellation, "wait", side_effect=clock.wait))
@@ -86,12 +94,22 @@ class JSAPIscanRunnerTests(unittest.TestCase):
             commands.append(command)
             target_file = Path(command[command.index("-f") + 1])
             batches.append(target_file.read_text("utf-8").splitlines())
-            work = Path(next(value.split("=", 1)[1] for value in command if value.startswith("WorkingDirectory=")))
+            work = Path(kwargs["cwd"]) if workspace else Path(next(value.split("=", 1)[1] for value in command if value.startswith("WorkingDirectory=")))
+            self.assertTrue(kwargs["start_new_session"])
             if callback:
                 callback(work, kwargs)
             child = FakeProcess(clock, duration, code, ignore_terminate)
+            child.pid = 900000 + len(children)
             children.append(child)
             return child
+
+        def killpg(pid, signum):
+            child = next(child for child in children if child.pid == pid)
+            if signum == signal.SIGTERM:
+                child.terminate()
+            else:
+                child.kill()
+        groups = stack.enter_context(patch.object(runner.os, "killpg", side_effect=killpg, create=True))
 
         def systemctl(command, **_kwargs):
             self.assertEqual(command[0], "/usr/bin/systemctl")
@@ -101,11 +119,261 @@ class JSAPIscanRunnerTests(unittest.TestCase):
         launcher = stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=popen))
         controls = stack.enter_context(patch.object(runner.subprocess, "run", side_effect=systemctl))
         return SimpleNamespace(children=children, commands=commands, control_calls=control_calls, batches=batches,
-                               launcher=launcher, controls=controls, account=account)
+                               launcher=launcher, controls=controls, account=account, ownership=ownership, groups=groups)
+
+    def workspace_context(self, stack, root):
+        stack.enter_context(patch.dict(runner.os.environ, CSAI_WORKSPACE_SANDBOX="1"))
+        stack.enter_context(patch.object(runner.sys, "platform", "linux"))
+        stack.enter_context(patch.object(runner.signal, "SIGKILL", 9, create=True))
+        for name in ("getuid", "geteuid", "getgid", "getegid"):
+            stack.enter_context(patch.object(runner.os, name, return_value=997, create=True))
+        stack.enter_context(patch.object(runner.os, "getpid", return_value=42))
+        context = {
+            Path("/proc/1/status"): "Name:\tbwrap\nPid:\t1\nPPid:\t0\nNSpid:\t1\n",
+            Path("/proc/self/uid_map"): "997 997 1\n",
+            Path("/proc/self/gid_map"): "997 997 1\n",
+            Path("/proc/self/status"): "Pid:\t42\nNSpid:\t42\nUid:\t997 997 997 997\nGid:\t997 997 997 997\nNoNewPrivs:\t1\n" + "".join(name + ":\t0000000000000000\n" for name in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")),
+        }
+        read_text, exists = Path.read_text, Path.exists
+        stack.enter_context(patch.object(Path, "exists", lambda path: False if path in (Path("/run/systemd"), Path("/run/dbus")) else exists(path)))
+        stack.enter_context(patch.object(Path, "read_text", lambda path, *args, **kwargs: context[path] if path in context else read_text(path, *args, **kwargs)))
+        mounts = {Path("/"): ("tmpfs", {"ro", "nosuid", "nodev"}), Path("/proc"): ("proc", {"rw"}),
+                  Path("/usr"): ("ext4", {"ro"}), runner.BINARY.resolve(): ("ext4", {"ro"}),
+                  Path(runner.__file__).resolve(): ("ext4", {"ro"}), Path(runner.sys.executable).resolve(): ("ext4", {"ro"}),
+                  root: ("ext4", {"rw"})}
+        stack.enter_context(patch.object(runner, "_workspace_nproc_enforced", return_value=True))
+        stack.enter_context(patch.object(runner, "_workspace_mounts", return_value=mounts))
+        return context, mounts
 
     def manifest(self, root):
         job = next((root / "runs").iterdir())
         return json.loads((job / "manifest.json").read_text("utf-8")), job
+
+    def test_workspace_context_requires_kernel_evidence_not_just_marker(self):
+        for failure in (None, "marker", "host_uid_map", "multiple_ids", "uid_mismatch", "gid_map", "capabilities", "privileges", "root_rw", "root_ext4", "proc", "runtime_rw", "root_mapping", "unreadable"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+                context, mounts = self.workspace_context(stack, Path(temp))
+                if failure == "marker":
+                    runner.os.environ["CSAI_WORKSPACE_SANDBOX"] = "true"
+                elif failure == "host_uid_map":
+                    context[Path("/proc/self/uid_map")] = "0 0 4294967295\n"
+                elif failure == "multiple_ids":
+                    context[Path("/proc/self/uid_map")] += "998 998 1\n"
+                elif failure == "uid_mismatch":
+                    context[Path("/proc/self/uid_map")] = "998 998 1\n"
+                elif failure == "gid_map":
+                    context[Path("/proc/self/gid_map")] = "0 0 4294967295\n"
+                elif failure == "capabilities":
+                    context[Path("/proc/self/status")] += "CapBnd:\t0000000000000001\n"
+                elif failure == "privileges":
+                    context[Path("/proc/self/status")] += "NoNewPrivs:\t0\n"
+                elif failure == "root_rw":
+                    mounts[Path("/")] = ("tmpfs", {"rw", "nosuid", "nodev"})
+                elif failure == "root_ext4":
+                    mounts[Path("/")] = ("ext4", {"ro", "nosuid", "nodev"})
+                elif failure == "proc":
+                    mounts[Path("/proc")] = ("ext4", {"rw"})
+                elif failure == "runtime_rw":
+                    mounts[runner.BINARY.resolve()] = ("ext4", {"rw"})
+                elif failure == "root_mapping":
+                    context[Path("/proc/self/uid_map")] = "997 0 1\n"
+                    stack.enter_context(patch.object(runner, "_workspace_nproc_enforced", return_value=False))
+                elif failure == "unreadable":
+                    stack.enter_context(patch.object(Path, "read_text", side_effect=PermissionError))
+                if failure:
+                    with self.assertRaises(runner.InputError) as raised:
+                        runner._workspace_sandbox()
+                    self.assertIn(raised.exception.code, ("untrusted_workspace_sandbox_context", "workspace_resource_limits_require_nonroot_uid_mapping"))
+                else:
+                    self.assertTrue(runner._workspace_sandbox())
+        with patch.dict(runner.os.environ, {}, clear=True), patch.object(Path, "read_text", side_effect=AssertionError):
+            self.assertFalse(runner._workspace_sandbox())
+
+    def test_host_nonroot_identity_maps_still_require_all_isolation_checks(self):
+        for failure in (None, "host_init", "wrong_pid", "host_proc", "init_parent", "root_uid", "saved_root", "nproc", "root_rw", "runtime_rw", "capabilities", "privileges", "control_plane"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+                context, mounts = self.workspace_context(stack, Path(temp))
+                for kind in ("uid", "gid"):
+                    context[Path(f"/proc/self/{kind}_map")] = "0 0 4294967295\n"
+                if failure == "host_init":
+                    context[Path("/proc/1/status")] += "Name:\tsystemd\n"
+                elif failure == "wrong_pid":
+                    context[Path("/proc/self/status")] += "Pid:\t12345\n"
+                elif failure == "host_proc":
+                    context[Path("/proc/self/status")] += "NSpid:\t12345 42\n"
+                elif failure == "init_parent":
+                    context[Path("/proc/1/status")] += "PPid:\t1234\n"
+                elif failure == "root_uid":
+                    stack.enter_context(patch.object(runner.os, "getuid", return_value=0))
+                    context[Path("/proc/self/status")] += "Uid:\t0 0 0 0\n"
+                elif failure == "saved_root":
+                    context[Path("/proc/self/status")] += "Uid:\t997 997 0 997\n"
+                elif failure == "nproc":
+                    stack.enter_context(patch.object(runner, "_workspace_nproc_enforced", return_value=False))
+                elif failure == "root_rw":
+                    mounts[Path("/")] = ("tmpfs", {"rw", "nosuid", "nodev"})
+                elif failure == "runtime_rw":
+                    mounts[runner.BINARY.resolve()] = ("ext4", {"rw"})
+                elif failure == "capabilities":
+                    context[Path("/proc/self/status")] += "CapEff:\t0000000000000001\n"
+                elif failure == "privileges":
+                    context[Path("/proc/self/status")] += "NoNewPrivs:\t0\n"
+                elif failure == "control_plane":
+                    exists = Path.exists
+                    stack.enter_context(patch.object(Path, "exists", lambda path: path == Path("/run/systemd") or exists(path)))
+                if failure:
+                    with self.assertRaises(runner.InputError):
+                        runner._workspace_sandbox()
+                else:
+                    self.assertTrue(runner._workspace_sandbox())
+
+    def test_workspace_nproc_probe_is_bounded_and_fails_closed(self):
+        for failure in (None, 1, OSError("missing interpreter"), subprocess.TimeoutExpired("probe", 3)):
+            with self.subTest(failure=failure), patch.object(runner.subprocess, "run") as probe:
+                if isinstance(failure, Exception):
+                    probe.side_effect = failure
+                else:
+                    probe.return_value = SimpleNamespace(returncode=failure or 0)
+                self.assertEqual(runner._workspace_nproc_enforced(), failure is None)
+                args, options = probe.call_args
+                self.assertEqual(args[0][1:3], ["-I", "-S"])
+                self.assertEqual(options["timeout"], 3)
+                self.assertEqual(options["env"], {"PATH": "/usr/bin:/bin"})
+
+    def test_workspace_pin_mismatch_never_starts_scanner_or_systemd(self):
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+            root, clock, cancellation = Path(temp), FakeClock(), runner.Cancellation()
+            env = self.fake_environment(stack, root, clock, workspace=True, cancellation=cancellation)
+            stack.enter_context(patch.object(runner, "BINARY_SHA256", "0" * 64))
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(runner.run(self.args("-u", "https://fixture.invalid"), cancellation), 2)
+            result = json.loads(output.getvalue().splitlines()[-1])
+            self.assertIn("pinned_binary_sha256_mismatch", result["blocked_reasons"])
+            self.assertTrue(Path(result["manifest_file"]).is_relative_to(root / "jsapiscan"))
+            env.launcher.assert_not_called()
+            env.controls.assert_not_called()
+            env.ownership.assert_not_called()
+
+    def test_workspace_mountinfo_decodes_escaped_mountpoints(self):
+        text = "31 30 0:5 /newroot / ro,nosuid,nodev - tmpfs tmpfs rw\n32 31 8:1 /source /work\\040space rw,nosuid,nodev - ext4 /dev/a rw\n"
+        with patch.object(Path, "read_text", return_value=text):
+            mounts = runner._workspace_mounts()
+        self.assertEqual(mounts[Path("/")], ("tmpfs", {"ro", "nosuid", "nodev"}))
+        self.assertEqual(runner._covering_mount(Path("/work space/artifacts"), mounts), Path("/work space"))
+
+    def test_forged_workspace_marker_never_falls_back_or_creates_host_job(self):
+        for cli_error in (False, True):
+            with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+                root = Path(temp)
+                env = self.fake_environment(stack, root, FakeClock())
+                stack.enter_context(patch.dict(runner.os.environ, CSAI_WORKSPACE_SANDBOX="1"))
+                stack.enter_context(patch.object(Path, "read_text", side_effect=OSError("not-proc")))
+                with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+                    code = runner.main(["-u", "https://a.example", "-t", "wrong"]) if cli_error else runner.run(self.args("-u", "https://a.example"))
+                self.assertEqual(code, 2)
+                self.assertIn("untrusted_workspace_sandbox_context", json.loads(output.getvalue().splitlines()[-1])["blocked_reasons"])
+                self.assertFalse((root / "runs").exists())
+                env.launcher.assert_not_called()
+                env.controls.assert_not_called()
+
+    def test_workspace_success_uses_current_identity_private_artifacts_and_limits(self):
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+            root, clock, cancellation = Path(temp), FakeClock(), runner.Cancellation()
+            def fixture(work, options):
+                self.assertEqual(options["env"]["HOME"], str(work / ".home"))
+                self.assertEqual(options["env"]["TMPDIR"], str(work / ".tmp"))
+                self.assertEqual(options["env"]["GOMAXPROCS"], "2")
+                self.assertEqual(options["umask"], 0o077)
+                self.assertNotIn("CSAI_EXECUTION_ID", options["env"])
+                (work / "api.csv").write_text("URL,Method\nhttps://a.example/api?token=secret-value,GET\n", encoding="utf-8")
+            env = self.fake_environment(stack, root, clock, workspace=True, cancellation=cancellation, callback=fixture)
+            stack.enter_context(patch.dict(runner.os.environ, CSAI_EXECUTION_ID="a3b7c901-2d4e-4f60-8a12-3456789abcde"))
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(runner.run(self.args("-u", "https://a.example", "-header", "private-header"), cancellation), 0)
+            result = json.loads(output.getvalue().splitlines()[-1])
+            manifest = json.loads(Path(result["manifest_file"]).read_text("utf-8"))
+            self.assertEqual(manifest["execution_mode"], "workspace")
+            self.assertEqual((manifest["uid"], manifest["gid"]), (997, 997))
+            self.assertTrue(manifest["complete"])
+            self.assertFalse(manifest["coverage_complete"])
+            self.assertTrue(manifest["candidate_only"])
+            self.assertEqual(manifest["counts"]["exported"], 1)
+            self.assertTrue(Path(result["manifest_file"]).is_relative_to(root / "jsapiscan"))
+            self.assertFalse((root / "runs").exists())
+            self.assertFalse(list(root.rglob("_input_*")))
+            self.assertNotIn("private-header", str(env.commands) + output.getvalue())
+            self.assertNotIn("secret-value", Path(result["candidates_file"]).read_text("utf-8"))
+            command = env.commands[0]
+            for flag in ("/usr/bin/prlimit", "--as=4294967296:4294967296", "--data=536870912:536870912", "--nproc=128:128", "--core=0:0", "/usr/bin/timeout", "--kill-after=2s", "300s"):
+                self.assertIn(flag, command)
+            env.ownership.assert_not_called()
+            env.controls.assert_not_called()
+            self.assertEqual(env.groups.call_count, 2)  # Cleanup also runs after a successful leader exit.
+            self.assertNotIn("systemd_result", manifest["batches"][0])
+
+    def test_workspace_timeout_cancel_and_launch_failure_stay_partial_without_systemctl(self):
+        for failure in ("timeout", "watchdog", "cancel", "launch", "cleanup"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+                root, clock, cancellation = Path(temp), FakeClock(), runner.Cancellation()
+                env = self.fake_environment(stack, root, clock, duration=0 if failure == "watchdog" else 60,
+                                            code=124 if failure == "watchdog" else 0, workspace=True,
+                                            cancellation=cancellation, ignore_terminate=True)
+                if failure == "cancel":
+                    stack.enter_context(patch.object(cancellation, "wait", side_effect=lambda seconds: (clock.wait(seconds), cancellation.request(signal.SIGTERM))))
+                elif failure == "launch":
+                    env.launcher.side_effect = FileNotFoundError("private-helper-error")
+                elif failure == "cleanup":
+                    env.groups.side_effect = PermissionError("private-cleanup-error")
+                with redirect_stdout(io.StringIO()) as output:
+                    code = runner.run(self.args("-u", ",".join(f"https://a{i}.example" for i in range(21)), "--total-timeout", "1"), cancellation)
+                self.assertEqual(code, 130 if failure == "cancel" else (1 if failure == "launch" else 124))
+                manifest = json.loads(Path(json.loads(output.getvalue().splitlines()[-1])["manifest_file"]).read_text("utf-8"))
+                self.assertTrue(manifest["partial"])
+                self.assertFalse(manifest["complete"])
+                self.assertEqual(manifest["unstarted_target_count"], 21 if failure == "launch" else 1)
+                self.assertEqual(env.launcher.call_count, 1)
+                self.assertFalse(list(root.rglob("_input_*")))
+                self.assertNotIn("private-", output.getvalue())
+                if failure not in ("launch", "cleanup"):
+                    self.assertTrue(env.children[0].killed)
+                if failure == "cleanup":
+                    self.assertIn("process_group_signal_failed", manifest["blocked_reasons"])
+                env.ownership.assert_not_called()
+                env.controls.assert_not_called()
+
+    def test_workspace_global_budget_and_execution_collision_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+            root, clock, cancellation = Path(temp), FakeClock(), runner.Cancellation()
+            env = self.fake_environment(stack, root, clock, duration=2, workspace=True, cancellation=cancellation)
+            stack.enter_context(patch.dict(runner.os.environ, CSAI_EXECUTION_ID="a3b7c901-2d4e-4f60-8a12-3456789abcde"))
+            args = self.args("-u", ",".join(f"https://a{i}.example" for i in range(21)), "--total-timeout", "10")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.run(args, cancellation), 0)
+            self.assertIn("10s", env.commands[0])
+            self.assertIn("8s", env.commands[1])
+            before = env.launcher.call_count
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(runner.run(args, cancellation), 2)
+            self.assertIn("execution_directory_already_exists", output.getvalue())
+            self.assertEqual(env.launcher.call_count, before)
+
+    def test_workspace_job_paths_and_cli_errors_never_use_global_runs(self):
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
+            root = Path(temp)
+            self.workspace_context(stack, root)
+            stack.enter_context(patch.object(Path, "cwd", return_value=root))
+            job = runner._new_job(True)
+            self.assertEqual(job.parent, root / ".jsapiscan-runs")
+            for value in ("", "relative", str(root / "missing")):
+                with patch.dict(runner.os.environ, CSAI_ARTIFACT_DIR=value), self.assertRaises(runner.InputError):
+                    runner._new_job(True)
+            stack.enter_context(patch.dict(runner.os.environ, CSAI_ARTIFACT_DIR=str(root)))
+            with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+                self.assertEqual(runner.main(["-u", "https://a.example", "-t", "private-invalid"]), 2)
+            manifest_path = Path(json.loads(output.getvalue().splitlines()[-1])["manifest_file"])
+            self.assertTrue(manifest_path.is_relative_to(root / "jsapiscan"))
+            self.assertEqual(json.loads(manifest_path.read_text("utf-8"))["blocked_reasons"], ["invalid_cli_input"])
+            self.assertNotIn("private-invalid", output.getvalue())
 
     def test_execution_id_binds_normalized_directory_and_result_paths(self):
         execution_id = "a3b7c901-2d4e-4f60-8a12-3456789abcde"
@@ -574,12 +842,15 @@ class JSAPIscanRunnerTests(unittest.TestCase):
         text = (root / "tools" / "jsapiscan.yaml").read_text(encoding="utf-8")
         parser = runner.make_parser()
         flags = {flag for action in parser._actions for flag in action.option_strings}
-        for flag in re.findall(r'^    flag: "([^"]+)"$', text, re.M):
+        for flag in re.findall(r'''^\s+flag: ["']?([^\s"']+)["']?\s*$''', text, re.M):
             self.assertIn(flag, flags)
+        # Server-side YAML serializers may omit quotes around scalar names.
+        sections = re.split(r'''(?m)^\s*- name: ["']?([\w-]+)["']?\s*$''', text)
+        parameters = dict(zip(sections[1::2], sections[2::2]))
         args = self.args("-u", "https://a.example")
         for name, dest in [("batch_size", "batch_size"), ("batch_timeout_seconds", "batch_timeout"), ("heartbeat_interval_seconds", "heartbeat_interval"), ("export_timeout_seconds", "export_timeout")]:
-            section = text.split('  - name: "' + name + '"', 1)[1].split('  - name:', 1)[0]
-            self.assertEqual(int(re.search(r"    default: (\d+)", section).group(1)), getattr(args, dest))
+            self.assertIn(name, parameters)
+            self.assertEqual(int(re.search(r"    default: (\d+)", parameters[name]).group(1)), getattr(args, dest))
         self.assertIn("最多200", text)
         self.assertIn("coverage_complete", text)
 
@@ -596,6 +867,103 @@ class JSAPIscanRunnerTests(unittest.TestCase):
             result = runner.collect_artifacts(work)
             self.assertEqual(result["artifacts"], [])
             self.assertEqual(result["counts"]["exported"], 0)
+
+
+@unittest.skipUnless(sys.platform == "linux" and os.environ.get("CSAI_JSAPISCAN_BWRAP_TEST") == "1",
+                     "opt-in Linux bubblewrap fixture; no network or scanner binary")
+class WorkspaceSandboxIntegrationTests(unittest.TestCase):
+    def test_real_namespace_limits_timeout_and_cancellation_offline(self):
+        self.assertIsNotNone(shutil.which("bwrap"))
+        with tempfile.TemporaryDirectory(prefix="jsapiscan-fixture-") as temp:
+            root = Path(temp)
+            root.chmod(0o755)
+            runtime = root / "runtime"
+            runtime.mkdir(mode=0o755)
+            runtime.chmod(0o755)
+            for module in (runner, inventory):
+                copied = runtime / Path(module.__file__).name
+                shutil.copyfile(module.__file__, copied)
+                copied.chmod(0o644)
+            uid, gid = (65534, 65534) if os.geteuid() == 0 else (os.getuid(), os.getgid())
+            prefix = ["/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups"] if os.geteuid() == 0 else []
+            modes = ("success", "timeout", "cancel", "root_mapping", "host_nonroot") if os.geteuid() == 0 else ("success", "timeout", "cancel")
+            for mode in modes:
+                with self.subTest(mode=mode):
+                    work, artifacts = root / (mode + "-work"), root / (mode + "-artifacts")
+                    for directory in (work, artifacts):
+                        directory.mkdir(mode=0o700)
+                        if os.geteuid() == 0:
+                            os.chown(directory, 0 if mode == "root_mapping" else uid, 0 if mode == "root_mapping" else gid)
+                    fixture = runtime / "fixture.py"
+                    fixture.write_text("#!/usr/bin/python3\n" +
+                        "import errno, json, os, resource, signal, time\nfrom pathlib import Path\n" +
+                        "Path('api.csv').write_text('URL,Method\\nhttps://fixture.invalid/api?token=secret,GET\\nhttps://fixture.invalid/api?token=duplicate,GET\\n')\n" +
+                        f"mode = {('success' if mode == 'host_nonroot' else mode)!r}\n" +
+                        "limits = {name: resource.getrlimit(getattr(resource, 'RLIMIT_' + name)) for name in ('AS', 'DATA', 'NPROC', 'CPU', 'CORE', 'NOFILE')}\n" +
+                        "Path('limits.json').write_text(json.dumps(limits))\n" +
+                        "if mode != 'success':\n signal.signal(signal.SIGTERM, signal.SIG_IGN)\n pid = os.fork()\n Path('pid-' + str(os.getpid())).write_text(str(os.getpgrp()))\n time.sleep(30)\n os._exit(1)\n" +
+                        "try:\n bytearray(600 * 1024 * 1024)\n raise AssertionError('memory limit ineffective')\nexcept MemoryError:\n pass\n" +
+                        "resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))\n" +
+                        "try:\n pid = os.fork()\nexcept OSError as exc:\n assert exc.errno == errno.EAGAIN\nelse:\n" +
+                        " if pid == 0: os._exit(1)\n os.waitpid(pid, 0)\n raise AssertionError('NPROC ineffective')\n" +
+                        "Path('limits-enforced').write_text('ok')\n", encoding="utf-8")
+                    fixture.chmod(0o755)
+                    driver = runtime / "driver.py"
+                    driver.write_text("import hashlib, os, signal, sys, threading\nfrom pathlib import Path\n" +
+                        "sys.path.insert(0, '/runtime')\nimport jsapiscan_runner as runner\n" +
+                        "runner.BINARY = Path('/runtime/fixture.py')\nrunner.BINARY_SHA256 = hashlib.sha256(runner.BINARY.read_bytes()).hexdigest()\n" +
+                        ("threading.Timer(0.8, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()\n" if mode == "cancel" else "") +
+                        "sys.exit(runner.main(sys.argv[1:]))\n", encoding="utf-8")
+                    driver.chmod(0o644)
+                    command = ([] if mode in ("root_mapping", "host_nonroot") else prefix) + ["/usr/bin/bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--cap-drop", "ALL", "--clearenv"]
+                    if mode != "host_nonroot":
+                        command += ["--unshare-user"]
+                    if mode in ("root_mapping", "host_nonroot"):
+                        command += ["--uid", str(uid), "--gid", str(gid)]
+                    for path in ("/usr", "/lib", "/lib64", "/bin"):
+                        if Path(path).exists():
+                            command += ["--ro-bind", path, path]
+                    command += ["--proc", "/proc", "--dev", "/dev", "--ro-bind", str(runtime), "/runtime",
+                                "--bind", str(work), "/workspace", "--bind", str(artifacts), "/artifacts",
+                                "--setenv", "CSAI_WORKSPACE_SANDBOX", "1", "--setenv", "CSAI_ARTIFACT_DIR", "/artifacts",
+                                "--setenv", "CSAI_EXECUTION_ID", "a3b7c901-2d4e-4f60-8a12-3456789abcde",
+                                "--remount-ro", "/", "--chdir", "/workspace", "--", "/usr/bin/python3", "-I", "/runtime/driver.py",
+                                "-u", "https://fixture.invalid", "--total-timeout", "15", "--batch-timeout", "1" if mode == "timeout" else "10"]
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+                    if mode == "host_nonroot" and result.returncode != 0 and "Specifying --uid requires --unshare-user or --userns" in result.stderr:
+                        self.assertFalse(list(artifacts.iterdir()))
+                        self.skipTest("installed bwrap rejects --uid without a user namespace; no fallback attempted")
+                    self.assertEqual(result.returncode, {"success": 0, "timeout": 124, "cancel": 130, "root_mapping": 2, "host_nonroot": 0}[mode], result.stdout + result.stderr)
+                    manifests = list(artifacts.rglob("manifest.json"))
+                    if mode == "root_mapping":
+                        self.assertEqual(manifests, [])
+                        self.assertIn("workspace_resource_limits_require_nonroot_uid_mapping", result.stdout)
+                        self.assertFalse(list(artifacts.iterdir()))
+                        continue
+                    self.assertEqual(len(manifests), 1, result.stdout + result.stderr)
+                    manifest = json.loads(manifests[0].read_text("utf-8"))
+                    self.assertEqual(manifest["uid"], uid)
+                    self.assertEqual(manifest["execution_mode"], "workspace")
+                    self.assertEqual(manifest["batches"][0]["process_group_result"], "stopped")
+                    self.assertNotIn("systemd_result", manifest["batches"][0])
+                    self.assertTrue(manifest["candidate_only"])
+                    self.assertFalse(manifest["coverage_complete"])
+                    self.assertFalse(list(artifacts.rglob("_input_*")))
+                    self.assertNotIn("secret", result.stdout)
+                    self.assertEqual(manifest["complete"], mode in ("success", "host_nonroot"))
+                    if mode in ("success", "host_nonroot"):
+                        self.assertEqual(manifest["counts"]["raw"], 2)
+                        self.assertEqual(manifest["counts"]["exported"], 1)
+                        self.assertEqual(next(artifacts.rglob("limits-enforced")).read_text("utf-8"), "ok")
+                        limits = json.loads(next(artifacts.rglob("limits.json")).read_text("utf-8"))
+                        self.assertEqual(limits["NPROC"], [128, 128])
+                        self.assertEqual(limits["DATA"], [512 * 1024 ** 2] * 2)
+                        self.assertEqual(limits["AS"], [4 * 1024 ** 3] * 2)
+                    elif mode == "timeout":
+                        self.assertTrue(manifest["timed_out"])
+                    else:
+                        self.assertEqual(manifest["state"], "cancelled")
+                        self.assertFalse(manifest["export_complete"])
 
 
 if __name__ == "__main__":

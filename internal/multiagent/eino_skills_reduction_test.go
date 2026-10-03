@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/workspaceguard"
 
 	localbk "github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino/adk"
@@ -71,7 +72,10 @@ func TestNeedsReductionReadFileMiddleware(t *testing.T) {
 }
 
 func TestReductionReadFileMiddlewareExposesOnlyReadFile(t *testing.T) {
-	ctx := context.Background()
+	persistedRoot := t.TempDir()
+	ctx := workspaceguard.WithPolicy(context.Background(), &workspaceguard.Policy{
+		Workspace: t.TempDir(), ReadOnlyRoots: []string{persistedRoot},
+	})
 	loc, err := localbk.NewBackend(ctx, &localbk.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +102,7 @@ func TestReductionReadFileMiddlewareExposesOnlyReadFile(t *testing.T) {
 		t.Fatalf("missing reduction read guidance: %q", runCtx.Instruction)
 	}
 
-	path := filepath.Join(t.TempDir(), "tooluse_test")
+	path := filepath.Join(persistedRoot, "tooluse_test")
 	const persisted = "persisted result\nsecond line"
 	if err := os.WriteFile(path, []byte(persisted), 0o600); err != nil {
 		t.Fatal(err)

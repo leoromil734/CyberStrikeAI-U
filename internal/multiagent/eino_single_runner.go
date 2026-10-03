@@ -17,7 +17,9 @@ import (
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/reasoning"
+	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/vision"
+	"cyberstrike-ai/internal/workspaceguard"
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
@@ -52,6 +54,11 @@ func RunEinoSingleChatModelAgent(
 	if ma == nil {
 		return nil, fmt.Errorf("eino single: multi_agent 配置为空")
 	}
+	policy, policyErr := security.NewWorkspacePolicy(appCfg, projectID, conversationID)
+	if policyErr != nil {
+		return nil, fmt.Errorf("eino single workspace: %w", policyErr)
+	}
+	ctx = workspaceguard.WithPolicy(ctx, policy)
 	ctx = vision.WithSessionConfig(ctx, appCfg.Vision, appCfg.OpenAI)
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"cyberstrike-ai/internal/evidence"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/workspaceguard"
 	"errors"
 	"github.com/cloudwego/eino/adk/filesystem"
 	"github.com/google/uuid"
@@ -17,7 +18,10 @@ import (
 func TestNativeRuntimeBoundsModelOutputAndPreservesFullOriginal(t *testing.T) {
 	id := uuid.NewString()
 	base := t.TempDir()
-	ctx := mcp.WithMCPExecutionID(context.Background(), id)
+	ctx, _, _ := sandboxFixture(t)
+	workspaceguard.FromContext(ctx).ReadOnlyRoots = []string{filepath.Join(base, "conversations", "c1")}
+	workspaceguard.FromContext(ctx).EvidenceRoot = filepath.Join(base, "conversations", "c1")
+	ctx = mcp.WithMCPExecutionID(ctx, id)
 	ctx = mcp.WithMCPConversationID(ctx, "c1")
 	acquired, released := false, false
 	ctx = mcp.WithLocalExecutionRuntime(ctx, mcp.LocalExecutionRuntime{SpillRoot: base, MaxOutputBytes: 1200, Activity: make(chan struct{}, 1), Acquire: func(context.Context, string, map[string]interface{}) (func(), error) {

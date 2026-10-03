@@ -43,6 +43,24 @@ func TestFinalReportAfterCoverageRepair(t *testing.T) {
 	}
 }
 
+func TestCoverageContinuationRequiresInventoryAndPersistedEvidence(t *testing.T) {
+	for _, required := range []string{
+		"实际工作尚未执行", "upsert_project_fact", "body_fields", "recon/phase/*",
+		"recon/source/*", "execution_id", "query_recon_inventory(execution_id, grouped=true, offset=0)",
+		"inventory_group_key", "discovery-* 是数据库标识", "list_result_artifacts", "read_result_artifact",
+		"库存候选本身不证明已测试", "未执行不得 passed", "回读核实", "完整最终报告",
+	} {
+		if !strings.Contains(CoverageContinuationHeader, required) {
+			t.Errorf("continuation lost actionable evidence guidance: %s", required)
+		}
+	}
+	// Retain the stable prefix so old saved repair segments remain recoverable.
+	if !isReportRecoveryInstruction("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。旧版诊断") ||
+		!isReportRecoveryInstruction(CoverageContinuationHeader) {
+		t.Fatal("coverage repair instruction compatibility lost")
+	}
+}
+
 func TestFinalReportRecoveryBoundaries(t *testing.T) {
 	report := deliveryTestReport()
 	notice := "覆盖账本已修复。"

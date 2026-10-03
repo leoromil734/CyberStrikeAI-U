@@ -122,7 +122,10 @@ func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddl
 	if loc == nil {
 		return nil, fmt.Errorf("reduction: local backend nil")
 	}
-	root := reductionCacheRootDir(mw.ReductionRootDir, projectID, convID)
+	root, err := filepath.Abs(reductionCacheRootDir(mw.ReductionRootDir, projectID, convID))
+	if err != nil {
+		return nil, fmt.Errorf("reduction root: %w", err)
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("reduction root: %w", err)
 	}
@@ -215,28 +218,17 @@ func prependEinoMiddlewares(
 	}
 
 	if place == einoMWMain && mw.PlantaskEnable {
-		if einoLoc == nil || strings.TrimSpace(skillsRoot) == "" {
-			if logger != nil {
-				logger.Warn("eino middleware: plantask_enable ignored (need eino_skills + skills_dir)")
-			}
-		} else {
-			rel := strings.TrimSpace(mw.PlantaskRelDir)
-			if rel == "" {
-				rel = ".eino/plantask"
-			}
-			baseDir := filepath.Join(skillsRoot, rel, sanitizeEinoPathSegment(conversationID))
-			if mk := os.MkdirAll(baseDir, 0o755); mk != nil {
-				return nil, nil, toolSearchActive, fmt.Errorf("plantask mkdir: %w", mk)
-			}
-			ptBE := newLocalPlantaskBackend(einoLoc)
-			pt, perr := plantask.New(ctx, &plantask.Config{Backend: ptBE, BaseDir: baseDir})
-			if perr != nil {
-				return nil, nil, toolSearchActive, fmt.Errorf("plantask: %w", perr)
-			}
-			extraHandlers = append(extraHandlers, pt)
-			if logger != nil {
-				logger.Info("eino middleware: plantask enabled", zap.String("baseDir", baseDir))
-			}
+		ptBE, baseDir, perr := prepareWorkspacePlantask(ctx, mw.PlantaskRelDir, conversationID)
+		if perr != nil {
+			return nil, nil, toolSearchActive, fmt.Errorf("plantask workspace: %w", perr)
+		}
+		pt, perr := plantask.New(ctx, &plantask.Config{Backend: ptBE, BaseDir: baseDir})
+		if perr != nil {
+			return nil, nil, toolSearchActive, fmt.Errorf("plantask: %w", perr)
+		}
+		extraHandlers = append(extraHandlers, pt)
+		if logger != nil {
+			logger.Info("eino middleware: plantask enabled", zap.String("baseDir", baseDir))
 		}
 	}
 

@@ -37,6 +37,11 @@ tools:
   - execute-python-script
   - install-python-package
   - query-execution-result
+  - list_result_artifacts
+  - read_result_artifact
+  - assemble_result_evidence
+  - query_recon_inventory
+  - register_result_artifact
   - upsert_project_fact
   - get_project_fact
   - list_project_facts

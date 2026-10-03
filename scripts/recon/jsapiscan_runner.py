@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run pinned JSAPIscan in a bounded, low-privilege systemd sandbox."""
+"""Run pinned JSAPIscan in systemd or an already verified workspace sandbox."""
 
 import argparse
 import csv
@@ -250,6 +250,138 @@ def sandbox_command(binary, argv, work, unit, seconds, headless=False):
     return command + [str(binary)] + argv
 
 
+def _workspace_mounts():
+    mounts = {}
+    for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
+        before, after = line.split(" - ", 1)
+        fields, filesystem = before.split(), after.split()
+        mountpoint = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4])
+        mounts[Path(mountpoint)] = (filesystem[0], set(fields[5].split(",")))
+    return mounts
+
+
+def _covering_mount(path, mounts):
+    path = Path(path)
+    return max((mount for mount in mounts if path.is_relative_to(mount)), key=lambda mount: len(mount.parts))
+
+
+def _workspace_nproc_enforced():
+    # uid_map describes the *parent* user namespace, not necessarily the host.
+    # In particular unprivileged bwrap can report <uid> -> 0 through its setup
+    # namespace. Probe in a separate, bounded interpreter, so no rlimit of the
+    # orchestrator is changed and a host-root mapping cannot bypass NPROC.
+    probe = ("import errno, os, resource, sys\n"
+             "resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))\n"
+             "try:\n pid = os.fork()\n"
+             "except OSError as exc:\n sys.exit(0 if exc.errno == errno.EAGAIN else 2)\n"
+             "if pid == 0:\n os._exit(1)\n"
+             "os.waitpid(pid, 0)\nsys.exit(1)\n")
+    try:
+        result = subprocess.run([sys.executable, "-I", "-S", "-c", probe], env={"PATH": "/usr/bin:/bin"},
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                start_new_session=True, timeout=3, check=False)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _workspace_sandbox():
+    """The service marker is necessary, never sufficient to skip systemd isolation.
+
+    Accept a single-ID user namespace or the full identity UID/GID maps after
+    real host-side privilege dropping. Both require a read-only tmpfs root and
+    runtime, private bubblewrap PID/proc context, no privilege regain or host
+    control plane, and an actually enforced NPROC limit. Guest UID alone never
+    proves that the underlying host identity is unprivileged.
+    """
+    marker = os.environ.get("CSAI_WORKSPACE_SANDBOX")
+    if marker is None:
+        return False
+    try:
+        if marker != "1" or sys.platform != "linux":
+            raise ValueError("marker")
+        status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines() if ":" in line)
+        for field in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"):
+            if int(status[field].strip(), 16) != 0:
+                raise ValueError("capabilities")
+        if status["NoNewPrivs"].strip() != "1":
+            raise ValueError("privilege_regain")
+        identity_maps = []
+        for kind, actual in (("uid", os.getuid()), ("gid", os.getgid())):
+            rows = [tuple(map(int, line.split())) for line in Path(f"/proc/self/{kind}_map").read_text(encoding="ascii").splitlines()]
+            identity_map = rows == [(0, 0, 4294967295)]
+            single_id = len(rows) == 1 and len(rows[0]) == 3 and rows[0][0] == actual and rows[0][2] == 1
+            if not (identity_map or single_id):
+                raise ValueError("namespace_mapping")
+            identity_maps.append(identity_map)
+            if actual == 0 or list(map(int, status[kind.title()].split())) != [actual] * 4:
+                raise ValueError("mixed_or_root_credentials")
+        if identity_maps[0] != identity_maps[1]:
+            raise ValueError("mixed_namespace_mappings")
+        mounts = _workspace_mounts()
+        root_fs, root_options = mounts[Path("/")]
+        if root_fs != "tmpfs" or not {"ro", "nosuid", "nodev"} <= root_options:
+            raise ValueError("root_mount")
+        if mounts[Path("/proc")][0] != "proc":
+            raise ValueError("proc_mount")
+        # A freshly mounted procfs must describe our PID namespace, whose PID 1
+        # is bubblewrap's init, not host systemd (nor a host procfs bind mount).
+        init = dict(line.split(":", 1) for line in Path("/proc/1/status").read_text(encoding="ascii").splitlines() if ":" in line)
+        if (int(status["Pid"]) != os.getpid() or list(map(int, status["NSpid"].split())) != [os.getpid()]
+                or init["Name"].strip() != "bwrap" or int(init["Pid"]) != 1 or int(init["PPid"]) != 0
+                or list(map(int, init["NSpid"].split())) != [1]):
+            raise ValueError("private_bubblewrap_pid_namespace_required")
+        for path in (Path("/usr"), BINARY.resolve(), Path(__file__).resolve(), Path(sys.executable).resolve()):
+            if "ro" not in mounts[_covering_mount(path, mounts)][1]:
+                raise ValueError("writable_runtime")
+        if Path("/run/systemd").exists() or Path("/run/dbus").exists():
+            raise ValueError("host_control_plane")
+        if os.getuid() == 0 or not _workspace_nproc_enforced():
+            raise InputError("workspace_resource_limits_require_nonroot_uid_mapping")
+        return True
+    except InputError:
+        raise
+    except (OSError, ValueError, KeyError, IndexError, AttributeError) as exc:
+        raise InputError("untrusted_workspace_sandbox_context", "CSAI_WORKSPACE_SANDBOX") from exc
+
+
+def _workspace_run_root():
+    value = os.environ.get("CSAI_ARTIFACT_DIR")
+    base = Path(value) if value else Path.cwd()
+    # An explicit, invalid artifact location must not silently switch to cwd.
+    if value == "" or not base.is_absolute() or not base.is_dir() or base.resolve() != base:
+        raise InputError("invalid_workspace_artifact_directory", "CSAI_ARTIFACT_DIR")
+    mounts = _workspace_mounts()
+    mount = _covering_mount(base, mounts)
+    filesystem, options = mounts[mount]
+    if (mount in {Path(p) for p in ("/", "/usr", "/etc", "/dev", "/proc", "/sys", "/run", "/var", "/tmp")}
+            or "rw" not in options or filesystem in ("proc", "sysfs", "devtmpfs", "devpts")):
+        raise InputError("workspace_artifact_writable_mount_required", "CSAI_ARTIFACT_DIR")
+    return base / ("jsapiscan" if value else ".jsapiscan-runs")
+
+
+def workspace_command(binary, argv, work, seconds, headless=False):
+    """Hard, inherited per-process memory/CPU and per-real-UID task limits.
+
+    GNU timeout is an independent wall-clock watchdog, including when this
+    Python orchestrator is killed. No missing-helper or resource-limit failure
+    ever retries the binary without the limits. These are rlimits, not a claim
+    of aggregate cgroup MemoryMax accounting.
+    """
+    memory = (1024 if headless else 512) * 1024 * 1024
+    limits = {"as": 4 * 1024 ** 3, "data": memory, "nproc": 128,
+              "cpu": seconds + 2, "core": 0, "nofile": 256}
+    command = ["/usr/bin/prlimit", *(f"--{name}={value}:{value}" for name, value in limits.items()),
+               "--", "/usr/bin/timeout", "--signal=TERM", "--kill-after=2s", f"{seconds}s", str(binary), *argv]
+    home, temporary = work / ".home", work / ".tmp"
+    home.mkdir(mode=0o700)
+    temporary.mkdir(mode=0o700)
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": str(home), "TMPDIR": str(temporary),
+           "TMP": str(temporary), "TEMP": str(temporary), "GOMAXPROCS": "2", "GOMEMLIMIT": str(memory * 3 // 4),
+           "XDG_CACHE_HOME": str(home / ".cache"), "XDG_CONFIG_HOME": str(home / ".config")}
+    return command, {"cwd": str(work), "env": env, "umask": 0o077}
+
+
 class Cancellation:
     """Signal handlers only set state; they never interrupt cleanup/manifest writes."""
 
@@ -342,6 +474,33 @@ def cleanup_process(process, unit, deadline):
     return result, blockers
 
 
+def cleanup_workspace_process(process, deadline):
+    """Reap the launcher and kill its entire session's initial process group.
+
+    Always signal the group, even after its leader has exited: a child may
+    still be writing artifacts. The enclosing private PID namespace must be
+    destroyed with its owning command (bwrap --die-with-parent).
+    """
+    blockers = []
+    if process is None:
+        return "not_started", blockers
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            blockers.append("process_group_signal_failed")
+        try:
+            process.wait(timeout=max(0, min(2, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            if signum == signal.SIGKILL:
+                blockers.append("process_group_reap_timeout")
+        except OSError:
+            blockers.append("process_group_reap_failed")
+    return ("failed" if blockers else "stopped"), blockers
+
+
 def collect_artifacts(work, export_path=None, deadline=None, heartbeat=None, cancellation=None):
     work = Path(work).resolve()
     export_path = Path(export_path) if export_path else work.parent / "candidates.ndjson"
@@ -429,18 +588,22 @@ def _execution_id():
     return str(uuid.UUID(value))
 
 
-def _new_job():
+def _new_job(workspace_sandbox=False):
     execution_id = _execution_id()
-    RUN_ROOT.mkdir(parents=True, mode=0o755, exist_ok=True)
+    root = _workspace_run_root() if workspace_sandbox else RUN_ROOT
+    mode = 0o700 if workspace_sandbox else 0o711
+    root.mkdir(parents=True, mode=0o700 if workspace_sandbox else 0o755, exist_ok=True)
+    if root.is_symlink():
+        raise InputError("symlink_run_root_rejected")
     if execution_id is None:
-        job = Path(tempfile.mkdtemp(prefix="run-", dir=RUN_ROOT))
+        job = Path(tempfile.mkdtemp(prefix="run-", dir=root))
     else:
-        job = RUN_ROOT / ("execution-" + execution_id)
+        job = root / ("execution-" + execution_id)
         try:
-            job.mkdir(mode=0o711)  # Atomic reservation; never reuse an existing path.
+            job.mkdir(mode=mode)  # Atomic reservation; never reuse an existing path.
         except FileExistsError as exc:
             raise InputError("execution_directory_already_exists", "CSAI_EXECUTION_ID") from exc
-    job.chmod(0o711)
+    job.chmod(mode)
     return job
 
 
@@ -449,7 +612,8 @@ def _copy_input(work, name, data, user):
     try:
         destination.write_bytes(data)
         destination.chmod(0o600)
-        os.chown(destination, user.pw_uid, user.pw_gid)
+        if user is not None:
+            os.chown(destination, user.pw_uid, user.pw_gid)
         return destination
     except BaseException:
         try:
@@ -459,15 +623,16 @@ def _copy_input(work, name, data, user):
         raise
 
 
-def run_batch(args, targets, headers, work, log, user, number, deadline, cleanup_deadline, heartbeat, cancellation):
-    unit = "csai-jsapiscan-" + uuid.uuid4().hex[:16]
+def run_batch(args, targets, headers, work, log, user, number, deadline, cleanup_deadline, heartbeat, cancellation, workspace_sandbox=False):
+    unit = None if workspace_sandbox else "csai-jsapiscan-" + uuid.uuid4().hex[:16]
     record = {"number": number, "unit": unit, "target_count": len(targets), "state": "partial",
               "returncode": 1, "timed_out": False, "cancelled": False, "blockers": []}
     process, inputs = None, []
     started = time.monotonic()
     try:
         work.mkdir(mode=0o700)
-        os.chown(work, user.pw_uid, user.pw_gid)
+        if user is not None:
+            os.chown(work, user.pw_uid, user.pw_gid)
         targets_path = _copy_input(work, "_input_targets.txt", ("\n".join(targets) + "\n").encode(), user)
         inputs.append(targets_path)
         headers_path = None
@@ -484,12 +649,17 @@ def run_batch(args, targets, headers, work, log, user, number, deadline, cleanup
         else:
             record["runtime_max_seconds"] = seconds
             argv = build_upstream_args(args, targets, targets_path, headers_path)
-            command = sandbox_command(BINARY, argv, work, unit, seconds, args.headless)
+            launch_options = {}
+            if workspace_sandbox:
+                command, launch_options = workspace_command(BINARY, argv, work, seconds, args.headless)
+            else:
+                command = sandbox_command(BINARY, argv, work, unit, seconds, args.headless)
             batch_deadline = min(deadline, time.monotonic() + seconds)
             heartbeat.tick(force=True, phase="scan", batch=number, batch_targets=len(targets))
             with log.open("ab") as stream:
                 log.chmod(0o600)
-                process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
+                                           start_new_session=True, **launch_options)
                 record["launched"] = True
                 while True:
                     if cancellation.is_set():
@@ -516,18 +686,29 @@ def run_batch(args, targets, headers, work, log, user, number, deadline, cleanup
         record["blockers"].append("batch_launcher_exception")
     finally:
         heartbeat.tick(force=True, phase="cleanup", batch=number)
-        try:
-            record["systemd_result"], blockers = cleanup_process(process, unit, cleanup_deadline)
-            record["blockers"].extend(blockers)
-        except Exception:
-            record["systemd_result"] = "unknown"
-            record["blockers"].append("cleanup_exception_runtime_max_still_applies")
-        if record["systemd_result"] in ("timeout", "watchdog"):
-            record.update(timed_out=True, returncode=124)
-            record["blockers"].append("systemd_runtime_timeout")
-        elif record["systemd_result"] not in ("success", "unknown"):
-            record["blockers"].append("systemd_" + record["systemd_result"])
-            record["returncode"] = record["returncode"] or 1
+        if workspace_sandbox:
+            try:
+                record["process_group_result"], blockers = cleanup_workspace_process(process, cleanup_deadline)
+                record["blockers"].extend(blockers)
+            except Exception:
+                record["process_group_result"] = "unknown"
+                record["blockers"].append("cleanup_exception_watchdog_still_applies")
+            if record["returncode"] == 124:
+                record["timed_out"] = True
+                record["blockers"].append("workspace_wall_timeout")
+        else:
+            try:
+                record["systemd_result"], blockers = cleanup_process(process, unit, cleanup_deadline)
+                record["blockers"].extend(blockers)
+            except Exception:
+                record["systemd_result"] = "unknown"
+                record["blockers"].append("cleanup_exception_runtime_max_still_applies")
+            if record["systemd_result"] in ("timeout", "watchdog"):
+                record.update(timed_out=True, returncode=124)
+                record["blockers"].append("systemd_runtime_timeout")
+            elif record["systemd_result"] not in ("success", "unknown"):
+                record["blockers"].append("systemd_" + record["systemd_result"])
+                record["returncode"] = record["returncode"] or 1
         if record["returncode"] and not record["timed_out"] and not record["cancelled"]:
             record["blockers"].append("upstream_nonzero_exit")
         for path in inputs:
@@ -570,10 +751,18 @@ def run(args, cancellation=None):
     started = time.monotonic()
     heartbeat = Heartbeat(getattr(args, "heartbeat_interval", 20) if type(getattr(args, "heartbeat_interval", None)) is int else 20)
     manifest, job, work = _manifest_base(), None, None
+    workspace_sandbox, runtime_checked = False, False
     code = 1
     heartbeat.tick(force=True)
     try:
         manifest["execution_id"] = _execution_id()
+        if not getattr(args, "validate_only", False):
+            workspace_sandbox = _workspace_sandbox()
+            runtime_checked = True
+            manifest["execution_mode"] = "workspace" if workspace_sandbox else "systemd"
+            if workspace_sandbox:
+                manifest.update(user=str(os.getuid()), uid=os.getuid(), gid=os.getgid())
+                manifest["resource_limit_scope"] = "per-process address-space/data/CPU; per-real-UID tasks (128), not aggregate cgroup memory"
         targets, headers = preflight(args)
         manifest["target_count"] = len(targets)
         manifest["batch_size"] = args.batch_size
@@ -589,20 +778,23 @@ def run(args, cancellation=None):
                        "global_scan_timeout_seconds": args.total_timeout,
                        "network_requests": 0, "candidate_only": True})
             return 0
-        if not _runtime_supported():
+        if not workspace_sandbox and not _runtime_supported():
             raise InputError("linux_root_orchestrator_required_upstream_never_root")
-        job = _new_job()
+        job = _new_job(workspace_sandbox)
         manifest.update(work_dir=str(job / "work"), stdout_file=str(job / "stdout.log"), manifest_file=str(job / "manifest.json"))
         atomic_json(job / "manifest.json", manifest)  # Checkpoint survives even an uncatchable external kill.
         binary_check = lambda: check_budget(started + args.total_timeout, heartbeat.tick, cancellation.is_set)
         if stream_sha256(BINARY, binary_check) != BINARY_SHA256:
             raise InputError("pinned_binary_sha256_mismatch")
-        user = pwd.getpwnam(RUN_USER)
-        if user.pw_uid == 0 or user.pw_gid == 0:
-            raise InputError("dedicated_upstream_account_must_not_be_root")
+        user = None
+        if not workspace_sandbox:
+            user = pwd.getpwnam(RUN_USER)
+            if user.pw_uid == 0 or user.pw_gid == 0:
+                raise InputError("dedicated_upstream_account_must_not_be_root")
         work = job / "work"
         work.mkdir(mode=0o700)
-        os.chown(work, user.pw_uid, user.pw_gid)
+        if user is not None:
+            os.chown(work, user.pw_uid, user.pw_gid)
         deadline = started + args.total_timeout
         cleanup_deadline = deadline + CLEANUP_GRACE_SECONDS  # One global grace, never reset per batch.
         for offset in range(0, len(targets), args.batch_size):
@@ -614,7 +806,7 @@ def run(args, cancellation=None):
             batch = targets[offset:offset + args.batch_size]
             number = len(manifest["batches"]) + 1
             record = run_batch(args, batch, headers, work / f"batch-{number:04d}", job / "stdout.log",
-                               user, number, deadline, cleanup_deadline, heartbeat, cancellation)
+                               user, number, deadline, cleanup_deadline, heartbeat, cancellation, workspace_sandbox)
             manifest["batches"].append(record)
             manifest["unit"] = record["unit"]
             manifest["started_target_count"] += len(batch) if record.get("launched") else 0
@@ -677,8 +869,16 @@ def run(args, cancellation=None):
             code = code or (0 if manifest["complete"] else 1)
             manifest["returncode"] = code
             try:
-                if job is None and _runtime_supported():
-                    job = _new_job()  # Validation failures also get a durable, reviewable manifest.
+                if job is None and not runtime_checked and getattr(args, "validate_only", False):
+                    # Invalid offline inputs still get a durable manifest when
+                    # the execution context permits it; successful validation
+                    # never probes or launches any process.
+                    workspace_sandbox = _workspace_sandbox()
+                    runtime_checked = True
+                    if workspace_sandbox:
+                        manifest.update(execution_mode="workspace", user=str(os.getuid()), uid=os.getuid(), gid=os.getgid())
+                if job is None and runtime_checked and (workspace_sandbox or _runtime_supported()):
+                    job = _new_job(workspace_sandbox)  # Never persist an invalid sandbox claim on the host.
                 if job:
                     manifest["manifest_file"] = str(job / "manifest.json")
                     atomic_json(job / "manifest.json", manifest)
@@ -717,8 +917,11 @@ def main(argv=None):
             path = None
             try:
                 manifest["execution_id"] = _execution_id()
-                if _runtime_supported():
-                    path = _new_job() / "manifest.json"
+                workspace_sandbox = _workspace_sandbox()
+                if workspace_sandbox or _runtime_supported():
+                    if workspace_sandbox:
+                        manifest.update(execution_mode="workspace", user=str(os.getuid()), uid=os.getuid(), gid=os.getgid())
+                    path = _new_job(workspace_sandbox) / "manifest.json"
                     manifest["manifest_file"] = str(path)
                     atomic_json(path, manifest)
             except InputError as error:

@@ -68,8 +68,12 @@ func (db *DB) ResultIngestionStates(projectID, conversationID, assessmentID stri
 	return out, rows.Err()
 }
 
+const reconcileResultIngestionSQL = `UPDATE result_ingestion_jobs SET state='failed',reason=?,updated_at_ms=? WHERE state='pending'`
+
 // Interrupted ingestion remains an explicit gap after a process restart.
 func (db *DB) ReconcileResultIngestionJobs() error {
-	_, err := db.Exec(`UPDATE result_ingestion_jobs SET state='failed',reason='ingestion interrupted by process restart; original must be reimported',updated_at_ms=? WHERE state='pending'`, time.Now().UnixMilli())
+	// Keep diagnostic text out of SQL syntax: the PostgreSQL adapter splits
+	// multi-statement queries on semicolons before binding parameters.
+	_, err := db.Exec(reconcileResultIngestionSQL, "ingestion interrupted by process restart; original must be reimported", time.Now().UnixMilli())
 	return err
 }

@@ -35,8 +35,9 @@ func injectToolNamesOnlyInstruction(ctx context.Context, instruction string, too
 	}
 	sb.WriteString("\n使用规则：名称索引不等于当前可调用 schema；参数名、类型、枚举与必填项仅以当前请求 tools 定义为准，禁止猜测参数或臆造工具名。\n")
 	if hasToolSearch {
-		sb.WriteString("【强制】已启用 tool_search：索引中的非常驻工具、或参数定义不确定的工具，一律必须先调用 tool_search；不得为省 token 或赶进度跳过。\n")
-		sb.WriteString("顺序：tool_search（唯一必填 regex_pattern：工具名正则，如 nuclei 或 ^exact_tool_name$）→ 后续轮次看到并读完目标 schema → 调用业务工具。搜索返回仅工具名，schema 在下一轮下发，未出现前禁止调用。\n\n")
+		sb.WriteString("【强制】已启用 tool_search：当前 tools 尚无完整 schema 的非常驻工具，一律必须先调用 tool_search；不得为省 token 或赶进度跳过。\n")
+		sb.WriteString("tool_search 仅搜索非常驻工具；空结果不代表常驻工具不可用。当前 tools 已有完整 schema 的工具直接按该定义调用，无需重复搜索；索引与 schema 均缺失才记录当前角色工具缺口，不得绕过白名单或编造调用。\n")
+		sb.WriteString("非常驻工具的加载顺序：tool_search（唯一必填 regex_pattern：工具名正则，如 nuclei 或 ^exact_tool_name$）→ 后续轮次看到并读完目标 schema → 调用业务工具。搜索返回仅工具名，schema 在下一轮下发，未出现前禁止调用。\n\n")
 	} else {
 		sb.WriteString("调用前确认当前 tools 中的完整参数要求；不确定时先澄清再调用。\n\n")
 	}

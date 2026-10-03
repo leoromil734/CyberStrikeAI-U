@@ -53,6 +53,11 @@ enabled: true
 2. `upsert_project_fact` 及 get/list/search/deprecate/restore
 3. `list_knowledge_risk_types` / `search_knowledge_base`
 4. 长任务：`get_tool_execution` / `wait_tool_execution` / `cancel_tool_execution`
+5. 结果原件与覆盖库存：`list_result_artifacts` / `read_result_artifact` / `assemble_result_evidence` / `query_recon_inventory` / `register_result_artifact`
+
+覆盖检查依赖数据库中的真实发现库存；承担发现、验证或交付的角色需要第 5 组工具读取原件及工作组，再按实际证据写入处置事实。`discovery-*` 是数据库标识，不是文件路径。结果工具仍执行原有用户、会话及项目访问检查；工具可见不代表允许访问其他会话或扩大测试范围。
+
+非空白名单会先过滤工具，内置工具的“常驻”设置不能恢复被过滤的工具。`tool_search` 只检索非常驻工具，返回空不代表常驻工具不可用；应以当前工具 schema 为准。自定义角色的显式白名单不会被自动扩展。
 
 **Skills**：多代理 / Eino 会话中由 `skill` 工具加载 `skills/`，与角色 YAML 无自动绑定；请在 `user_prompt` 中写明建议加载的 skill 名。
 
@@ -64,3 +69,7 @@ enabled: true
 - **icon**：可选
 
 注意：子代理 `agents/*.md` 的 `tools` 与角色相互独立；子代理可 `bind_role` 在未写 tools 时继承角色工具列表。
+
+## 生效方式
+
+`roles/*.yaml` 在服务加载配置时读入内存，单改磁盘文件不会更新当前进程；可通过角色管理保存配置，或在合适窗口重启服务加载。`agents/*.md` 在下一次构建运行对象时读取。已经运行的工具集合不会被热替换，修改代码中的工具提示还需要重新构建并部署服务；不要为更新工具而中断其他任务。

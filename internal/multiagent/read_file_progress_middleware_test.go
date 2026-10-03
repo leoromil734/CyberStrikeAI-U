@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"cyberstrike-ai/internal/workspaceguard"
+
 	localbk "github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -382,6 +384,9 @@ func TestReadFileProgressReductionStaticFileAuditReproduction(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ctx = workspaceguard.WithPolicy(ctx, &workspaceguard.Policy{
+		Workspace: t.TempDir(), ReadOnlyRoots: []string{filepath.Dir(path)},
+	})
 	backend, err := localbk.NewBackend(ctx, &localbk.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -429,6 +434,9 @@ func TestReadFileProgressADKReductionReadIntegration(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original evidence\nsecond line"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ctx = workspaceguard.WithPolicy(ctx, &workspaceguard.Policy{
+		Workspace: t.TempDir(), ReadOnlyRoots: []string{filepath.Dir(path)},
+	})
 	backend, err := localbk.NewBackend(ctx, &localbk.Config{})
 	if err != nil {
 		t.Fatal(err)
