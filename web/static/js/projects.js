@@ -992,6 +992,7 @@ function updateProjectStats(stats) {
 
 async function selectProject(id) {
     currentProjectId = id;
+    resetProjectFindingCandidates();
     if (id) setActiveProjectId(id);
     projectAssetsPagination.page = 1;
     const searchEl = document.getElementById('project-facts-search');
@@ -1853,6 +1854,135 @@ function openVulnerabilitiesForProject(projectId) {
     } else {
         window.location.hash = `vulnerabilities?project_id=${encodeURIComponent(pid)}`;
     }
+}
+
+/** 候选列表只读、按需加载；独立于正式漏洞列表和漏洞数量。 */
+const projectFindingCandidatesState = {
+    projectId: null, requestSeq: 0, controller: null, status: 'idle',
+    candidates: [], limit: 100, offset: 0, hasNext: false
+};
+
+function resetProjectFindingCandidates() {
+    const state = projectFindingCandidatesState;
+    state.requestSeq++;
+    if (state.controller) state.controller.abort();
+    Object.assign(state, { projectId: currentProjectId, controller: null, status: 'idle', candidates: [], limit: 100, offset: 0, hasNext: false });
+    const disclosure = document.getElementById('project-finding-candidates');
+    if (disclosure) disclosure.open = false;
+    renderProjectFindingCandidates();
+}
+
+function onProjectFindingCandidatesToggle(disclosure) {
+    if (disclosure.open && projectFindingCandidatesState.status === 'idle') loadProjectFindingCandidates(0);
+}
+
+function projectCandidateText(value) {
+    if (value == null || value === '') return '—';
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+function projectCandidateStatePresentation(state) {
+    const keys = { observed: 'candidateObserved', tentative: 'candidateTentative', waiting: 'candidateWaiting',
+        blocked: 'candidateBlocked', rejected: 'candidateRejected', validated: 'candidateValidated' };
+    return Object.prototype.hasOwnProperty.call(keys, state)
+        ? { text: tp('projects.' + keys[state]), tone: state }
+        : { text: tpFmt('projects.candidateUnknownState', '未知候选状态：' + projectCandidateText(state), { state: projectCandidateText(state), interpolation: { escapeValue: false } }), tone: 'unknown' };
+}
+
+function renderProjectFindingCandidates() {
+    const body = document.getElementById('project-finding-candidates-body');
+    if (!body) return;
+    const state = projectFindingCandidatesState;
+    body.setAttribute('aria-busy', state.status === 'loading' ? 'true' : 'false');
+    if (state.status === 'idle') {
+        body.innerHTML = `<p class="project-candidate-notice">${escapeHtml(tp('projects.candidatesNotLoaded'))}</p>`;
+        return;
+    }
+    if (state.status === 'loading') {
+        body.innerHTML = `<p class="project-candidate-notice">${escapeHtml(tp('common.loading'))}</p>`;
+        return;
+    }
+    if (['unavailable', 'forbidden', 'error'].includes(state.status)) {
+        const key = { unavailable: 'candidatesUnavailable', forbidden: 'candidatesForbidden', error: 'candidatesLoadFailed' }[state.status];
+        body.innerHTML = `<div class="project-candidate-notice" role="status"><p>${escapeHtml(tp('projects.' + key))}</p>
+            <button type="button" class="btn-secondary btn-small" onclick="refreshProjectFindingCandidates()">${escapeHtml(tp('tasks.retry'))}</button></div>`;
+        return;
+    }
+    const range = state.candidates.length > 0
+        ? tpFmt('projects.candidatesPageRange', `本页 ${state.candidates.length} 个候选`, { count: state.candidates.length, start: state.offset + 1, end: state.offset + state.candidates.length })
+        : tpFmt('projects.candidatesEmptyPage', '本页 0 个候选');
+    body.innerHTML = `<div class="project-candidates-toolbar">
+        <span>${escapeHtml(range)}</span>
+        <div class="project-candidates-controls">
+            <button type="button" class="btn-secondary btn-small" onclick="refreshProjectFindingCandidates()">${escapeHtml(tp('common.refresh'))}</button>
+            <button type="button" class="btn-secondary btn-small" onclick="changeProjectFindingCandidatesPage(-1)" ${state.offset === 0 ? 'disabled' : ''}>${escapeHtml(tp('projects.paginationPrev'))}</button>
+            <button type="button" class="btn-secondary btn-small" onclick="changeProjectFindingCandidatesPage(1)" ${state.hasNext ? '' : 'disabled'}>${escapeHtml(tp('projects.paginationNext'))}</button>
+        </div>
+    </div>
+    <p class="project-candidates-page-hint">${escapeHtml(tp('projects.candidatesPageHint'))}</p>
+    <div class="project-candidate-list">${state.candidates.length ? state.candidates.map(candidate => {
+        const presentation = projectCandidateStatePresentation(candidate.state);
+        const refs = Array.isArray(candidate.evidence_refs)
+            ? candidate.evidence_refs.map(projectCandidateText).join('\n') : projectCandidateText(candidate.evidence_refs);
+        return `<article class="project-candidate project-candidate--${presentation.tone}">
+            <div class="project-candidate-heading"><strong>${escapeHtml(projectCandidateText(candidate.title))}</strong><span class="project-candidate-state project-candidate-state--${presentation.tone}">${escapeHtml(presentation.text)}</span></div>
+            ${candidate.state === 'observed' ? `<p class="project-candidate-observed-hint">${escapeHtml(tp('projects.candidateObservedHint'))}</p>` : ''}
+            <p>${escapeHtml(tp('projects.candidateTarget'))}: ${escapeHtml(projectCandidateText(candidate.target))}</p>
+            <p>${escapeHtml(tp('projects.candidateRiskFamily'))}: ${escapeHtml(projectCandidateText(candidate.risk_family))} · ${escapeHtml(tp('projects.candidatePriority'))}: ${escapeHtml(projectCandidateText(candidate.priority))}</p>
+            <details class="project-candidate-evidence"><summary>${escapeHtml(tp('projects.candidateEvidenceDetails'))}</summary>
+                <p>${escapeHtml(tp('projects.candidateReason'))}: ${escapeHtml(projectCandidateText(candidate.reason))}</p>
+                <p>${escapeHtml(tp('projects.candidateEvidenceRefs'))}:</p><pre>${escapeHtml(refs || '—')}</pre>
+                <p>${escapeHtml(tp('projects.candidateId'))}: <code>${escapeHtml(projectCandidateText(candidate.id))}</code></p>
+                <p>${escapeHtml(tp('projects.candidateUpdatedAt'))}: ${escapeHtml(formatProjectTime(candidate.updated_at, '—'))}</p>
+            </details>
+        </article>`;
+    }).join('') : `<p class="project-candidate-notice">${escapeHtml(tp(state.offset > 0 ? 'projects.candidatesNoMore' : 'projects.candidatesEmpty'))}</p>`}</div>`;
+}
+
+async function loadProjectFindingCandidates(offset = 0) {
+    const body = document.getElementById('project-finding-candidates-body');
+    const projectId = currentProjectId;
+    if (!body || !projectId) return;
+    const state = projectFindingCandidatesState;
+    if (state.controller) state.controller.abort();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const requestSeq = ++state.requestSeq;
+    const limit = state.limit;
+    const requestedOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+    Object.assign(state, { projectId, controller, status: 'loading', candidates: [], offset: requestedOffset, hasNext: false });
+    renderProjectFindingCandidates();
+    // 序号和项目同时校验，A→B→A 的旧响应也不能写入新的 A 视图。
+    const isCurrent = () => state.requestSeq === requestSeq && currentProjectId === projectId && document.getElementById('project-finding-candidates-body') === body;
+    try {
+        const res = await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/finding-candidates?limit=${limit}&offset=${requestedOffset}`, { method: 'GET', ...(controller ? { signal: controller.signal } : {}) });
+        if (!isCurrent()) return;
+        if (!res.ok) {
+            state.status = [404, 405, 501].includes(res.status) ? 'unavailable' : [401, 403].includes(res.status) ? 'forbidden' : 'error';
+        } else {
+            const data = await res.json();
+            if (!isCurrent()) return;
+            if (!Array.isArray(data?.candidates) || data.candidates.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('Invalid finding-candidates response');
+            const responseLimit = Number.isSafeInteger(data.limit) && data.limit > 0 && data.limit <= 100 ? data.limit : limit;
+            Object.assign(state, { status: 'ready', candidates: data.candidates.slice(0, responseLimit), limit: responseLimit,
+                offset: Number.isSafeInteger(data.offset) && data.offset >= 0 ? data.offset : requestedOffset,
+                hasNext: data.candidates.length >= responseLimit });
+        }
+    } catch (error) {
+        if (!isCurrent()) return;
+        state.status = 'error';
+    } finally {
+        if (isCurrent()) { state.controller = null; renderProjectFindingCandidates(); }
+    }
+}
+
+function refreshProjectFindingCandidates() {
+    return loadProjectFindingCandidates(projectFindingCandidatesState.offset);
+}
+
+function changeProjectFindingCandidatesPage(direction) {
+    const state = projectFindingCandidatesState;
+    if (state.status !== 'ready' || (direction > 0 && !state.hasNext) || (direction < 0 && state.offset === 0)) return;
+    return loadProjectFindingCandidates(Math.max(0, state.offset + (direction > 0 ? state.limit : -state.limit)));
 }
 
 async function loadProjectVulnerabilities() {
@@ -2797,6 +2927,7 @@ function initChatProjectSelector() {
             renderProjectsSidebar();
             renderProjectsPagination();
             syncAllProjectsFilterSelects();
+            renderProjectFindingCandidates();
             updateChatProjectButtonLabel();
             const panel = document.getElementById('chat-project-panel');
             if (panel && panel.style.display === 'flex') loadChatProjectPanelList();
@@ -2899,6 +3030,9 @@ window.fetchAllProjects = fetchAllProjects;
 window.debouncedLoadProjectFacts = debouncedLoadProjectFacts;
 window.debouncedLoadProjectVulnerabilities = debouncedLoadProjectVulnerabilities;
 window.loadProjectVulnerabilities = loadProjectVulnerabilities;
+window.onProjectFindingCandidatesToggle = onProjectFindingCandidatesToggle;
+window.refreshProjectFindingCandidates = refreshProjectFindingCandidates;
+window.changeProjectFindingCandidatesPage = changeProjectFindingCandidatesPage;
 window.linkFactToExistingVulnerability = linkFactToExistingVulnerability;
 window.createVulnerabilityFromCurrentFact = createVulnerabilityFromCurrentFact;
 window.viewFactsForVulnerability = viewFactsForVulnerability;

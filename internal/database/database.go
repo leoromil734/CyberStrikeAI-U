@@ -1039,6 +1039,21 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建索引失败: %w", err)
 	}
 
+	if err := db.initAssetRelationsTables(); err != nil {
+		return err
+	}
+	if err := db.initResultArtifactsTables(); err != nil {
+		return err
+	}
+	if err := db.initResultIngestionTables(); err != nil {
+		return err
+	}
+	if err := db.initFindingCandidatesTables(); err != nil {
+		return fmt.Errorf("初始化候选分层失败: %w", err)
+	}
+	if err := db.initTaskGovernanceTables(); err != nil {
+		return fmt.Errorf("初始化任务结果治理失败: %w", err)
+	}
 	db.logger.Debug("数据库表初始化完成")
 	return nil
 }

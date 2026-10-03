@@ -113,6 +113,10 @@ func mcpToolAuthorizer(db *database.DB) func(context.Context, string, map[string
 			return nil
 		case builtin.ToolDeleteAsset:
 			return resource("asset:delete", "asset", "id")
+		case builtin.ToolUpsertFindingCandidate:
+			return authorizeProjectTool(ctx, principal, db, "project:write")
+		case builtin.ToolListFindingCandidates:
+			return authorizeProjectTool(ctx, principal, db, "project:read")
 		case builtin.ToolUpsertProjectFact, builtin.ToolDeprecateProjectFact, builtin.ToolRestoreProjectFact:
 			return authorizeProjectTool(ctx, principal, db, "project:write")
 		case builtin.ToolGetProjectFact, builtin.ToolListProjectFacts, builtin.ToolSearchProjectFacts:
@@ -125,6 +129,27 @@ func mcpToolAuthorizer(db *database.DB) func(context.Context, string, map[string
 			return require("knowledge:read")
 		case builtin.ToolAnalyzeImage:
 			return require("agent:execute")
+		case builtin.ToolRegisterResultArtifact:
+			if err := require("monitor:write"); err != nil {
+				return err
+			}
+			if pid, err := db.GetConversationProjectID(mcpAuthorizationConversationID(ctx)); err != nil {
+				return err
+			} else if pid != "" {
+				if err := authorizeProjectTool(ctx, principal, db, "project:write"); err != nil {
+					return err
+				}
+			}
+			return toolExecutionResource("monitor:read")
+		case builtin.ToolListResultArtifacts, builtin.ToolReadResultArtifact, builtin.ToolAssembleResultEvidence, builtin.ToolQueryReconInventory:
+			if pid, err := db.GetConversationProjectID(mcpAuthorizationConversationID(ctx)); err != nil {
+				return err
+			} else if pid != "" {
+				if err := authorizeProjectTool(ctx, principal, db, "project:read"); err != nil {
+					return err
+				}
+			}
+			return toolExecutionResource("monitor:read")
 		case builtin.ToolGetToolExecution, builtin.ToolWaitToolExecution:
 			return toolExecutionResource("monitor:read")
 		case builtin.ToolCancelToolExecution:

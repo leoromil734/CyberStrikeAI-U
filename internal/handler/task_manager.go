@@ -25,15 +25,16 @@ func shouldPersistEinoAgentTraceAfterRunError(baseCtx context.Context) bool {
 
 // AgentTask 描述正在运行的Agent任务
 type AgentTask struct {
-	ConversationID string    `json:"conversationId"`
-	Title          string    `json:"title,omitempty"`
-	Message        string    `json:"message,omitempty"`
-	StartedAt      time.Time `json:"startedAt"`
-	Status         string    `json:"status"`
-	AgentMode      string    `json:"agentMode,omitempty"`   // eino_single / deep / plan_execute / supervisor / workflow
-	AIChannelID    string    `json:"aiChannelId,omitempty"` // 列表接口从本会话最近运行记录附加，非全局默认值
-	AIModel        string    `json:"aiModel,omitempty"`
-	CancellingAt   time.Time `json:"-"` // 进入 cancelling 状态的时间，用于清理长时间卡住的任务
+	AssessmentRunID string    `json:"assessmentRunId,omitempty"`
+	ConversationID  string    `json:"conversationId"`
+	Title           string    `json:"title,omitempty"`
+	Message         string    `json:"message,omitempty"`
+	StartedAt       time.Time `json:"startedAt"`
+	Status          string    `json:"status"`
+	AgentMode       string    `json:"agentMode,omitempty"`   // eino_single / deep / plan_execute / supervisor / workflow
+	AIChannelID     string    `json:"aiChannelId,omitempty"` // 列表接口从本会话最近运行记录附加，非全局默认值
+	AIModel         string    `json:"aiModel,omitempty"`
+	CancellingAt    time.Time `json:"-"` // 进入 cancelling 状态的时间，用于清理长时间卡住的任务
 
 	// ActiveMCPExecutionID 当前正在执行的 MCP 工具 executionId（仅内存，供「中断并继续」= 仅掐当前工具）
 	ActiveMCPExecutionID string `json:"-"`
@@ -256,7 +257,9 @@ type AgentTaskManager struct {
 	historyRetention time.Duration    // 历史记录保留时间
 	eventBus         *TaskEventBus    // 可选：任务结束时关闭镜像 SSE 订阅
 	// toolCanceler 在用户整轮停止任务或会话结束时终止该会话仍在运行的 MCP 工具（非「中断并继续」）。
-	toolCanceler func(conversationID string)
+	toolCanceler       func(conversationID string)
+	assessmentStarter  func(string) (string, error)
+	assessmentFinisher func(string, string)
 }
 
 const (
@@ -352,6 +355,14 @@ func (m *AgentTaskManager) cleanupStuckCancelling() {
 
 // StartTask 注册并开始一个新的任务
 func (m *AgentTaskManager) StartTask(conversationID, message string, cancel context.CancelCauseFunc) (*AgentTask, error) {
+	return m.startTask(conversationID, message, cancel, true)
+}
+
+// Batch runs allocate their explicit policy after task registration.
+func (m *AgentTaskManager) StartBatchTask(conversationID, message string, cancel context.CancelCauseFunc) (*AgentTask, error) {
+	return m.startTask(conversationID, message, cancel, false)
+}
+func (m *AgentTaskManager) startTask(conversationID, message string, cancel context.CancelCauseFunc, governed bool) (*AgentTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -371,6 +382,13 @@ func (m *AgentTaskManager) StartTask(conversationID, message string, cancel cont
 		},
 	}
 
+	if governed && m.assessmentStarter != nil {
+		id, err := m.assessmentStarter(conversationID)
+		if err != nil {
+			return nil, err
+		}
+		task.AssessmentRunID = id
+	}
 	m.tasks[conversationID] = task
 	task.hitlCognition = &hitlCognitionState{UserMessage: strings.TrimSpace(message)}
 	return task, nil
@@ -468,7 +486,11 @@ func (m *AgentTaskManager) FinishTask(conversationID string, finalStatus string)
 	// 从运行任务中移除
 	delete(m.tasks, conversationID)
 	bus := m.eventBus
+	assessmentID, assessmentFinisher := task.AssessmentRunID, m.assessmentFinisher
 	m.mu.Unlock()
+	if assessmentID != "" && assessmentFinisher != nil {
+		assessmentFinisher(assessmentID, finalStatus)
+	}
 	if toolCanceler != nil {
 		toolCanceler(conversationID)
 	}

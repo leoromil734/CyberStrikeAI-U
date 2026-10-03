@@ -79,6 +79,7 @@ type ExecutionService struct {
 	maxInMemory    int
 	resultMaxBytes int
 	spillRootDir   string
+	observer       func(context.Context, *ToolExecution)
 }
 
 func NewExecutionService(storage MonitorStorage, logger *zap.Logger) *ExecutionService {
@@ -123,6 +124,7 @@ func (s *ExecutionService) Submit(ctx context.Context, req ExecutionRequest) (*E
 		return nil, fmt.Errorf("execution run func is nil")
 	}
 	id := strings.TrimSpace(req.ID)
+	ctx = storedExecutionProjectContext(ctx, s.storage, "")
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -161,9 +163,11 @@ func (s *ExecutionService) Submit(ctx context.Context, req ExecutionRequest) (*E
 		return nil, fmt.Errorf("execution already exists: %s", id)
 	}
 	s.entries[id] = entry
+	observer := s.observer
 	s.cleanupOldEntriesLocked()
 	s.mu.Unlock()
 
+	safeExecutionObserver(ctx, exec, observer, s.logger)
 	if s.storage != nil {
 		if err := s.storage.SaveToolExecution(exec); err != nil {
 			s.logger.Warn("保存执行记录到数据库失败", zap.Error(err), zap.String("executionId", id))
@@ -281,8 +285,10 @@ func (s *ExecutionService) finishEntry(ctx context.Context, entry *executionEntr
 		entry.exec.Result = result
 	}
 	finalExec := cloneToolExecution(entry.exec)
+	observer := s.observer
 	s.mu.Unlock()
 
+	safeExecutionObserver(ctx, finalExec, observer, s.logger)
 	if s.storage != nil {
 		if saveErr := s.storage.SaveToolExecution(finalExec); saveErr != nil {
 			s.logger.Error("保存工具执行终态失败，持久化结果未确认",
@@ -321,8 +327,12 @@ func (s *ExecutionService) Wait(ctx context.Context, executionID string, timeout
 	if entry == nil {
 		return s.getPersistedSnapshot(executionID)
 	}
-	if isExecutionTerminal(entry.exec.Status) {
+	// A terminal in-memory status precedes result ingestion and persistence.
+	// Wait for done so callers cannot finalize before those steps complete.
+	select {
+	case <-entry.done:
 		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+	default:
 	}
 
 	var timeoutCh <-chan time.Time

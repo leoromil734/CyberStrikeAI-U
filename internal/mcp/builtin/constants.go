@@ -4,9 +4,16 @@ package builtin
 // 所有代码中使用内置工具名称的地方都应该使用这些常量，而不是硬编码字符串
 const (
 	// 漏洞管理工具
-	ToolRecordVulnerability = "record_vulnerability"
-	ToolListVulnerabilities = "list_vulnerabilities"
-	ToolGetVulnerability    = "get_vulnerability"
+	ToolRecordVulnerability    = "record_vulnerability"
+	ToolListVulnerabilities    = "list_vulnerabilities"
+	ToolGetVulnerability       = "get_vulnerability"
+	ToolUpsertFindingCandidate = "upsert_finding_candidate"
+	ToolListFindingCandidates  = "list_finding_candidates"
+	ToolListResultArtifacts    = "list_result_artifacts"
+	ToolReadResultArtifact     = "read_result_artifact"
+	ToolAssembleResultEvidence = "assemble_result_evidence"
+	ToolQueryReconInventory    = "query_recon_inventory"
+	ToolRegisterResultArtifact = "register_result_artifact"
 
 	// 资产管理工具
 	ToolCreateAsset       = "create_asset"
@@ -87,6 +94,9 @@ func IsBuiltinTool(toolName string) bool {
 	case ToolRecordVulnerability,
 		ToolListVulnerabilities,
 		ToolGetVulnerability,
+		ToolUpsertFindingCandidate,
+		ToolListFindingCandidates,
+		ToolListResultArtifacts, ToolReadResultArtifact, ToolAssembleResultEvidence, ToolQueryReconInventory, ToolRegisterResultArtifact,
 		ToolCreateAsset,
 		ToolGetAsset,
 		ToolQueryAssets,
@@ -152,6 +162,9 @@ func GetAllBuiltinTools() []string {
 		ToolRecordVulnerability,
 		ToolListVulnerabilities,
 		ToolGetVulnerability,
+		ToolUpsertFindingCandidate,
+		ToolListFindingCandidates,
+		ToolListResultArtifacts, ToolReadResultArtifact, ToolAssembleResultEvidence, ToolQueryReconInventory, ToolRegisterResultArtifact,
 		ToolCreateAsset,
 		ToolGetAsset,
 		ToolQueryAssets,

@@ -2,9 +2,12 @@ package security
 
 import (
 	"context"
+	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/tooloutput"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 
@@ -64,6 +67,15 @@ func runShellInBackground(ctx context.Context, command string, w *schema.StreamW
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	applyDefaultTerminalEnv(cmd)
 	attachNonInteractiveStdin(cmd)
+	_, tee, releaseBudget, outputBudget, prepareErr := prepareNativeShell(ctx, cmd, command)
+	if prepareErr != nil {
+		_ = w.Send(nil, prepareErr)
+		return
+	}
+	defer releaseBudget()
+	if tee != nil {
+		defer tee.Close()
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = w.Send(nil, fmt.Errorf("failed to create stdout pipe: %w", err))
@@ -83,20 +95,40 @@ func runShellInBackground(ctx context.Context, command string, w *schema.StreamW
 		return
 	}
 
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		drainShellPipes(stdout, stderr)
-		_ = session.Wait()
-		close(done)
+		drainShellPipesOriginal(ctx, stdout, stderr, tee)
+		done <- session.Wait()
 	}()
 
+	var waitErr error
 	select {
-	case <-done:
+	case waitErr = <-done:
 	case <-ctx.Done():
 		TerminateShellCmdSession(session)
+		<-done
+		_ = w.Send(nil, ctx.Err())
+		return
 	}
 
+	if tee != nil {
+		_ = tee.Close()
+		if path := tee.Path(); path != "" {
+			if info, err := os.Stat(path); err == nil {
+				_ = w.Send(&filesystem.ExecuteResponse{Output: tooloutput.FormatPersistedFromFile(path, int(info.Size()), outputBudget)}, nil)
+			}
+		}
+	}
 	exitCode := 0
+	if waitErr != nil {
+		var exitError *exec.ExitError
+		if errors.As(waitErr, &exitError) {
+			exitCode = exitError.ExitCode()
+		} else {
+			_ = w.Send(nil, waitErr)
+			return
+		}
+	}
 	_ = w.Send(&filesystem.ExecuteResponse{
 		Output:   "command started in background\n",
 		ExitCode: &exitCode,
@@ -124,6 +156,15 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	applyDefaultTerminalEnv(cmd)
 	attachNonInteractiveStdin(cmd)
+	collector, tee, releaseBudget, outputBudget, prepareErr := prepareNativeShell(ctx, cmd, command)
+	if prepareErr != nil {
+		_ = w.Send(nil, prepareErr)
+		return
+	}
+	defer releaseBudget()
+	if tee != nil {
+		defer tee.Close()
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -184,6 +225,13 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 			continue
 		}
 		hadOutput = true
+		mcp.NotifyLocalExecutionActivity(ctx)
+		if collector != nil {
+			chunk = collector.WriteStringLimited(chunk)
+		}
+		if chunk == "" {
+			continue
+		}
 		if w.Send(&filesystem.ExecuteResponse{Output: chunk}, nil) {
 			TerminateShellCmdSession(session)
 			return
@@ -191,6 +239,9 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 	}
 
 	waitErr := session.Wait()
+	if notice := finishNativeOriginal(collector, tee, outputBudget); notice != "" {
+		_ = w.Send(&filesystem.ExecuteResponse{Output: notice}, nil)
+	}
 	if waitErr == nil {
 		exitCode := 0
 		_ = w.Send(&filesystem.ExecuteResponse{ExitCode: &exitCode}, nil)

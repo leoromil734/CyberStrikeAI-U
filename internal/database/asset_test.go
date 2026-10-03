@@ -16,6 +16,9 @@ func TestAssetURLNormalizationAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	asset := &Asset{Host: "https://例子.测试/path", Tags: []string{" prod ", "prod"}}
 	result, err := db.UpsertAssets([]*Asset{asset}, "")
@@ -56,6 +59,9 @@ func TestAssetValidationRejectsOversizedTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 	_, err = db.UpsertAssets([]*Asset{{Domain: "example.com", Tags: []string{strings.Repeat("x", 65)}}}, "")
 	if err == nil || !strings.Contains(err.Error(), "标签") {
 		t.Fatalf("expected tag validation error, got %v", err)
@@ -68,6 +74,9 @@ func TestFofaAssetIgnoresInvalidOptionalStructuredFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	asset := &Asset{
 		Host:     "https://203.0.113.59:8443",
@@ -92,6 +101,9 @@ func TestAssetUpsertDeduplicatesAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	first := &Asset{Host: "https://example.com", Domain: "Example.COM", Port: 443, Protocol: "HTTPS", Title: "Old", Source: "fofa"}
 	result, err := db.UpsertAssets([]*Asset{first}, "user-a")
@@ -134,6 +146,9 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	if _, err := db.Exec(`INSERT INTO rbac_users (id,username,display_name,password_hash,enabled,is_builtin,created_at,updated_at) VALUES ('user-a','user-a','User A','hash',1,0,?,?)`, now, now); err != nil {
 		t.Fatal(err)
@@ -184,9 +199,15 @@ func TestUpdateAssetsProjectIsAtomicAndScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	project, err := db.CreateProject(&Project{Name: "Batch Project", Status: "active"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetResourceOwner("project", project.ID, "owner-a"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.UpsertAssets([]*Asset{
@@ -231,6 +252,9 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	project, err := db.CreateProject(&Project{Name: "Production", Status: "active"})
 	if err != nil {
@@ -294,6 +318,9 @@ func TestListAssetsForOperationAndBatchDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 3; i++ {
 		if _, err := db.UpsertAssets([]*Asset{{IP: "198.51.100." + strconv.Itoa(i), Port: 443, Protocol: "https", Tags: []string{"selected"}}}, "", true); err != nil {
 			t.Fatal(err)
@@ -319,6 +346,9 @@ func TestMergeAssetsIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 	input := []*Asset{
 		{Domain: "merge.example.com", Port: 80, Protocol: "http", Title: "Primary", Tags: []string{"one"}},
 		{Domain: "merge.example.com", Port: 443, Protocol: "https", ResponsiblePerson: "Alice", Tags: []string{"two"}},
@@ -358,6 +388,9 @@ func TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := db.UpsertAssets([]*Asset{{IP: "192.0.2.10", Port: 443, Protocol: "https"}}, ""); err != nil {
 		t.Fatal(err)
@@ -401,6 +434,9 @@ func TestAssetListFlexibleFiltersAndOldestScanPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.initAssetRelationsTables(); err != nil {
+		t.Fatal(err)
+	}
 
 	assets := []*Asset{
 		{IP: "192.0.2.1", Port: 443, Protocol: "https", Source: "fofa", Tags: []string{"prod"}},

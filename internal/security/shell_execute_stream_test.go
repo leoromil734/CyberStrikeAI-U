@@ -42,7 +42,7 @@ func TestEinoStreamingShell_StreamsStderrBeforeStdoutEOF(t *testing.T) {
 	}
 }
 
-func TestEinoStreamingShell_SudoFailsFast(t *testing.T) {
+func TestEinoStreamingShell_SudoCompletesOrFailsFast(t *testing.T) {
 	shell := NewEinoStreamingShell()
 	cmd := PrepareNonInteractiveShellCommand("sudo whoami && sudo cat /etc/os-release")
 	sr, err := shell.ExecuteStreaming(context.Background(), &filesystem.ExecuteRequest{Command: cmd})
@@ -72,6 +72,11 @@ func TestEinoStreamingShell_SudoFailsFast(t *testing.T) {
 	out := got.String()
 	if strings.Contains(out, "command exited with non-zero code") {
 		t.Fatalf("legacy exit line present: %q", out)
+	}
+	// Root or a passwordless sudo rule legitimately succeeds non-interactively.
+	// The unprivileged case below still must emit a real denial promptly.
+	if strings.HasPrefix(out, "root\n") && strings.Contains(out, "PRETTY_NAME=") {
+		return
 	}
 	if !strings.Contains(out, "sudo") && !strings.Contains(out, "password") && !strings.Contains(out, "terminal") {
 		t.Fatalf("expected sudo error text, got: %q", out)

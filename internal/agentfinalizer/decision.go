@@ -65,6 +65,8 @@ type Decision struct {
 	AssistantMessageID   string   `json:"messageId,omitempty"`
 	CandidateResponseLen int      `json:"candidateResponseLen,omitempty"`
 	CoverageValidFacts   int      `json:"coverageValidFacts,omitempty"`
+	Outcome              string   `json:"outcome,omitempty"`
+	CoverageBlockers     []string `json:"coverageBlockers,omitempty"`
 }
 
 // Input 判定输入。Response 为候选文本，其余为运行时状态与策略。
@@ -128,6 +130,15 @@ func FromRunResult(db *database.DB, result *multiagent.RunResult, in Input) Deci
 
 // Decide 是纯函数式判定：输入候选文本与执行证据，输出是否可交付。
 func Decide(db *database.DB, in Input) Decision {
+	// A governed assessment keeps its policy across continuation turns;
+	// rewriting a manifest is not a prerequisite for activating its gate.
+	if db != nil && in.ConversationID != "" && !in.RequireCoverageEvidence {
+		if run, err := db.LatestAssessmentRun(in.ConversationID); err == nil && run != nil &&
+			(run.Status == "running" || run.Status == "blocked" || run.Status == "failed") {
+			in.RequireCoverageEvidence = run.Mode == database.AssessmentModeComprehensive
+			in.RequireExecutionEvidence = in.RequireExecutionEvidence || run.Mode == database.AssessmentModeExecution || in.RequireCoverageEvidence
+		}
+	}
 	text := strings.TrimSpace(in.Response)
 	status := strings.TrimSpace(in.Status)
 	if status == "" {
@@ -195,6 +206,15 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 
+	// Refusals end the reply without claiming execution or triggering an
+	// automatic continuation which could try to bypass the refusal.
+	if status == StatusDeclined || reason == ReasonDeclined ||
+		((in.RequireExecutionEvidence || in.RequireCoverageEvidence || in.AgentMode == "batch") && IsExplicitRefusal(text)) {
+		d.Status, d.CompletionReason, d.Outcome = StatusDeclined, ReasonDeclined, "declined"
+		d.Finalizable, d.Finalized, d.EvidenceVerified = true, true, false
+		return d
+	}
+
 	// 文本非空但明显是半截话（「接下来我去看 X」或缺少句末标点）：不能交付，交给自动续跑再跑一段。
 	if why := incompleteCandidateReason(text); why != "" {
 		d.Status = StatusInProgress
@@ -213,6 +233,9 @@ func Decide(db *database.DB, in Input) Decision {
 	}
 
 	coverage := coverageForDelivery(db, in)
+	if coverage.Active && len(coverage.Missing) == 0 {
+		coverage.Missing = append(coverage.Missing, reportFindingChecks(db, in)...)
+	}
 	d.CoverageValidFacts = coverage.ValidFacts
 	if coverage.Active && len(coverage.Missing) > 0 {
 		d.Status = StatusInProgress
@@ -222,6 +245,7 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 	d.EvidenceRefs = append(d.EvidenceRefs, coverage.EvidenceRefs...)
+	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)
 
 	d.Finalizable = true
 	d.Finalized = true
@@ -229,6 +253,10 @@ func Decide(db *database.DB, in Input) Decision {
 	if d.CompletionReason == "" {
 		d.CompletionReason = ReasonVerified
 	}
+	if len(d.CoverageBlockers) > 0 {
+		d.CompletionReason = ReasonVerifiedWithLimits
+	}
+	d.Outcome = Outcome(d.Status, d.CompletionReason, d.FinalText)
 	return d
 }
 
@@ -244,6 +272,8 @@ func ResponsePayload(d Decision, extra map[string]interface{}) map[string]interf
 		"pendingExecutionIds": d.PendingExecutionIDs,
 		"pendingToolRuns":     d.PendingToolRuns,
 		"missingChecks":       d.MissingChecks,
+		"outcome":             Outcome(d.Status, d.CompletionReason, d.FinalText),
+		"coverageBlockers":    d.CoverageBlockers,
 	}
 	if d.ConversationID != "" {
 		out["conversationId"] = d.ConversationID

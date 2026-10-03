@@ -39,8 +39,9 @@ const (
 	BatchTaskStatusPending   = "pending"
 	BatchTaskStatusRunning   = "running"
 	BatchTaskStatusCompleted = "completed"
-	BatchTaskStatusBlocked   = "blocked" // 执行已停止但未通过最终化检查，需人工恢复或单项重跑。
-	BatchTaskStatusPaused    = "paused"  // 队列暂停中断；保留会话与证据，显式继续时恢复。
+	BatchTaskStatusDeclined  = "declined" // 回复已结束，但评估被明确拒绝，不能计为执行成功。
+	BatchTaskStatusBlocked   = "blocked"  // 执行已停止但未通过最终化检查，需人工恢复或单项重跑。
+	BatchTaskStatusPaused    = "paused"   // 队列暂停中断；保留会话与证据，显式继续时恢复。
 	BatchTaskStatusFailed    = "failed"
 	BatchTaskStatusCancelled = "cancelled"
 
@@ -68,19 +69,22 @@ const (
 
 // BatchTask 批量任务项
 type BatchTask struct {
-	ID              string     `json:"id"`
-	Message         string     `json:"message"`
-	ConversationID  string     `json:"conversationId,omitempty"`
-	Status          string     `json:"status"` // pending, running, completed, blocked, failed, cancelled
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	Error           string     `json:"error,omitempty"`
-	Result          string     `json:"result,omitempty"`
-	AIChannelID     string     `json:"aiChannelId,omitempty"`
-	RetryCount      int        `json:"retryCount,omitempty"`
-	ProjectID       string     `json:"projectId,omitempty"`
-	ProjectName     string     `json:"projectName,omitempty"`
-	ResumeFromPause bool       `json:"-"`
+	ID                 string                  `json:"id"`
+	Message            string                  `json:"message"`
+	ConversationID     string                  `json:"conversationId,omitempty"`
+	Status             string                  `json:"status"` // pending, running, completed, blocked, failed, cancelled
+	StartedAt          *time.Time              `json:"startedAt,omitempty"`
+	CompletedAt        *time.Time              `json:"completedAt,omitempty"`
+	Error              string                  `json:"error,omitempty"`
+	Result             string                  `json:"result,omitempty"`
+	AIChannelID        string                  `json:"aiChannelId,omitempty"`
+	RetryCount         int                     `json:"retryCount,omitempty"`
+	ProjectID          string                  `json:"projectId,omitempty"`
+	ProjectName        string                  `json:"projectName,omitempty"`
+	ResumeFromPause    bool                    `json:"-"`
+	Outcome            string                  `json:"outcome,omitempty"`
+	LatestRun          *database.AssessmentRun `json:"latestRun,omitempty"`
+	ConversationActive bool                    `json:"conversationActive,omitempty"`
 }
 
 // BatchTaskInput 创建队列时的一条子任务。Message 必填，AIChannelID 空则跟随系统默认模型通道。
@@ -104,6 +108,8 @@ type BatchTaskQueue struct {
 	LastRunError          string       `json:"lastRunError,omitempty"`
 	ProjectID             string       `json:"projectId,omitempty"`
 	IndependentProjects   bool         `json:"independentProjects"`
+	AssessmentMode        string       `json:"assessmentMode,omitempty"`
+	DuplicateTasksSkipped int          `json:"duplicateTasksSkipped,omitempty"`
 	ExecutorActive        bool         `json:"executorActive,omitempty"`
 	Concurrency           int          `json:"concurrency"`   // 同时执行的子任务数，默认 1
 	ModelRetryMax         int          `json:"modelRetryMax"` // 模型报错中断后的自动重试次数，0 表示不额外重试
@@ -181,6 +187,10 @@ func cloneBatchTask(task *BatchTask) *BatchTask {
 	out := *task
 	out.StartedAt = cloneBatchTime(task.StartedAt)
 	out.CompletedAt = cloneBatchTime(task.CompletedAt)
+	if task.LatestRun != nil {
+		r := *task.LatestRun
+		out.LatestRun = &r
+	}
 	return &out
 }
 
@@ -353,26 +363,41 @@ func (m *BatchTaskManager) CreateBatchQueue(
 		return nil, fmt.Errorf("单个队列最多 %d 条任务", MaxBatchTasksPerQueue)
 	}
 
+	if opts.AssessmentMode != "" {
+		var err error
+		opts.AssessmentMode, err = database.NormalizeAssessmentMode(opts.AssessmentMode, opts.IndependentProjects || strings.TrimSpace(projectID) != "")
+		if err != nil {
+			return nil, err
+		}
+		if opts.AssessmentMode == database.AssessmentModeComprehensive && !opts.IndependentProjects && strings.TrimSpace(projectID) == "" {
+			return nil, fmt.Errorf("全面评估需要绑定项目或启用每任务独立项目")
+		}
+	}
+	if !opts.AllowDuplicateTasks {
+		tasks, opts.DuplicateTasksSkipped = deduplicateBatchTaskInputs(tasks)
+	}
 	queueID := time.Now().Format("20060102150405") + "-" + generateShortID()
 	unlock := m.lockQueue(queueID)
 	defer unlock()
 	queue := &BatchTaskQueue{
-		ID:                  queueID,
-		Title:               title,
-		Role:                role,
-		ProjectID:           strings.TrimSpace(projectID),
-		IndependentProjects: opts.IndependentProjects,
-		AgentMode:           config.NormalizeAgentMode(agentMode),
-		ScheduleMode:        normalizeBatchQueueScheduleMode(scheduleMode),
-		CronExpr:            strings.TrimSpace(cronExpr),
-		NextRunAt:           cloneBatchTime(nextRunAt),
-		ScheduleEnabled:     true,
-		Concurrency:         resolveBatchQueueConcurrency(concurrency, len(tasks)),
-		ModelRetryMax:       normalizeModelErrorRetryMax(modelRetryMax),
-		Tasks:               make([]*BatchTask, 0, len(tasks)),
-		Status:              BatchQueueStatusPending,
-		CreatedAt:           time.Now(),
-		CurrentIndex:        0,
+		ID:                    queueID,
+		Title:                 title,
+		Role:                  role,
+		ProjectID:             strings.TrimSpace(projectID),
+		IndependentProjects:   opts.IndependentProjects,
+		AssessmentMode:        opts.AssessmentMode,
+		DuplicateTasksSkipped: opts.DuplicateTasksSkipped,
+		AgentMode:             config.NormalizeAgentMode(agentMode),
+		ScheduleMode:          normalizeBatchQueueScheduleMode(scheduleMode),
+		CronExpr:              strings.TrimSpace(cronExpr),
+		NextRunAt:             cloneBatchTime(nextRunAt),
+		ScheduleEnabled:       true,
+		Concurrency:           resolveBatchQueueConcurrency(concurrency, len(tasks)),
+		ModelRetryMax:         normalizeModelErrorRetryMax(modelRetryMax),
+		Tasks:                 make([]*BatchTask, 0, len(tasks)),
+		Status:                BatchQueueStatusPending,
+		CreatedAt:             time.Now(),
+		CurrentIndex:          0,
 	}
 	if queue.ScheduleMode != "cron" {
 		queue.CronExpr = ""
@@ -472,15 +497,19 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 	}
 
 	queue := &BatchTaskQueue{
-		ID:           queueRow.ID,
-		AgentMode:    "eino_single",
-		ScheduleMode: "manual",
-		Status:       queueRow.Status,
-		CreatedAt:    queueRow.CreatedAt,
-		CurrentIndex: queueRow.CurrentIndex,
-		Tasks:        make([]*BatchTask, 0, len(taskRows)),
+		ID:             queueRow.ID,
+		AssessmentMode: database.AssessmentModeLegacy,
+		AgentMode:      "eino_single",
+		ScheduleMode:   "manual",
+		Status:         queueRow.Status,
+		CreatedAt:      queueRow.CreatedAt,
+		CurrentIndex:   queueRow.CurrentIndex,
+		Tasks:          make([]*BatchTask, 0, len(taskRows)),
 	}
 
+	if mode, skipped, err := m.db.GetBatchQueuePolicy(queueID); err == nil {
+		queue.AssessmentMode, queue.DuplicateTasksSkipped = mode, skipped
+	}
 	if queueRow.Title.Valid {
 		queue.Title = queueRow.Title.String
 	}
@@ -746,7 +775,7 @@ func (m *BatchTaskManager) UpdateTaskStatusWithConversationID(queueID, taskID, s
 			}
 			if status == BatchTaskStatusBlocked || status == BatchTaskStatusPaused {
 				task.CompletedAt = nil
-			} else if status == BatchTaskStatusCompleted || status == BatchTaskStatusFailed || status == BatchTaskStatusCancelled {
+			} else if status == BatchTaskStatusCompleted || status == BatchTaskStatusDeclined || status == BatchTaskStatusFailed || status == BatchTaskStatusCancelled {
 				task.CompletedAt = &now
 			}
 			break

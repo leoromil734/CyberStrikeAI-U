@@ -132,7 +132,7 @@ func ComprehensiveAssessmentSection() string {
 
 - Deep 根域至少跑 subfinder、oneforall、dnsx，补证书/历史/品牌/测绘。每来源用body_fields写recon/source/{id}/{tool}/{target}，含status、raw、unique、incremental、error、alt_tried、evidence；raw是真整数，文本用raw_output，success≠covered；缺来源recon_sources不得passed。
 - HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；jsapiscan + grep/rg 双通道写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
-- 范围内自助注册/登录时创建最少测试账号，覆盖匿名、认证态及可行双主体；为验证相关缺陷可按复现所需力度推进。无法建身份只阻断对应结论，未建号≠已覆盖。
+- 身份与受控邮箱由用户提供，不自动补齐双账号；使用既有授权身份覆盖匿名/认证及双主体。缺身份仅blocked依赖单元，独立单元继续；未建号≠已覆盖。
 - 侦察/信息收集不得 record_vulnerability；扫描命中仅 tentative。侦察摘要是阶段交接。收尾若仍列范围内可执行“下一步”或未验证高价值候选，须继续执行或委派。
 - 有数据或管理功能的资产（含有关联证据的疑似下游）在缺口复核前，给六类有危害面各一个终态：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传。终态只能是测完、有证据的 blocked，或引用能力证据的 N/A。低价值面仍直接 N/A，不占这六类。`
 }
@@ -142,7 +142,7 @@ func ConciseBlackboardSection(coordinator, subAgent bool) string {
 	var b strings.Builder
 	b.WriteString(`## 项目黑板与漏洞记录
 
-项目仅注入fact_key/summary，get_project_fact读细节，禁止补造。新资产/入口/服务/身份/负结果立即upsert_project_fact，同key覆盖；账本用body_fields。跨独立边界且可复现才record_vulnerability：起始状态、单变量对照、完整POC脚本+输出、影响/修复；先查重。受控写入禁止文件名/省略号，须贴完整SQL与回查。事实存上下文，漏洞存finding。`)
+项目仅注入fact_key/summary，get_project_fact读细节，禁止补造。只有新增认知才upsert_project_fact，同key更新；大输出留原件，不复制日志，账本用body_fields。跨独立边界且可复现才record_vulnerability：起始状态、单变量对照、完整POC脚本+输出、影响/修复；先查重。受控写入禁止文件名/省略号，须贴完整SQL与回查。事实存上下文，漏洞存finding。`)
 	if coordinator {
 		b.WriteString("\n\n委派结果中的新事实、负结果与漏洞由协调者校验并及时落库，不假定子代理已经记录。")
 	}

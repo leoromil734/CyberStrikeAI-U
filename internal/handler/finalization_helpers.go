@@ -95,12 +95,17 @@ func (h *AgentHandler) persistFinalizationDecision(
 	}
 	_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
 	if decision.Finalizable {
-		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && h.logger != nil {
-			h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
+		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil {
+			if h.logger != nil {
+				h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
+			}
+			return
 		}
+		h.saveGovernedRunDecision(conversationID, decision)
 		return
 	}
 	_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", finalizationBlockedMessage(decision), time.Now(), assistantMessageID)
+	h.saveGovernedRunDecision(conversationID, decision)
 }
 
 // finalizeCandidateForDelivery 面向只有候选文本（无 RunResult）的收尾路径，如工作流集成、机器人。
@@ -142,12 +147,17 @@ func (h *AgentHandler) finalizeCandidateForDeliveryWithPolicy(
 	}
 	_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
 	if decision.Finalizable {
-		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && h.logger != nil {
-			h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
+		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil {
+			if h.logger != nil {
+				h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
+			}
+			return decision
 		}
+		h.saveGovernedRunDecision(conversationID, decision)
 		return decision
 	}
 	_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", finalizationBlockedMessage(decision), time.Now(), assistantMessageID)
+	h.saveGovernedRunDecision(conversationID, decision)
 	return decision
 }
 

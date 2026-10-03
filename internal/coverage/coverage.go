@@ -22,6 +22,7 @@ type Report struct {
 	Active       bool
 	AssessmentID string
 	Missing      []string
+	Blocked      []string // evidenced limitations are distinct from unclosed gaps
 	EvidenceRefs []string
 	ValidFacts   int // validated ledger records, used only to detect repair progress
 }
@@ -125,6 +126,16 @@ func Check(facts []Fact, required bool) Report {
 		}
 		e := entry{fact, fields}
 		entries[fact.Key] = e
+		if text(fields, "status") == "blocked" || text(fields, "runtime_status") == "blocked" {
+			detail := text(fields, "blockers")
+			if detail == "" {
+				detail = text(fields, "reason")
+			}
+			if detail == "" {
+				detail = text(fields, "error")
+			}
+			r.Blocked = append(r.Blocked, fact.Key+": "+detail)
+		}
 		switch {
 		case strings.HasPrefix(fact.Key, "recon/phase/"):
 			phase := fact.Key[strings.LastIndex(fact.Key, "/")+1:]
@@ -257,6 +268,7 @@ func Check(facts []Fact, required bool) Report {
 		}
 	}
 	sort.Strings(r.Missing)
+	sort.Strings(r.Blocked)
 	sort.Strings(r.EvidenceRefs)
 	return r
 }
@@ -325,6 +337,13 @@ func CanonicalEndpointFactKey(key, body string) (string, error) {
 		return "", fmt.Errorf("endpoint_url requires a valid assessment_id (1-48 lowercase slug characters)")
 	}
 	slug, err := EndpointKey(rawURL, text(fields, "method"))
+	if declared := text(fields, "inventory_group_key"); declared != "" {
+		group, groupErr := DiscoveryGroupKey(rawURL, text(fields, "method"))
+		if groupErr != nil || declared != group {
+			return "", fmt.Errorf("inventory_group_key must match original endpoint URL/method/routing values")
+		}
+		slug = group
+	}
 	if err != nil {
 		return "", err
 	}

@@ -507,7 +507,7 @@ func (a *Agent) convertToOpenAIType(configType string) string {
 	case "bool":
 		return "boolean"
 	case "int", "integer":
-		return "number"
+		return "integer"
 	case "float", "double":
 		return "number"
 	case "string", "array", "object":

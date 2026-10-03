@@ -165,6 +165,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	mcpServer.ConfigureToolWaitTimeoutSeconds(cfg.Agent.ToolWaitTimeoutSeconds)
 	mcpServer.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
 	mcpServer.ConfigureToolResultSpillRoot(cfg.MultiAgent.EinoMiddleware.ReductionRootDir)
+	resultPipeline := newResultPipeline(db, cfg, log.Logger)
+	mcpServer.SetExecutionObserver(resultPipeline.observe)
+	registerResultTools(mcpServer, resultPipeline)
 
 	// 创建安全工具执行器
 	executor := security.NewExecutor(&cfg.Security, mcpServer, log.Logger)
@@ -178,6 +181,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// 注册漏洞记录工具
 	registerVulnerabilityTools(mcpServer, db, log.Logger)
+	registerFindingCandidateTools(mcpServer, db)
 	registerAssetTools(mcpServer, db, log.Logger)
 	registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 	registerVisionTools(mcpServer, cfg, log.Logger)
@@ -188,6 +192,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	externalMCPMgr.ConfigureToolWaitTimeoutSeconds(cfg.Agent.ToolWaitTimeoutSeconds)
 	externalMCPMgr.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
 	externalMCPMgr.ConfigureToolResultSpillRoot(cfg.MultiAgent.EinoMiddleware.ReductionRootDir)
+	externalMCPMgr.SetExecutionObserver(resultPipeline.observe)
 	externalMCPMgr.ConfigureResilience(mcp.ExternalMCPResilienceConfig{
 		MaxConcurrentPerServer:  cfg.Agent.ExternalMCPMaxConcurrentPerServer,
 		MaxConcurrentTotal:      cfg.Agent.ExternalMCPMaxConcurrentTotal,
@@ -487,6 +492,8 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// 设置漏洞工具注册器（内置工具，必须设置）
 	vulnerabilityRegistrar := func() error {
 		registerVulnerabilityTools(mcpServer, db, log.Logger)
+		registerResultTools(mcpServer, resultPipeline)
+		registerFindingCandidateTools(mcpServer, db)
 		registerAssetTools(mcpServer, db, log.Logger)
 		registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 		registerVisionTools(mcpServer, cfg, log.Logger)
@@ -1311,6 +1318,7 @@ func setupRoutes(
 		protected.GET("/projects", projectHandler.ListProjects)
 		protected.POST("/projects", projectHandler.CreateProject)
 		protected.GET("/projects/:id/stats", projectHandler.GetProjectStats)
+		protected.GET("/projects/:id/finding-candidates", projectHandler.ListFindingCandidates)
 		protected.GET("/projects/:id/conversations", projectHandler.ListProjectConversations)
 		protected.GET("/projects/:id", projectHandler.GetProject)
 		protected.PUT("/projects/:id", projectHandler.UpdateProject)

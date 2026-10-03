@@ -23,7 +23,7 @@
             }
         })();
     </script>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260929-3">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261002-governance">
     <link rel="stylesheet" href="/static/css/experience.css?v=20261002-ui1">
     <link rel="stylesheet" href="/static/css/targets.css?v=20261002-ui1">
     <link rel="stylesheet" href="/static/css/c2.css">
@@ -2495,6 +2495,11 @@
                                             <tbody id="project-vulns-tbody"></tbody>
                                         </table>
                                     </div>
+                                    <details id="project-finding-candidates" class="project-finding-candidates" ontoggle="onProjectFindingCandidatesToggle(this)">
+                                        <summary data-i18n="projects.candidatesTitle">候选发现（与正式漏洞分离）</summary>
+                                        <p class="project-candidates-separation-hint" data-i18n="projects.candidatesSeparationHint">候选是待评估的线索，不计入正式漏洞数量。observed 和公开元数据仅表示观察；即使候选已验证，也需独立的漏洞验证与录入流程。本视图只读。</p>
+                                        <div id="project-finding-candidates-body" class="project-finding-candidates-body" aria-live="polite" aria-busy="false"></div>
+                                    </details>
                                 </div>
                                 <div id="project-panel-settings" class="projects-panel projects-panel--settings" role="tabpanel" hidden>
                                     <div class="projects-settings-layout">
@@ -2884,7 +2889,7 @@
                                         <option value="pending" data-i18n="tasksPage.statusPending">待执行</option>
                                         <option value="running" data-i18n="dashboard.executing">执行中</option>
                                         <option value="paused" data-i18n="tasksPage.statusPaused">已暂停</option>
-                                        <option value="completed" data-i18n="dashboard.completed">已完成</option>
+                                        <option value="completed" data-i18n="tasks.statusQueueEnded">本轮已结束</option>
                                         <option value="cancelled" data-i18n="tasksPage.statusCancelled">已取消</option>
                                     </select>
                                 </label>
@@ -6158,6 +6163,23 @@
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.agentModeHint">与对话页一致：Eino 单代理（ADK），或 Deep / Plan-Execute / Supervisor（后三种需已启用多代理）。</div>
                 </div>
                 <div class="form-group">
+                    <label for="batch-queue-assessment-mode" data-i18n="tasks.assessmentModeLabel">评估模式</label>
+                    <select id="batch-queue-assessment-mode" aria-describedby="batch-assessment-mode-hint">
+                        <option value="auto" data-i18n="tasks.assessmentAuto">自动（默认）</option>
+                        <option value="conversation" data-i18n="tasks.assessmentConversation">对话交付</option>
+                        <option value="execution" data-i18n="tasks.assessmentExecution">执行验证</option>
+                        <option value="comprehensive" data-i18n="tasks.assessmentComprehensive">综合评估</option>
+                    </select>
+                    <small id="batch-assessment-mode-hint" data-i18n="tasks.assessmentModeHint">自动由服务端选择评估要求；对话模式不代表已执行验证；执行和综合模式按证据检查交付。模式不降低漏洞验证要求。</small>
+                </div>
+                <div class="form-group">
+                    <label for="batch-queue-allow-duplicate-tasks" class="batch-execute-now-label">
+                        <input type="checkbox" id="batch-queue-allow-duplicate-tasks" aria-describedby="batch-duplicates-hint" />
+                        <span data-i18n="tasks.allowDuplicateTasks">允许重复任务</span>
+                    </label>
+                    <small id="batch-duplicates-hint" data-i18n="tasks.allowDuplicateTasksHint">默认由服务端跳过重复任务；勾选后显式保留，不会修改历史任务或目标记录。</small>
+                </div>
+                <div class="form-group">
                     <label for="batch-queue-concurrency" data-i18n="batchImportModal.concurrency">并发数</label>
                     <input type="number" id="batch-queue-concurrency" min="1" max="32" value="1" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;" />
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.concurrencyHint">每行一个目标。多行时按行数并行启动，每条任务一个协程，最大 32。</div>
@@ -6860,11 +6882,11 @@
     <script src="/static/js/experience.js?v=20261002-ui1"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
-    <script src="/static/js/projects.js?v=20260717-1"></script>
+    <script src="/static/js/projects.js?v=20261002-governance"></script>
     <script src="/static/js/vulnerability.js?v=15"></script>
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
-    <script src="/static/js/tasks.js"></script>
+    <script src="/static/js/tasks.js?v=20261002-governance"></script>
     <script src="/static/js/targets.js?v=20261002-ui1"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>

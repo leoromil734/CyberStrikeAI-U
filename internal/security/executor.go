@@ -42,6 +42,7 @@ type Executor struct {
 	shellNoOutputTimeoutSec int // execute/exec 无新输出空闲秒数；0=默认 300；-1=关闭（见 SetShellNoOutputTimeoutSeconds）
 	toolOutputMaxBytes      int
 	spillRootDir            string
+	budget                  *ToolBudget
 }
 
 // NewExecutor 创建新的执行器
@@ -51,6 +52,7 @@ func NewExecutor(cfg *config.SecurityConfig, mcpServer *mcp.Server, logger *zap.
 		toolIndex: make(map[string]*config.ToolConfig),
 		mcpServer: mcpServer,
 		logger:    logger,
+		budget:    NewToolBudget(cfg),
 	}
 	// 构建工具索引
 	executor.buildToolIndex()
@@ -134,11 +136,16 @@ func (e *Executor) buildToolIndex() {
 func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (*mcp.ToolResult, error) {
 	e.logger.Debug("ExecuteTool被调用",
 		zap.String("toolName", toolName),
-		zap.Any("args", args),
+		zap.Strings("argumentNames", argumentNames(args)),
 	)
 
 	// 特殊处理：exec工具直接执行系统命令
 	if toolName == "exec" {
+		release, budgetErr := e.budget.Acquire(ctx, toolName, budgetTargets(args))
+		if budgetErr != nil {
+			return nil, budgetErr
+		}
+		defer release()
 		e.logger.Debug("执行exec工具")
 		return e.executeSystemCommand(ctx, args)
 	}
@@ -157,7 +164,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	e.logger.Debug("找到工具配置",
 		zap.String("toolName", toolName),
 		zap.String("command", toolConfig.Command),
-		zap.Strings("args", toolConfig.Args),
+		zap.Int("templateArgCount", len(toolConfig.Args)),
 	)
 
 	// 特殊处理：内部工具（command 以 "internal:" 开头）
@@ -185,6 +192,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		}, nil
 	}
 
+	if err := e.validateToolParameterValues(toolConfig, args); err != nil {
+		return parameterValidationResult(toolName, err), nil
+	}
 	// 文件型参数在启动进程前完成校验和默认路径解析，避免工具因缺失字典输出整页帮助。
 	resolvedArgs, fileWarnings, validationErr := e.resolveToolFileArgs(toolConfig, args)
 	if validationErr != nil {
@@ -206,7 +216,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 	e.logger.Debug("构建命令参数完成",
 		zap.String("toolName", toolName),
-		zap.Strings("cmdArgs", cmdArgs),
+		zap.Int("commandArgCount", len(cmdArgs)),
 		zap.Int("argsCount", len(cmdArgs)),
 	)
 
@@ -227,9 +237,21 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		}, nil
 	}
 
+	if err := e.validateVersionSensitiveFlags(ctx, toolConfig, cmdArgs); err != nil {
+		return parameterValidationResult(toolName, err), nil
+	}
+	// Admission is shared by all tasks using this executor, not per agent.
+	releaseBudget, budgetErr := e.budget.Acquire(ctx, toolName, budgetTargets(args))
+	if budgetErr != nil {
+		return nil, budgetErr
+	}
+	defer releaseBudget()
 	// 执行命令
 	cmd := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 	applyDefaultTerminalEnv(cmd)
+	if err := e.applyExecutionArtifactEnv(ctx, cmd); err != nil {
+		return nil, fmt.Errorf("allocate execution artifacts: %w", err)
+	}
 	e.applyToolCredentialEnv(cmd, toolName)
 	e.attachToolStdin(cmd, toolConfig, args)
 	_ = prepareShellCmdSession(cmd)
@@ -252,6 +274,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			if envErr := e.applyExecutionArtifactEnv(ctx, cmd2); envErr != nil {
+				return nil, envErr
+			}
 			e.applyToolCredentialEnv(cmd2, toolName)
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
@@ -266,6 +291,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			)
 			cmd2 := exec.CommandContext(ctx, toolConfig.Command, cmdArgs...)
 			applyDefaultTerminalEnv(cmd2)
+			if envErr := e.applyExecutionArtifactEnv(ctx, cmd2); envErr != nil {
+				return nil, envErr
+			}
 			e.applyToolCredentialEnv(cmd2, toolName)
 			e.attachToolStdin(cmd2, toolConfig, args)
 			_ = prepareShellCmdSession(cmd2)
@@ -281,7 +309,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 					e.logger.Debug("工具执行完成（退出码在允许列表中）",
 						zap.String("tool", toolName),
 						zap.Int("exitCode", *exitCode),
-						zap.String("output", string(output)),
+						zap.Int("outputBytes", len(output)),
 					)
 					return &mcp.ToolResult{
 						Content: []mcp.Content{
@@ -300,7 +328,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			zap.String("tool", toolName),
 			zap.Error(err),
 			zap.Int("exitCode", getExitCodeValue(err)),
-			zap.String("output", string(output)),
+			zap.Int("outputBytes", len(output)),
 		)
 		failureText := fmt.Sprintf("工具执行失败: %v\n输出: %s", err, string(output))
 		if hint := CommandArgumentErrorHint(toolName, string(output)); hint != "" {
@@ -319,7 +347,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 	e.logger.Debug("工具执行成功",
 		zap.String("tool", toolName),
-		zap.String("output", string(output)),
+		zap.Int("outputBytes", len(output)),
 	)
 
 	return &mcp.ToolResult{
@@ -335,6 +363,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 // RegisterTools 注册工具到MCP服务器
 func (e *Executor) RegisterTools(mcpServer *mcp.Server) {
+	mcpServer.SetLocalExecutionGuard(func(ctx context.Context, name string, args map[string]interface{}) (func(), error) {
+		return e.budget.Acquire(ctx, name, budgetTargets(args))
+	})
 	e.logger.Debug("开始注册工具",
 		zap.Int("totalTools", len(e.config.Tools)),
 		zap.Int("enabledTools", len(e.toolIndex)),
@@ -385,7 +416,7 @@ func (e *Executor) RegisterTools(mcpServer *mcp.Server) {
 		handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 			e.logger.Debug("工具handler被调用",
 				zap.String("toolName", toolName),
-				zap.Any("args", args),
+				zap.Strings("argumentNames", argumentNames(args)),
 			)
 			return e.ExecuteTool(ctx, toolName, args)
 		}
@@ -1048,7 +1079,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 
 	// 安全检查：记录执行的命令
 	e.logger.Warn("执行系统命令",
-		zap.String("command", command),
+		zap.String("commandHash", commandFingerprint(command)),
 	)
 
 	command = PrepareShellCommandForExecute(command)
@@ -1077,10 +1108,13 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		cmd = exec.CommandContext(ctx, shell, "-c", command)
 	}
 	ConfigureShellCmdForAgentExecute(cmd)
+	if err := e.applyExecutionArtifactEnv(ctx, cmd); err != nil {
+		return nil, err
+	}
 
 	// 执行命令
 	e.logger.Info("执行系统命令",
-		zap.String("command", command),
+		zap.String("commandHash", commandFingerprint(command)),
 		zap.String("shell", shell),
 		zap.String("workdir", workDir),
 		zap.Bool("isBackground", isBackground),
@@ -1109,7 +1143,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		stdout, err := pidCmd.StdoutPipe()
 		if err != nil {
 			e.logger.Error("创建stdout管道失败",
-				zap.String("command", command),
+				zap.String("commandHash", commandFingerprint(command)),
 				zap.Error(err),
 			)
 			// 如果创建管道失败，使用shell进程的PID作为fallback
@@ -1141,7 +1175,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		if err := pidCmd.Start(); err != nil {
 			stdout.Close()
 			e.logger.Error("后台命令启动失败",
-				zap.String("command", command),
+				zap.String("commandHash", commandFingerprint(command)),
 				zap.Error(err),
 			)
 			return &mcp.ToolResult{
@@ -1163,7 +1197,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		var actualPid int
 		if err != nil && err != io.EOF {
 			e.logger.Warn("读取后台进程PID失败",
-				zap.String("command", command),
+				zap.String("commandHash", commandFingerprint(command)),
 				zap.Error(err),
 			)
 			// 如果读取失败，使用shell进程的PID
@@ -1175,7 +1209,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 				actualPid = parsedPid
 			} else {
 				e.logger.Warn("解析后台进程PID失败",
-					zap.String("command", command),
+					zap.String("commandHash", commandFingerprint(command)),
 					zap.String("pidLine", pidStr),
 					zap.Error(err),
 				)
@@ -1188,14 +1222,14 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		go func() {
 			if err := pidCmd.Wait(); err != nil {
 				e.logger.Debug("后台命令shell进程执行完成",
-					zap.String("command", command),
+					zap.String("commandHash", commandFingerprint(command)),
 					zap.Error(err),
 				)
 			}
 		}()
 
 		e.logger.Info("后台命令已启动",
-			zap.String("command", command),
+			zap.String("commandHash", commandFingerprint(command)),
 			zap.Int("actualPid", actualPid),
 		)
 
@@ -1241,9 +1275,9 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	}
 	if err != nil {
 		e.logger.Error("系统命令执行失败",
-			zap.String("command", command),
+			zap.String("commandHash", commandFingerprint(command)),
 			zap.Error(err),
-			zap.String("output", string(output)),
+			zap.Int("outputBytes", len(output)),
 		)
 		return &mcp.ToolResult{
 			Content: []mcp.Content{
@@ -1257,7 +1291,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	}
 
 	e.logger.Info("系统命令执行成功",
-		zap.String("command", command),
+		zap.String("commandHash", commandFingerprint(command)),
 		zap.String("output_length", fmt.Sprintf("%d", len(output))),
 	)
 
@@ -1839,6 +1873,15 @@ func (e *Executor) buildInputSchema(toolConfig *config.ToolConfig) map[string]in
 				prop["enum"] = param.Options
 			}
 
+			if param.Minimum != nil {
+				prop["minimum"] = *param.Minimum
+			}
+			if param.Maximum != nil {
+				prop["maximum"] = *param.Maximum
+			}
+			if param.MaxItems != nil {
+				prop["maxItems"] = *param.MaxItems
+			}
 			properties[param.Name] = prop
 
 			// 添加到必需参数列表
@@ -1871,7 +1914,7 @@ func (e *Executor) convertToOpenAIType(configType string) string {
 	case "bool":
 		return "boolean"
 	case "int", "integer":
-		return "number"
+		return "integer"
 	case "float", "double":
 		return "number"
 	case "string", "array", "object":

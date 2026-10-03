@@ -5,6 +5,7 @@ package tooloutput
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,10 +91,31 @@ func FormatPersistedOutput(full, filePath string, maxBytes int) string {
 // spilled file (streaming collectors that never kept the full string in memory).
 func FormatPersistedFromFile(filePath string, originalSize, maxBytes int) string {
 	previewSrc := ""
-	if data, err := os.ReadFile(filePath); err == nil {
-		previewSrc = string(data)
-		if originalSize <= 0 {
-			originalSize = len(data)
+	if file, err := os.Open(filePath); err == nil {
+		defer file.Close()
+		if info, statErr := file.Stat(); statErr == nil {
+			if originalSize <= 0 {
+				originalSize = int(info.Size())
+			}
+			// Read only head/tail previews: a multi-GB result must never be
+			// loaded into memory merely to construct a 4KB notice.
+			budget := int64(4000)
+			if maxBytes > 0 && int64(maxBytes) < budget {
+				budget = int64(maxBytes)
+			}
+			if info.Size() <= budget {
+				data, _ := io.ReadAll(io.LimitReader(file, budget))
+				previewSrc = string(data)
+			} else {
+				head, _ := io.ReadAll(io.LimitReader(file, budget/2))
+				_, seekErr := file.Seek(-budget+budget/2, io.SeekEnd)
+				if seekErr == nil {
+					tail, _ := io.ReadAll(io.LimitReader(file, budget-budget/2))
+					previewSrc = strings.ToValidUTF8(string(head), "") + "\n…\n" + strings.ToValidUTF8(string(tail), "")
+				} else {
+					previewSrc = strings.ToValidUTF8(string(head), "")
+				}
+			}
 		}
 	}
 	return formatPersisted(originalSize, filePath, previewSrc, maxBytes)

@@ -268,6 +268,8 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		auditLLM:         openai.NewClient(llmCfg, llmHTTP, logger),
 	}
 	tm.SetToolCanceler(handler.cancelRunningMCPToolsForConversation)
+	tm.assessmentStarter = handler.beginGovernedContinuation
+	tm.assessmentFinisher = handler.finishGovernedContinuation
 	if err := handler.hitlManager.EnsureSchema(); err != nil {
 		logger.Warn("初始化 HITL 表失败", zap.Error(err))
 	}
@@ -1780,6 +1782,8 @@ type BatchTaskRequest struct {
 	ExecuteNow          bool            `json:"executeNow,omitempty"`
 	ProjectID           string          `json:"projectId,omitempty"`
 	IndependentProjects bool            `json:"independentProjects,omitempty"`
+	AssessmentMode      string          `json:"assessmentMode,omitempty"`
+	AllowDuplicateTasks bool            `json:"allowDuplicateTasks,omitempty"`
 	Concurrency         int             `json:"concurrency,omitempty"`
 	ModelRetryMax       *int            `json:"modelRetryMax,omitempty"`
 	AIChannelID         string          `json:"aiChannelId,omitempty"`
@@ -1896,7 +1900,12 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		nextRunAt = &next
 	}
 
-	opts := database.BatchQueueCreateOptions{IndependentProjects: req.IndependentProjects}
+	assessmentMode, policyErr := database.NormalizeAssessmentMode(req.AssessmentMode, req.IndependentProjects || strings.TrimSpace(req.ProjectID) != "")
+	if policyErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": policyErr.Error()})
+		return
+	}
+	opts := database.BatchQueueCreateOptions{IndependentProjects: req.IndependentProjects, AssessmentMode: assessmentMode, AllowDuplicateTasks: req.AllowDuplicateTasks}
 	if session, ok := security.CurrentSession(c); ok {
 		opts.OwnerUserID = session.UserID
 	}
@@ -1940,6 +1949,7 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 			"task_count": len(validTasks), "started": started,
 		})
 	}
+	h.decorateBatchQueueActivity(queue)
 	c.JSON(http.StatusOK, gin.H{
 		"queueId": queue.ID,
 		"queue":   queue,
@@ -1955,6 +1965,7 @@ func (h *AgentHandler) GetBatchQueue(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "队列不存在"})
 		return
 	}
+	h.decorateBatchQueueActivity(queue)
 	c.JSON(http.StatusOK, gin.H{"queue": queue})
 }
 
@@ -2025,6 +2036,9 @@ func (h *AgentHandler) ListBatchQueues(c *gin.Context) {
 		page = (offset / limit) + 1
 	}
 
+	for _, queue := range queues {
+		h.decorateBatchQueueActivity(queue)
+	}
 	response := ListBatchQueuesResponse{
 		Queues:     queues,
 		Total:      total,
@@ -2183,6 +2197,7 @@ func (h *AgentHandler) SetBatchQueueScheduleEnabled(c *gin.Context) {
 		return
 	}
 	queue, _ := h.batchTaskManager.GetBatchQueue(queueID)
+	h.decorateBatchQueueActivity(queue)
 	c.JSON(http.StatusOK, gin.H{"queue": queue})
 }
 

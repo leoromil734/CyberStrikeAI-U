@@ -142,7 +142,7 @@ func RunEinoSingleChatModelAgent(
 	}
 	var singleFsMW adk.ChatModelAgentMiddleware
 	if einoSkillMW != nil && einoFSTools && einoLoc != nil {
-		singleFsMW, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, einoSingleAgentName, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil)
+		singleFsMW, err = subAgentFilesystemMiddleware(ctx, einoLoc, toolInvokeNotify, einoSingleAgentName, einoExecBegin, einoExecAppendPartial, einoExecRegisterCancel, einoExecUnregisterCancel, einoExecFinish, agentToolTimeoutMinutes(appCfg), agentToolWaitTimeoutSeconds(appCfg), agentShellNoOutputTimeoutSeconds(appCfg), nil, ag.PrepareLocalExecutionContext)
 		if err != nil {
 			return nil, fmt.Errorf("eino single filesystem 中间件: %w", err)
 		}

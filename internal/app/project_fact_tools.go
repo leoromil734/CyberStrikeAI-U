@@ -90,10 +90,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 						"recon/source 须含 status/raw/unique/incremental/error/alt_tried/evidence，raw 为真实整数，文本用 raw_output；版本化账本带 assessment_id；recon/endpoint 须含 host/method/path/runtime_status 等；body 带 endpoint_url/method/assessment_id 时自动生成稳定端点 key，以返回 fact_key 为准。" +
 						"更新已有 fact_key 时若省略或留空 body，将保留库中已有 body（可只改 summary）。",
 				},
-				"body_fields": map[string]interface{}{
-					"type":        "object",
-					"description": "可选：完整结构化正文对象，宿主安全序列化 JSON，避免 YAML 的 @、冒号与 key=value 混写错误。与非空 body 二选一，不是字段补丁。assessment_id 须匹配版本化 key，省略时可从 key 同步，显式冲突会拒绝。来源 raw/unique/incremental 为真实整数，不能填 30+；文本输出用 raw_output，covered 附 evidence。",
-				},
+				"body_fields": ledgerStructuredBodySchema(),
 				"confidence": map[string]interface{}{
 					"type":        "string",
 					"description": "confirmed | tentative | deprecated；创建默认 tentative，更新时省略或留空保留原值",
@@ -156,7 +153,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if strings.TrimSpace(strArg(args, "confidence")) != "deprecated" {
 			body, ledgerNotes, err = coverage.NormalizeLedgerWrite(factKey, body)
 			if err != nil {
-				return textResult("错误: 账本未保存: "+err.Error(), true), nil
+				return ledgerWriteValidationError(ctx, factKey, err, args), nil
 			}
 		}
 		canonicalKey, err := coverage.CanonicalEndpointFactKey(factKey, body)
@@ -180,11 +177,11 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		// historical record must remain possible; restoring it requires repair.
 		if effectiveConfidence != "deprecated" {
 			if err := coverage.ValidateLedgerFact(factKey, effectiveBody); err != nil {
-				return textResult("错误: 账本未保存: "+err.Error(), true), nil
+				return ledgerWriteValidationError(ctx, factKey, err, args), nil
 			}
 			if canonicalKey != factKey {
 				if err := coverage.ValidateLedgerFact(canonicalKey, effectiveBody); err != nil {
-					return textResult("错误: 账本未保存: "+err.Error(), true), nil
+					return ledgerWriteValidationError(ctx, factKey, err, args), nil
 				}
 			}
 		}

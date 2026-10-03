@@ -37,7 +37,7 @@ function getBatchQueueStatusPresentation(queue) {
         pending: { text: _t('tasks.statusPending'), class: 'batch-queue-status-pending' },
         running: { text: _t('tasks.statusRunning'), class: 'batch-queue-status-running' },
         paused: { text: _t('tasks.statusPaused'), class: 'batch-queue-status-paused' },
-        completed: { text: _t('tasks.statusCompleted'), class: 'batch-queue-status-completed' },
+        completed: { text: _t('tasks.statusQueueEnded'), class: 'batch-queue-status-ended' },
         cancelled: { text: _t('tasks.statusCancelled'), class: 'batch-queue-status-cancelled' }
     };
     const base = map[queue.status] || { text: queue.status, class: 'batch-queue-status-unknown' };
@@ -74,24 +74,123 @@ function getBatchQueueStatusPresentation(queue) {
     return { ...base, ...empty };
 }
 
-/** blocked 单独计数，既不是成功也不计入已交付进度。 */
+const BATCH_ASSESSMENT_MODES = ['auto', 'conversation', 'execution', 'comprehensive'];
+
+function normalizeBatchAssessmentMode(mode) {
+    return BATCH_ASSESSMENT_MODES.includes(mode) ? mode : 'auto';
+}
+
+/** 创建时默认 auto；历史快照缺字段时不补写、不推断曾进行验证。 */
+function batchAssessmentModeLabel(mode) {
+    const keys = { auto: 'assessmentAuto', conversation: 'assessmentConversation', execution: 'assessmentExecution', comprehensive: 'assessmentComprehensive' };
+    if (!mode) return _t('tasks.assessmentUnrecorded');
+    return Object.prototype.hasOwnProperty.call(keys, mode) ? _t('tasks.' + keys[mode]) : String(mode);
+}
+
+/** 仅解释服务端字段，不根据结果正文猜测拒绝或验证成功，不改写任务快照。 */
+function taskGovernanceResult(task) {
+    const status = String(task?.status || 'unknown');
+    const outcome = String(task?.outcome || '');
+    if (['pending', 'running', 'cancelling', 'paused'].includes(status)) return status;
+    if (status === 'declined' || outcome === 'declined') return 'declined';
+    if (['failed', 'timeout', 'cancelled'].includes(status)) return status;
+    if (status === 'blocked') return ['tool_blocked', 'no_execution_evidence'].includes(outcome) ? outcome : status;
+    if (status === 'completed') {
+        if (!outcome) return 'completed';
+        if (['verified_complete', 'delivered_with_gaps', 'delivered', 'tool_blocked', 'no_execution_evidence'].includes(outcome)) return outcome;
+    }
+    return 'unknown';
+}
+
+function taskGovernancePresentation(task, prefix = 'batch-task-status') {
+    const result = taskGovernanceResult(task);
+    const map = {
+        pending: ['statusPending', 'pending'], running: ['statusRunning', 'running'],
+        cancelling: ['statusCancelling', 'running'], paused: ['statusPaused', 'blocked'],
+        completed: ['statusLegacyCompleted', 'legacy-completed'],
+        verified_complete: ['statusVerifiedComplete', 'completed'],
+        delivered: ['statusDelivered', 'delivered'], delivered_with_gaps: ['statusDeliveredWithGaps', 'gaps'],
+        declined: ['statusDeclined', 'declined'], tool_blocked: ['statusToolBlocked', 'blocked'],
+        no_execution_evidence: ['statusNoExecutionEvidence', 'blocked'], blocked: ['statusBlocked', 'blocked'],
+        failed: ['statusFailed', 'failed'], timeout: ['statusTimeout', 'failed'], cancelled: ['statusCancelled', 'cancelled'],
+        unknown: ['unknown', 'unknown']
+    };
+    const entry = map[result];
+    const text = result === 'unknown' && task?.outcome
+        ? _tPlain('tasks.unknownOutcome', { outcome: String(task.outcome) }) : _t('tasks.' + entry[0]);
+    return { text, class: prefix + '-' + entry[1], result };
+}
+
+function isTaskConversationActive(task) {
+    return task?.conversationActive === true || ['running', 'cancelling'].includes(task?.latestRun?.status);
+}
+
+function isTaskManualContinuation(task) {
+    return isTaskConversationActive(task) && !['running', 'cancelling'].includes(task?.status);
+}
+
+/** 历史队列结果和最近的手动运行分别统计，续跑不会覆盖原任务的结果。 */
 function batchQueueTaskStats(queue) {
-    const stats = { total: 0, pending: 0, running: 0, paused: 0, completed: 0, blocked: 0, failed: 0, cancelled: 0 };
-    (queue.tasks || []).forEach(task => {
+    const stats = { total: 0, pending: 0, running: 0, cancelling: 0, paused: 0, completed: 0,
+        verifiedComplete: 0, delivered: 0, legacyCompleted: 0, deliveredWithGaps: 0,
+        declined: 0, blocked: 0, failed: 0, timeout: 0, cancelled: 0, unknown: 0, manualActive: 0, processed: 0 };
+    (Array.isArray(queue?.tasks) ? queue.tasks : []).forEach(task => {
         if (!task) return;
         stats.total++;
-        if (Object.prototype.hasOwnProperty.call(stats, task.status) && task.status !== 'total') {
-            stats[task.status]++;
-        }
+        const result = taskGovernanceResult(task);
+        if (result === 'verified_complete') { stats.verifiedComplete++; stats.completed++; }
+        else if (result === 'delivered') { stats.delivered++; stats.completed++; }
+        else if (result === 'completed') { stats.legacyCompleted++; stats.completed++; }
+        else if (result === 'delivered_with_gaps') stats.deliveredWithGaps++;
+        else if (result === 'tool_blocked' || result === 'no_execution_evidence') stats.blocked++;
+        else stats[result]++;
+        if (isTaskManualContinuation(task)) stats.manualActive++;
     });
+    // 处理进度不是成功率：拒绝算已结束，缺口交付单列，阻断/暂停不算交付。
+    stats.processed = stats.completed + stats.deliveredWithGaps + stats.declined + stats.failed + stats.timeout + stats.cancelled;
     return stats;
+}
+
+function batchQueueOutcomeSummaryHtml(stats) {
+    const entries = [
+        ['verifiedComplete', 'verifiedCompleteCount', 'completed'], ['delivered', 'deliveredCount', 'delivered'],
+        ['legacyCompleted', 'legacyCompletedCount', 'legacy-completed'], ['deliveredWithGaps', 'deliveredWithGapsCount', 'gaps'],
+        ['declined', 'declinedCount', 'declined'], ['failed', 'failedCount', 'failed'], ['timeout', 'timeoutCount', 'failed'],
+        ['cancelled', 'cancelledCount', 'cancelled'], ['blocked', 'blockedCount', 'blocked'],
+        ['paused', 'pausedCount', 'blocked'], ['running', 'runningCount', 'running'], ['cancelling', 'cancellingCount', 'running'],
+        ['pending', 'pendingCount', 'pending'], ['unknown', 'unknownCount', 'unknown']
+    ];
+    return entries.filter(([key]) => stats[key] > 0).map(([key, label, tone]) =>
+        `<span class="batch-task-status batch-task-status-${tone}">${escapeHtml(_tPlain('tasks.' + label, { count: stats[key] }))}</span>`
+    ).join('');
+}
+
+function batchQueueDuplicatesSkipped(queue) {
+    return Number.isSafeInteger(queue?.duplicateTasksSkipped) && queue.duplicateTasksSkipped >= 0 ? queue.duplicateTasksSkipped : null;
+}
+
+function renderTaskGovernance(task) {
+    const run = task.latestRun && typeof task.latestRun === 'object' && !Array.isArray(task.latestRun) ? task.latestRun : null;
+    const manualActive = isTaskManualContinuation(task);
+    const reason = task.completionReason && task.completionReason !== task.error ? String(task.completionReason) : '';
+    const runPres = run ? taskGovernancePresentation(run) : null;
+    const runTime = run?.startedAt ? new Date(run.startedAt) : null;
+    return `${manualActive ? `<p class="task-governance-note">${escapeHtml(_t('tasks.manualContinuationHint'))}</p>` : ''}
+        ${reason ? `<p class="task-governance-reason">${escapeHtml(_t('tasks.completionReasonLabel'))}: ${escapeHtml(reason)}</p>` : ''}
+        ${run ? `<div class="task-latest-run">
+            <div class="task-latest-run-heading"><strong>${escapeHtml(_t('tasks.latestRunLabel'))}</strong><span class="batch-task-status ${runPres.class}">${escapeHtml(runPres.text)}</span></div>
+            <p>${escapeHtml(_t('tasks.assessmentModeLabel'))}: ${escapeHtml(batchAssessmentModeLabel(run.assessmentMode))}${runTime && Number.isFinite(runTime.getTime()) ? ` · ${escapeHtml(runTime.toLocaleString())}` : ''}</p>
+            ${run.runId ? `<p>${escapeHtml(_t('tasks.runIdLabel'))}: <code>${escapeHtml(String(run.runId))}</code></p>` : ''}
+            ${run.assessmentId ? `<p>${escapeHtml(_t('tasks.assessmentIdLabel'))}: <code>${escapeHtml(String(run.assessmentId))}</code></p>` : ''}
+            ${run.completionReason ? `<p>${escapeHtml(_t('tasks.completionReasonLabel'))}: ${escapeHtml(String(run.completionReason))}</p>` : ''}
+        </div>` : ''}`;
 }
 
 /** 队列是否处于「可改子任务列表/文案」的空闲态（与后端 batch_task_manager.queueAllowsTaskListMutationLocked 对齐） */
 function batchQueueAllowsSubtaskMutation(queue) {
     if (!queue) return false;
     if (queue.status === 'running' || queue.executorActive) return false;
-    const hasRunningSubtask = Array.isArray(queue.tasks) && queue.tasks.some(t => t && t.status === 'running');
+    const hasRunningSubtask = Array.isArray(queue.tasks) && queue.tasks.some(t => t && (t.status === 'running' || isTaskConversationActive(t)));
     if (hasRunningSubtask) return false;
     return queue.status === 'pending' || queue.status === 'paused' || queue.status === 'completed' || queue.status === 'cancelled';
 }
@@ -99,13 +198,15 @@ function batchQueueAllowsSubtaskMutation(queue) {
 /** 是否允许对指定子任务发起单条执行（与后端 queueAllowsSingleTaskRunLocked 对齐） */
 function batchQueueCanRunSingleTask(queue, task) {
     if (!queue || !task) return false;
-    if (task.status === 'running') return false;
+    if (task.status === 'running' || isTaskConversationActive(task)) return false;
     if (queue.status === 'running' || queue.executorActive) return false;
+    if (Array.isArray(queue.tasks) && queue.tasks.some(isTaskConversationActive)) return false;
     return queue.status === 'pending' || queue.status === 'paused' || queue.status === 'completed' || queue.status === 'cancelled';
 }
 
 function batchQueueRunSingleTaskDisabledReason(queue, task) {
     if (!queue || !task) return _t('tasks.runSingleTaskUnavailable');
+    if (isTaskConversationActive(task) || (Array.isArray(queue.tasks) && queue.tasks.some(isTaskManualContinuation))) return _t('tasks.runSingleTaskUnavailableConversation');
     if (task.status === 'running') return _t('tasks.runSingleTaskUnavailableSelf');
     if (queue.status === 'running') return _t('tasks.runSingleTaskUnavailableQueue');
     return _t('tasks.runSingleTaskUnavailable');
@@ -171,7 +272,7 @@ function updateCompletedTasksHistory(currentTasks) {
     justStopped.forEach(task => {
         const exists = tasksState.completedTasksHistory.some(t => t.conversationId === task.conversationId);
         if (!exists) {
-            const finalStatus = ['completed', 'blocked', 'paused', 'failed', 'timeout', 'cancelled'].includes(task.status)
+            const finalStatus = ['completed', 'blocked', 'paused', 'declined', 'failed', 'timeout', 'cancelled'].includes(task.status)
                 ? task.status
                 : 'unknown';
             tasksState.completedTasksHistory.push({
@@ -179,6 +280,8 @@ function updateCompletedTasksHistory(currentTasks) {
                 message: task.title || task.message || _t('tasks.unnamedTask'),
                 startedAt: task.startedAt,
                 status: finalStatus,
+                // 仅保留明确结束的快照结果；列表消失不推断最近运行成功或拒绝。
+                ...(finalStatus !== 'unknown' && task.outcome ? { outcome: task.outcome } : {}),
                 completionReason: task.completionReason || '',
                 error: task.error || '',
                 completedAt: new Date().toISOString()
@@ -244,6 +347,7 @@ async function loadTasks() {
             // 后端的历史记录优先，然后添加本地独有的
             tasksState.completedTasksHistory = [
                 ...completedTasks.map(t => ({
+                    ...t, // 保留服务端 outcome/latestRun 等字段，不给旧历史补写推断结果。
                     conversationId: t.conversationId,
                     message: t.message || '未命名任务',
                     startedAt: t.startedAt,
@@ -281,31 +385,7 @@ async function loadTasks() {
 
 // 更新任务统计
 function updateTaskStats(tasks) {
-    const stats = {
-        running: 0,
-        cancelling: 0,
-        completed: 0,
-        failed: 0,
-        timeout: 0,
-        cancelled: 0,
-        total: tasks.length
-    };
-
-    tasks.forEach(task => {
-        if (task.status === 'running') {
-            stats.running++;
-        } else if (task.status === 'cancelling') {
-            stats.cancelling++;
-        } else if (task.status === 'completed') {
-            stats.completed++;
-        } else if (task.status === 'failed') {
-            stats.failed++;
-        } else if (task.status === 'timeout') {
-            stats.timeout++;
-        } else if (task.status === 'cancelled') {
-            stats.cancelled++;
-        }
-    });
+    const stats = batchQueueTaskStats({ tasks });
 
     const statRunning = document.getElementById('stat-running');
     const statCancelling = document.getElementById('stat-cancelling');
@@ -452,18 +532,7 @@ function renderTasks(tasks) {
         return;
     }
 
-    // 状态映射
-    const statusMap = {
-        'running': { text: _t('tasks.statusRunning'), class: 'task-status-running' },
-        'cancelling': { text: _t('tasks.statusCancelling'), class: 'task-status-cancelling' },
-        'paused': { text: _t('tasks.statusPaused'), class: 'task-status-blocked' },
-        'failed': { text: _t('tasks.statusFailed'), class: 'task-status-failed' },
-        'timeout': { text: _t('tasks.statusTimeout'), class: 'task-status-timeout' },
-        'cancelled': { text: _t('tasks.statusCancelled'), class: 'task-status-cancelled' },
-        'completed': { text: _t('tasks.statusCompleted'), class: 'task-status-completed' },
-        'blocked': { text: _t('tasks.statusBlocked'), class: 'task-status-blocked' },
-        'unknown': { text: _t('tasks.unknown'), class: 'task-status-unknown' }
-    };
+    // 状态和评估结果分开解读，拒绝/有缺口交付不按普通完成展示。
 
     // 分离当前任务和历史任务
     const activeTasks = tasks.filter(t => !t.isHistory);
@@ -473,7 +542,7 @@ function renderTasks(tasks) {
     
     // 渲染当前任务
     if (activeTasks.length > 0) {
-        html += activeTasks.map(task => renderTaskItem(task, statusMap)).join('');
+        html += activeTasks.map(task => renderTaskItem(task)).join('');
     }
     
     // 渲染历史任务
@@ -483,7 +552,7 @@ function renderTasks(tasks) {
                 <span class="tasks-history-title">📜 ` + _t('tasks.recentCompletedTasks') + `</span>
                 <button class="btn-secondary btn-small" onclick="clearTasksHistory()">` + _t('tasks.clearHistory') + `</button>
             </div>
-            ${historyTasks.map(task => renderTaskItem(task, statusMap, true)).join('')}
+            ${historyTasks.map(task => renderTaskItem(task, true)).join('')}
         </div>`;
     }
     
@@ -491,7 +560,7 @@ function renderTasks(tasks) {
 }
 
 // 渲染单个任务项
-function renderTaskItem(task, statusMap, isHistory = false) {
+function renderTaskItem(task, isHistory = false) {
     const startedTime = task.startedAt ? new Date(task.startedAt) : null;
     const completedTime = task.completedAt ? new Date(task.completedAt) : null;
     
@@ -517,10 +586,10 @@ function renderTaskItem(task, statusMap, isHistory = false) {
         })
         : '';
 
-    const status = statusMap[task.status] || { text: task.status, class: 'task-status-unknown' };
-    const isStoppedStatus = ['failed', 'timeout', 'cancelled', 'completed', 'blocked', 'unknown'].includes(task.status);
+    const status = taskGovernancePresentation(task, 'task-status');
+    const isStoppedStatus = ['failed', 'timeout', 'cancelled', 'completed', 'blocked', 'declined', 'unknown'].includes(task.status);
     const canCancel = !isStoppedStatus && task.status !== 'cancelling' && !isHistory;
-    const blockedReason = task.status === 'blocked' ? (task.error || task.completionReason || _t('tasks.blockedRecoveryHint')) : '';
+    const blockedReason = status.result === 'blocked' ? (task.error || task.completionReason || _t('tasks.blockedRecoveryHint')) : '';
     const isSelected = tasksState.selectedTasks.has(task.conversationId);
     const duration = (task.status === 'running' || task.status === 'cancelling') 
         ? calculateDuration(task.startedAt) 
@@ -547,7 +616,7 @@ function renderTaskItem(task, statusMap, isHistory = false) {
                                    onchange="toggleTaskSelection('${task.conversationId}', this.checked)">
                         </label>
                     ` : '<div class="task-checkbox-placeholder"></div>'}
-                    <span class="task-status ${status.class}">${status.text}</span>
+                    <span class="task-status ${status.class}">${escapeHtml(status.text)}</span>
                     ${modeBadge}
                     ${isHistory ? '<span class="task-history-badge" title="' + _t('tasks.historyBadge') + '">📜</span>' : ''}
                     <span class="task-message" title="${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}">${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}</span>
@@ -562,6 +631,7 @@ function renderTaskItem(task, statusMap, isHistory = false) {
                     ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewConversation('${task.conversationId}')">` + _t('tasks.viewConversation') + `</button>` : ''}
                 </div>
             </div>
+            ${renderTaskGovernance(task)}
             ${blockedReason ? `<div class="task-blocked-reason"><strong>${escapeHtml(_t('tasks.blockedReasonLabel'))}:</strong> ${escapeHtml(blockedReason)}</div>` : ''}
             ${task.conversationId ? `
                 <div class="task-details">
@@ -923,6 +993,10 @@ async function showBatchImportModal() {
         if (agentModeSelect) {
             agentModeSelect.value = 'eino_single';
         }
+        const assessmentSelect = document.getElementById('batch-queue-assessment-mode');
+        if (assessmentSelect) assessmentSelect.value = 'auto';
+        const duplicateCheckbox = document.getElementById('batch-queue-allow-duplicate-tasks');
+        if (duplicateCheckbox) duplicateCheckbox.checked = false;
         if (scheduleModeSelect) {
             scheduleModeSelect.value = 'manual';
         }
@@ -1344,6 +1418,8 @@ async function createBatchQueue() {
     const projectId = !independentProjects && projectSelect ? (projectSelect.value || '').trim() : '';
     const rawMode = agentModeSelect ? agentModeSelect.value : 'eino_single';
     const agentMode = isBatchQueueAgentMode(rawMode) ? rawMode : 'eino_single';
+    const assessmentMode = normalizeBatchAssessmentMode(document.getElementById('batch-queue-assessment-mode')?.value);
+    const allowDuplicateTasks = !!document.getElementById('batch-queue-allow-duplicate-tasks')?.checked;
     const scheduleMode = scheduleModeSelect ? (scheduleModeSelect.value === 'cron' ? 'cron' : 'manual') : 'manual';
     const cronExpr = cronExprInput ? cronExprInput.value.trim() : '';
     const executeNow = executeNowCheckbox ? !!executeNowCheckbox.checked : false;
@@ -1396,6 +1472,8 @@ async function createBatchQueue() {
                 tasks,
                 role,
                 agentMode,
+                assessmentMode,
+                allowDuplicateTasks,
                 scheduleMode,
                 cronExpr,
                 executeNow,
@@ -1659,6 +1737,7 @@ const BATCH_IMPORT_FORM_SELECT_IDS = [
     'batch-queue-role',
     'batch-queue-project-id',
     'batch-queue-agent-mode',
+    'batch-queue-assessment-mode',
     'batch-queue-schedule-mode',
 ];
 const batchFormSelectMap = {};
@@ -1901,9 +1980,10 @@ function renderBatchQueues() {
         
         const stats = batchQueueTaskStats(queue);
         
-        const progress = stats.total > 0 ? Math.round((stats.completed + stats.failed + stats.cancelled) / stats.total * 100) : 0;
-        // 允许删除待执行、已完成或已取消状态的队列
-        const canDelete = queue.status === 'pending' || queue.status === 'completed' || queue.status === 'cancelled';
+        const progress = stats.total > 0 ? Math.round(stats.processed / stats.total * 100) : 0;
+        const duplicatesSkipped = batchQueueDuplicatesSkipped(queue);
+        // 有正在手动续跑的会话时，不展示删除入口。
+        const canDelete = (queue.status === 'pending' || queue.status === 'completed' || queue.status === 'cancelled') && stats.manualActive === 0;
         // 操作列常驻「查看漏洞」，不再使用 --no-actions 隐藏整列（否则无法从运行中队列跳转漏洞页）
         const noActionsClass = '';
         
@@ -1919,7 +1999,7 @@ function renderBatchQueues() {
         if (queue.scheduleMode === 'cron' && queue.cronExpr) {
             scheduleLabel += ` (${queue.cronExpr})`;
         }
-        const configParts = [roleName, agentLabel, scheduleLabel];
+        const configParts = [roleName, agentLabel, batchAssessmentModeLabel(queue.assessmentMode), scheduleLabel];
         if (queue.independentProjects) configParts.push(_t('batchImportModal.independentProjects'));
         const configLine = configParts.map(s => escapeHtml(s)).join(' · ');
         const cronPausedNote = queue.scheduleMode === 'cron' && queue.scheduleEnabled === false
@@ -1929,7 +2009,7 @@ function renderBatchQueues() {
         const titleBlock = queue.title
             ? `<h4 class="batch-queue-card-title">${escapeHtml(queue.title)}</h4>`
             : `<h4 class="batch-queue-card-title batch-queue-card-title--muted">${escapeHtml(_t('tasks.batchQueueUntitled'))}</h4>`;
-        const doneCount = stats.completed + stats.failed + stats.cancelled;
+        const doneCount = stats.processed;
 
         return `
             <div class="batch-queue-item batch-queue-item--compact${cardMod}${noActionsClass}" data-queue-id="${queue.id}" onclick="showBatchQueueDetail('${queue.id}')">
@@ -1945,11 +2025,12 @@ function renderBatchQueues() {
                     <div class="batch-queue-item__cluster">
                         <div class="batch-queue-item__status-inline">
                             <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
-                            ${stats.paused > 0 ? `<span class="batch-task-status batch-task-status-blocked">${escapeHtml(_t('tasks.pausedCount', { count: stats.paused }))}</span>` : ''}
-                            ${stats.failed > 0 ? `<span class="batch-task-status batch-task-status-failed">${escapeHtml(_t('tasks.failedCount', { count: stats.failed }))}</span>` : ''}
-                            ${stats.blocked > 0 ? `<span class="batch-task-status batch-task-status-blocked" title="${escapeHtml(queue.lastRunError || _t('tasks.blockedRecoveryHint'))}">${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</span>` : ''}
-                            <span class="batch-queue-item__pct" title="${escapeHtml(_t('tasks.processedProgressHint'))}">${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
+                            ${stats.manualActive > 0 ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_tPlain('tasks.manualActiveCount', { count: stats.manualActive }))}</span>` : ''}
+                            <span class="batch-queue-item__pct" title="${escapeHtml(_t('tasks.processedProgressHint'))}">${escapeHtml(_t('tasks.processedLabel'))} ${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
                         </div>
+                        <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats)}</div>
+                        ${duplicatesSkipped !== null ? `<span class="batch-queue-item__sublabel">${escapeHtml(_tPlain('tasks.duplicateTasksSkipped', { count: duplicatesSkipped }))}</span>` : ''}
+                        ${stats.manualActive > 0 ? `<span class="batch-queue-item__sublabel">${escapeHtml(_t('tasks.queueHistoricalCountsHint'))}</span>` : ''}
                         ${pres.sublabel ? `<span class="batch-queue-item__sublabel">${escapeHtml(pres.sublabel)}</span>` : ''}
                     </div>
                     <div class="batch-queue-item__progress-col">
@@ -2104,7 +2185,7 @@ async function showBatchQueueDetail(queueId) {
         if (startBtn) {
             // Continue pending/paused items; completed/cancelled items require an explicit rerun.
             startBtn.style.display = (queue.status === 'pending' || queue.status === 'paused') && (stats.pending + stats.paused > 0) ? 'inline-block' : 'none';
-            startBtn.disabled = !!queue.executorActive && queue.status === 'paused';
+            startBtn.disabled = (!!queue.executorActive && queue.status === 'paused') || stats.manualActive > 0;
             if (startBtn && queue.status === 'paused') {
                 startBtn.textContent = _t('tasks.resumeExecute');
             } else if (startBtn && queue.status === 'pending') {
@@ -2118,6 +2199,8 @@ async function showBatchQueueDetail(queueId) {
         if (rerunBtn) {
             // 已完成或已取消状态显示"重跑一轮"
             rerunBtn.style.display = (queue.status === 'completed' || queue.status === 'cancelled') ? 'inline-block' : 'none';
+            rerunBtn.disabled = stats.manualActive > 0;
+            rerunBtn.title = stats.manualActive > 0 ? _t('tasks.runSingleTaskUnavailableConversation') : '';
         }
         if (pauseBtn) {
             // running状态显示"暂停队列"
@@ -2125,19 +2208,10 @@ async function showBatchQueueDetail(queueId) {
         }
         if (deleteBtn) {
             // 允许删除待执行、已完成或已取消状态的队列
-            deleteBtn.style.display = (queue.status === 'pending' || queue.status === 'completed' || queue.status === 'cancelled' || queue.status === 'paused') ? 'inline-block' : 'none';
+            deleteBtn.style.display = (queue.status === 'pending' || queue.status === 'completed' || queue.status === 'cancelled' || queue.status === 'paused') && stats.manualActive === 0 ? 'inline-block' : 'none';
         }
         
-        // 任务状态映射
-        const taskStatusMap = {
-            'pending': { text: _t('tasks.statusPending'), class: 'batch-task-status-pending' },
-            'running': { text: _t('tasks.statusRunning'), class: 'batch-task-status-running' },
-            'paused': { text: _t('tasks.statusPaused'), class: 'batch-task-status-blocked' },
-            'completed': { text: _t('tasks.statusCompleted'), class: 'batch-task-status-completed' },
-            'blocked': { text: _t('tasks.statusBlocked'), class: 'batch-task-status-blocked' },
-            'failed': { text: _t('tasks.failedLabel'), class: 'batch-task-status-failed' },
-            'cancelled': { text: _t('tasks.statusCancelled'), class: 'batch-task-status-cancelled' }
-        };
+        // 任务状态与 outcome 统一通过 taskGovernancePresentation 解读。
         
         let roleLineVal = '';
         if (queue.role && queue.role !== '') {
@@ -2187,6 +2261,10 @@ async function showBatchQueueDetail(queueId) {
                 <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
                 ${pres.sublabel ? `<p class="batch-queue-detail-hero__sub">${escapeHtml(pres.sublabel)}</p>` : ''}
                 ${showProgressNoteInModal ? `<p class="batch-queue-detail-hero__note">${escapeHtml(pres.progressNote)}</p>` : ''}
+                <p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.queueResultsLabel'))} · ${escapeHtml(_tPlain('tasks.processedFraction', { count: stats.processed, total: stats.total }))}</p>
+                <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats)}</div>
+                <p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.processedProgressHint'))}</p>
+                ${stats.manualActive > 0 ? `<p class="task-governance-note">${escapeHtml(_tPlain('tasks.manualActiveCount', { count: stats.manualActive }))} · ${escapeHtml(_t('tasks.queueHistoricalCountsHint'))}</p>` : ''}
             </section>
             <section class="batch-queue-detail-kv">
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.queueTitle'))}</span><span class="bq-kv__v" id="bq-title-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditTitle()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span>` : escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span></div>
@@ -2194,8 +2272,10 @@ async function showBatchQueueDetail(queueId) {
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.agentMode'))}</span><span class="bq-kv__v" id="bq-agentmode-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditAgentMode()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(agentModeText)}</span>` : escapeHtml(agentModeText)}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.scheduleMode'))}</span><span class="bq-kv__v" id="bq-schedule-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditSchedule()" title="${escapeHtml(_t('common.edit'))}">${scheduleDetail}</span>` : scheduleDetail}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.concurrency'))}</span><span class="bq-kv__v" id="bq-concurrency-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditConcurrency()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span>` : escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('tasks.assessmentModeLabel'))}</span><span class="bq-kv__v">${escapeHtml(batchAssessmentModeLabel(queue.assessmentMode))}</span></div>
+                ${batchQueueDuplicatesSkipped(queue) !== null ? `<div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('tasks.duplicatesSkippedLabel'))}</span><span class="bq-kv__v">${batchQueueDuplicatesSkipped(queue)}</span></div>` : ''}
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.modelRetry'))}</span><span class="bq-kv__v">${escapeHtml(String(Number.isFinite(queue.modelRetryMax) ? queue.modelRetryMax : 3))}</span></div>
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.taskTotal'))}</span><span class="bq-kv__v">${queue.tasks.length}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.taskTotal'))}</span><span class="bq-kv__v">${stats.total}</span></div>
                 ${queue.scheduleMode === 'cron' ? `<div class="bq-kv bq-kv--block"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAuto'))}</span><span class="bq-kv__v bq-kv__v--control"><label class="bq-cron-toggle"><input type="checkbox" ${queue.scheduleEnabled !== false ? 'checked' : ''} onchange="updateBatchQueueScheduleEnabled(this.checked)" /><span class="bq-cron-toggle__hint">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}</span></label></span></div>` : ''}
             </section>
             ${stats.blocked > 0 ? `<div class="bq-alert bq-alert--blocked"><strong>${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</strong><p>${escapeHtml(_t('tasks.blockedRecoveryHint'))}</p></div>` : ''}
@@ -2216,8 +2296,8 @@ async function showBatchQueueDetail(queueId) {
             </div>
             <div class="batch-queue-tasks-list">
                 <h4>` + _t('batchQueueDetailModal.taskList') + `</h4>
-                ${queue.tasks.map((task, index) => {
-                    const taskStatus = taskStatusMap[task.status] || { text: task.status, class: 'batch-task-status-unknown' };
+                ${(Array.isArray(queue.tasks) ? queue.tasks.filter(Boolean) : []).map((task, index) => {
+                    const taskStatus = taskGovernancePresentation(task);
                     const canEdit = allowSubtaskMutation && task.status !== 'running';
                     const canRunSingle = batchQueueCanRunSingleTask(queue, task);
                     const runSingleUnavailableTitle = escapeHtml(batchQueueRunSingleTaskDisabledReason(queue, task));
@@ -2228,7 +2308,8 @@ async function showBatchQueueDetail(queueId) {
                         <div class="batch-task-item ${task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${queue.id}" data-task-id="${task.id}" data-task-message="${taskMessageEscaped}">
                             <div class="batch-task-header">
                                 <span class="batch-task-index">#${index + 1}</span>
-                                <span class="batch-task-status ${taskStatus.class}">${taskStatus.text}</span>
+                                <span class="batch-task-status ${taskStatus.class}">${escapeHtml(taskStatus.text)}</span>
+                                ${isTaskManualContinuation(task) ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_t('tasks.manualContinuationActive'))}</span>` : ''}
                                 <span class="batch-task-message" title="${escapeHtml(task.message)}">${escapeHtml(task.message)}</span>
                                 ${canEdit ? `<select class="batch-task-model-select" title="${escapeHtml(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModel('${queue.id}', '${task.id}', this.value); event.stopPropagation();">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
                                 <button class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? `onclick="runSingleBatchTask('${queue.id}', '${task.id}'); event.stopPropagation();"` : `disabled title="${runSingleUnavailableTitle}"`}>` + _t('tasks.runSingleTask') + `</button>
@@ -2240,7 +2321,8 @@ async function showBatchQueueDetail(queueId) {
                             ${task.startedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.startLabel') + `: ${new Date(task.startedAt).toLocaleString()}</div>` : ''}
                             ${retryNote ? `<div class="batch-task-time">${escapeHtml(retryNote)}</div>` : ''}
                             ${task.completedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.completeLabel') + `: ${new Date(task.completedAt).toLocaleString()}</div>` : ''}
-                            ${task.error ? `<div class="${task.status === 'blocked' ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(task.status === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
+                            ${renderTaskGovernance(task)}
+                            ${task.error ? `<div class="${['blocked', 'tool_blocked', 'no_execution_evidence'].includes(taskStatus.result) ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(taskStatus.result === 'declined' ? 'tasks.declinedReasonLabel' : taskStatus.result === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
                             ${task.result ? `<div class="batch-task-result">` + _t('batchQueueDetailModal.resultLabel') + `: ${escapeHtml(task.result.substring(0, 200))}${task.result.length > 200 ? '...' : ''}</div>` : ''}
                         </div>
                     `;
@@ -2263,8 +2345,8 @@ async function showBatchQueueDetail(queueId) {
         }
         });
 
-        // 仅运行中定时拉取详情；其它状态应停止，避免 innerHTML 重绘把 <details> 等 UI 打回默认态
-        if (queue.status === 'running' || queue.executorActive) {
+        // 手动续跑也刷新最近运行状态，但不覆盖历史队列结果。
+        if (queue.status === 'running' || queue.executorActive || (Array.isArray(queue.tasks) && queue.tasks.some(isTaskConversationActive))) {
             startBatchQueueRefresh(queueId);
         } else {
             stopBatchQueueRefresh();

@@ -1049,9 +1049,12 @@ func EnableConfiguredCredentialTools(cfg *Config) {
 }
 
 type SecurityConfig struct {
-	Tools               []ToolConfig `yaml:"tools,omitempty"`                 // 向后兼容：支持在主配置文件中定义工具
-	ToolsDir            string       `yaml:"tools_dir,omitempty"`             // 工具配置文件目录（新方式）
-	ToolDescriptionMode string       `yaml:"tool_description_mode,omitempty"` // 工具描述模式: "short" | "full"，默认 short
+	Tools                  []ToolConfig `yaml:"tools,omitempty"`                 // 向后兼容：支持在主配置文件中定义工具
+	ToolsDir               string       `yaml:"tools_dir,omitempty"`             // 工具配置文件目录（新方式）
+	ToolDescriptionMode    string       `yaml:"tool_description_mode,omitempty"` // 工具描述模式: "short" | "full"，默认 short
+	MaxConcurrentTools     int          `yaml:"max_concurrent_tools,omitempty" json:"maxConcurrentTools,omitempty"`
+	MaxConcurrentPerTool   int          `yaml:"max_concurrent_per_tool,omitempty" json:"maxConcurrentPerTool,omitempty"`
+	MaxConcurrentPerTarget int          `yaml:"max_concurrent_per_target,omitempty" json:"maxConcurrentPerTarget,omitempty"`
 }
 
 type DatabaseConfig struct {
@@ -1395,6 +1398,10 @@ type ParameterConfig struct {
 	Options       []string    `yaml:"options,omitempty"`        // 可选值列表（用于枚举）
 	ExistingFile  bool        `yaml:"existing_file,omitempty"`  // true 时执行前校验值指向已存在的普通文件；显式路径无效且候选存在时回退并提示
 	FallbackPaths []string    `yaml:"fallback_paths,omitempty"` // 候选文件路径：未显式传值或显式值无效时，按顺序选择第一个存在的文件
+	Minimum       *float64    `yaml:"minimum,omitempty"`
+	Maximum       *float64    `yaml:"maximum,omitempty"`
+	MaxItems      *int        `yaml:"max_items,omitempty"`
+	ConflictsWith []string    `yaml:"conflicts_with,omitempty"`
 }
 
 func Load(path string) (*Config, error) {

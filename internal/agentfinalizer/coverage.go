@@ -45,7 +45,21 @@ func coverageForDelivery(db *database.DB, in Input) coverage.Report {
 		return failure(fmt.Sprintf("cannot read coverage ledger: %v", err))
 	}
 	var newest *database.ProjectFact
+	activeRun, runErr := db.LatestAssessmentRun(in.ConversationID)
+	if runErr != nil {
+		return failure("cannot read persisted assessment policy")
+	}
+	lockedAssessment := ""
+	if activeRun != nil && activeRun.Mode == database.AssessmentModeComprehensive {
+		if activeRun.ProjectID != projectID {
+			return failure("assessment project binding changed; a new authorized assessment is required")
+		}
+		lockedAssessment = activeRun.AssessmentID
+	}
 	for _, fact := range facts {
+		if lockedAssessment != "" && fact.FactKey != "recon/assessment/"+lockedAssessment {
+			continue
+		}
 		if fact.SourceConversationID == in.ConversationID && strings.HasPrefix(fact.FactKey, "recon/assessment/") && (newest == nil || fact.UpdatedAt.After(newest.UpdatedAt)) {
 			newest = fact
 		}
@@ -64,5 +78,9 @@ func coverageForDelivery(db *database.DB, in Input) coverage.Report {
 		selected = append(selected, coverage.Fact{Key: fact.FactKey, Body: fact.Body})
 	}
 	// Once a manifest activated the gate, an invalid mode/body cannot disable it.
-	return coverage.Check(selected, true)
+	report := coverage.Check(selected, true)
+	if lockedAssessment != "" {
+		checkIndependentInventory(db, projectID, in.ConversationID, lockedAssessment, selected, &report)
+	}
+	return report
 }

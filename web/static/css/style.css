@@ -19435,6 +19435,63 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
     overflow-wrap: anywhere;
 }
 
+.task-status-delivered,
+.batch-task-status-delivered {
+    background: color-mix(in srgb, #2563eb 12%, var(--bg-secondary, #fff));
+    color: var(--accent-color, #2563eb);
+    border: 1px solid color-mix(in srgb, #2563eb 35%, transparent);
+}
+.task-status-gaps,
+.batch-task-status-gaps {
+    background: color-mix(in srgb, #d97706 12%, var(--bg-secondary, #fff));
+    color: #b45309;
+    border: 1px solid color-mix(in srgb, #d97706 35%, transparent);
+}
+.task-status-declined,
+.batch-task-status-declined {
+    background: color-mix(in srgb, #a855f7 12%, var(--bg-secondary, #fff));
+    color: #9333ea;
+    border: 1px solid color-mix(in srgb, #a855f7 35%, transparent);
+}
+.task-status-legacy-completed,
+.batch-task-status-legacy-completed,
+.batch-queue-status-ended {
+    background: var(--bg-tertiary, #f1f5f9);
+    color: var(--text-secondary, #64748b);
+    border: 1px solid var(--border-color, #e2e8f0);
+}
+.batch-queue-outcome-summary,
+.task-latest-run-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.batch-queue-outcome-summary {
+    margin-top: 8px;
+}
+.task-governance-note,
+.task-governance-reason,
+.task-latest-run {
+    margin: 8px 0 0;
+    color: var(--text-secondary, #64748b);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+.task-governance-note {
+    color: var(--accent-color, #2563eb);
+}
+.task-latest-run {
+    padding: 10px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    background: var(--bg-secondary, #f8fafc);
+}
+.task-latest-run p {
+    margin: 4px 0 0;
+}
 .task-status-unknown {
     background: var(--bg-secondary);
     color: var(--text-secondary);
@@ -33894,6 +33951,88 @@ html[data-theme="dark"] .chat-files-toast.chat-toast--error {
     font-size: 0.8125rem;
     color: #64748b;
     line-height: 1.45;
+}
+.project-finding-candidates {
+    flex: 0 1 auto;
+    min-height: 0;
+    margin-top: 12px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 10px;
+    background: var(--bg-secondary, #f8fafc);
+    color: var(--text-primary, #334155);
+    overflow: auto;
+}
+.project-finding-candidates > summary {
+    padding: 10px 12px;
+    cursor: pointer;
+    font-weight: 600;
+}
+.project-finding-candidates > summary:focus-visible {
+    outline: 2px solid var(--accent-color, #2563eb);
+    outline-offset: -2px;
+}
+.project-candidates-separation-hint,
+.project-candidates-page-hint,
+.project-candidate-notice {
+    margin: 0;
+    padding: 8px 12px;
+    color: var(--text-secondary, #64748b);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+}
+.project-finding-candidates-body {
+    max-height: 320px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+.project-candidates-toolbar,
+.project-candidates-controls,
+.project-candidate-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+.project-candidates-toolbar {
+    padding: 8px 12px;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+}
+.project-candidate-list {
+    display: grid;
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+.project-candidate {
+    padding: 10px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    background: var(--bg-primary, #fff);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.project-candidate p { margin: 5px 0 0; white-space: pre-wrap; }
+.project-candidate-state {
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    color: var(--text-secondary, #64748b);
+    background: var(--bg-tertiary, #f1f5f9);
+}
+.project-candidate-state--tentative,
+.project-candidate-state--waiting { color: #b45309; }
+.project-candidate-state--blocked { color: #dc2626; }
+.project-candidate-state--validated { color: #15803d; }
+.project-candidate-state--rejected { color: var(--text-muted, #94a3b8); }
+.project-candidate-observed-hint { color: var(--text-secondary, #64748b); }
+.project-candidate-evidence { margin-top: 8px; }
+.project-candidate-evidence > summary { cursor: pointer; }
+.project-candidate-evidence pre {
+    margin: 4px 0 0;
+    font-size: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 .projects-table-wrap {
     border: 1px solid #e2e8f0;

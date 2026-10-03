@@ -14,8 +14,11 @@ import (
 // BatchQueueCreateOptions adds opt-in project isolation without changing the
 // existing shared-project behaviour of API clients or persisted queues.
 type BatchQueueCreateOptions struct {
-	IndependentProjects bool
-	OwnerUserID         string
+	IndependentProjects   bool
+	OwnerUserID           string
+	AssessmentMode        string
+	AllowDuplicateTasks   bool
+	DuplicateTasksSkipped int
 }
 
 // NewBatchTaskProject allocates a private project identity before persistence.

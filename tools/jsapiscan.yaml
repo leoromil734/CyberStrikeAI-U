@@ -1,28 +1,47 @@
 name: "jsapiscan"
 command: "/usr/local/bin/jsapiscan"
 enabled: true
-short_description: "JSAPIscan 发现 JS/chunk 与 API 候选；保存源码，再用 grep/rg 补提取"
+short_description: "JSAPIscan 有界发现 JS/API 候选；心跳、完整性清单与离线源码复核"
 description: |
   JSAPIscan 官方 v1.1.2 Linux/amd64 发布版，通过本项目 Python 启动器运行。
   参考 https://github.com/ruisika/jsapiscan，但参数以已校验二进制实际运行结果为准。
-  启动器核对固定 SHA-256，使用专用非 root 用户、systemd 文件系统隔离、独立结果目录和总超时。
+  启动器核对固定 SHA-256，使用专用非 root 用户、systemd 文件系统隔离、独立结果目录和有界超时。
   服务编排要求 Linux/systemd 的 root 宿主；上游进程本身使用 csai-jsapiscan，不以 root 运行。
+  每批最多20个已授权目标，整个调用最多200个唯一目标；批次顺序执行，失败/超时/取消后停止，不自动重跑。
+  total_timeout_seconds 是所有批次共享的扫描时限，不按批重置；每批同时受 batch_timeout_seconds 和剩余全局时间约束。
+  清理只共享额外20秒宽限，随后离线导出另受 export_timeout_seconds 约束。
+  外层硬超时需容纳 total_timeout_seconds + 20 + export_timeout_seconds，并预留清单写入余量；心跳不延长硬超时。
+  heartbeat_interval_seconds 默认20秒、范围15–30秒；stdout 只输出阶段、数字计数、受控原因及私有结果路径，不输出 URL、请求头或正文。
 
-  **默认职责：** URL → HTML/JS/chunk 发现 → 保存 JS → API/路由/敏感字符串候选。
+  **默认职责：** URL → HTML/JS/chunk 发现 → 保存 JS → API/路由候选。
   这是会发送 HTTP GET 的爬取工具，不是原 jsluice 的离线文件解析替代命令；不能传本地 JS 当 URL。
-  只提供 url 或 targets_file 其中一个。直接分析现有本地文件仍使用 exec + grep/rg；jsluice 保留但默认停用，可按需恢复。
-  每次结果写入 /var/lib/jsapiscan/runs/run-*/，工具回包包含 work_dir、stdout_file、manifest 和候选预览。
-  上游 -o 是 txt/html 输出类型；-op 由启动器限制为本轮内部文件名，不能当任意目录或覆盖生产文件。
-  原件 CSV（URL/Method/Length/Body/Status）、保存的 JS 和工具日志需按回包路径读取，预览不是完整端点清单。
+  只提供 url 或 targets_file 其中一个；validate_only=true 只做本地输入类型/文件/目标/预算复核，不调用 systemd/扫描器、不请求网络。
+  每次结果写入 /var/lib/jsapiscan/runs/run-*/，批次原件放在 work/batch-0001 等目录。
+  最后 jsapiscan_result 回包包含 manifest_file、work_dir、stdout_file、candidates_file、counts 和完整性状态；50条预览保存在私有 manifest 中。
+  上游 -o 是 txt/html 输出类型；-op 由启动器限制为每批内部文件名，不能当任意目录或覆盖生产文件。
+  原件 CSV（URL/Method/Length/Body/Status）、保存的 JS 和受限工具日志需按回包路径读取；日志和原件可能含敏感内容，不整体回显。
+  CSV/hash 均流式处理，规范化唯一候选完整导出 candidates.ndjson；不再按8MiB文件或10000行截断。
+  counts.raw/unique/exported/skipped/parse_errors/duplicates 是已观察到的记录计数；raw_complete=false 时 raw 不是未知原件的总量。
+  单字段1Mi字符、单物理行4Mi字符、单逻辑记录8Mi字符/256列、非法编码/CSV形状、导出时限或取消均留明确 blocked_reasons，不得把超大/截断项写成完整。
+  state=partial/complete/cancelled 与 complete/partial/cancelled/export_complete 分开保存；complete 仅表示流程和导出结束，不代表目标已覆盖。
+  coverage_complete 始终 false；所有记录 candidate_only=true，引用不能计为已请求/已验证。
+  规范化保留 scheme/host/显式port/path模板与参数名，保留 action/method/operation/p_p_resource_id/p_p_id/do/route/controller/resource 路由值。
+  普通查询值与常见个人标识省略；导出不包含 Body/Headers。原件仍保存在权限受限目录以便按授权复核。
 
-  **JS 双通道与证据：** 必须随后对全部保存的 JS/chunk/worker/source map 原源码实际执行 grep/rg，
-  追踪 baseURL、相对路径、模板拼接、axios/fetch/XHR、方法与参数；两路合并去重，保留来源/hash/计数。
+  **JS 双通道与证据：** 随后可先离线执行本模块 js_candidate_extract.py，输出 inventory.ndjson 和 JS/map/下载独立队列；不执行 JS、不抓取引用。
+  python3 /path/to/scripts/recon/js_candidate_extract.py --input /path/to/work --output-dir /path/to/new-offline-inventory
+  URL清单离线整理使用 url_inventory.py --input /path/to/urls.txt --output-dir /path/to/new-url-inventory（text/ndjson/csv）。
+  提取保留来源/hash/行列、方法、baseURL候选、参数名、结构化上下文及不确定性；source-map 的 sourcesContent 流式解析。
+  未嵌入源码、索引式map、超大源文件及非法/截断map都留下 gap；候选提取完成也不能宣称所有运行时端点已发现。
+  仍须对保存的 JS/chunk/worker/source map 原源码做必要的 grep/rg 与人工调用上下文复核；两路合并时保留来源与计数。
   默认 api_tests=false；上游仍可能对发现路径做 GET 基线/补探，不能宣称完全不访问 API。
   API 测试、外链、无头浏览器和个人信息提取仅在当前范围与前提允许时显式启用。
   默认 GET-only；只有 api_tests=true、get_only=false、allow_post_retry=true 三项明确指定时才允许 GET 405 后 POST 重试。
   external_links/collect_external_links 默认 false；跨域资源不自动获得主动测试授权，domainblock 是黑名单而不是授权白名单。
   gorog/Rod 无头模式可能下载浏览器并增加上下文/资源需求，不默认启用；仅在所需浏览器和网络条件可控时使用。
-  header_file 优先于内联 headers，避免凭据进入命令参数/执行日志；同一次运行二者不能同时设置。
+  header_file 优先于内联 headers，避免凭据进入宿主调用参数；二者不能同时设置，启动器均以受限临时头文件传上游并在清理时删除。
+  上游二进制只由 systemd 启动；离线脚本与测试不安装、下载或执行扫描器。
+  部署需把 candidate_inventory.py 放在启动器同目录（或保持 scripts/recon Python 包目录），只复制旧单文件会缺少依赖。
 
   **已验证的版本差异：** GitHub 发布标签 v1.1.2，内部 build 版本为 v1.0.1-9-g111b7a2-dirty；来源 hash 已匹配，但无法源码复现。
   帮助页虽然列 -Ineedparms，实际正常解析会报 flag provided but not defined；本适配不传该参数，参数通过源码检索补齐。
@@ -33,7 +52,7 @@ description: |
 
   **示例：**
   - 首轮：url=https://app.example.com，默认保存源码、校验 TLS，API/外链/无头关闭。
-  - 批量：targets_file=/path/to/in-scope-urls.txt（最多20条），不与 url 混用。
+  - 批量：targets_file=/path/to/in-scope-urls.txt（最多200条；默认每批20条），不与 url 混用；不重置全局扫描时限。
   - 认证态：header_file=/path/to/task-headers.txt（已知范围内测试身份，进度不打印密钥）。
   - 受控 GET 验证：api_tests=true，max_api_tests=100，get_only=true。
   - 更深 chunk：depth=10，max_js_requests=2000，仍受 total_timeout_seconds 限制，不把截断队列写为已全覆盖。
@@ -42,14 +61,14 @@ parameters:
   - name: "url"
     aliases: ["target", "u"]
     type: "string"
-    description: "范围内 HTTP/HTTPS URL，可逗号分隔最多20个；不接受本地文件或带用户名/密码的 URL；与 targets_file 二选一。"
+    description: "范围内 HTTP/HTTPS URL，可逗号分隔最多200个唯一目标；包装层每批≤20，不自动扩大授权；不接受本地文件或带用户名/密码的 URL；与 targets_file 二选一。"
     required: false
     flag: "-u"
     format: "flag"
   - name: "targets_file"
     aliases: ["file", "input_file", "f"]
     type: "string"
-    description: "已存在的 UTF-8 URL 清单，每行一个，最多20个唯一范围内目标，文件≤128KiB；与 url 二选一。"
+    description: "已存在的 UTF-8 URL 清单，每行一个，最多200个唯一范围内目标，文件≤128KiB；按 batch_size 有界分批，共享全局时限；与 url 二选一。"
     required: false
     existing_file: true
     flag: "-f"
@@ -98,9 +117,39 @@ parameters:
     format: "flag"
   - name: "total_timeout_seconds"
     type: "int"
-    description: "启动器与 systemd 的整轮总超时，1–1800秒，默认300；超时保留原件并标未完成。"
+    description: "所有批次共享的扫描总时限，1–1800秒，默认300，不按批重置；每批 systemd 取剩余时限与 batch_timeout_seconds 较小值。超时保留原件、写 partial 清单；外层须另留清理/导出余量。"
     default: 300
     flag: "--total-timeout"
+    format: "flag"
+  - name: "batch_size"
+    type: "int"
+    description: "包装层单批目标数，1–20，默认20；总目标最多200，顺序执行、共享扫描时限，不自动重跑失败或已完成批次。"
+    default: 20
+    flag: "--batch-size"
+    format: "flag"
+  - name: "batch_timeout_seconds"
+    type: "int"
+    description: "每批扫描时限，1–1800秒，默认300；实际取此值与剩余全局时限较小者，不改变单目标 JS/HTML/API 请求类别预算。"
+    default: 300
+    flag: "--batch-timeout"
+    format: "flag"
+  - name: "heartbeat_interval_seconds"
+    type: "int"
+    description: "无敏感内容的阶段/计数心跳，15–30秒，默认20；启动/阶段变化另即时输出。不回显 URL、请求头、日志正文；心跳不能延长外层硬时限。"
+    default: 20
+    flag: "--heartbeat-interval"
+    format: "flag"
+  - name: "export_timeout_seconds"
+    type: "int"
+    description: "扫描清理后的流式 CSV/hash/NDJSON 离线导出时限，1–300秒，默认120；耗尽标 export_complete=false/raw_complete=false，保留已写候选。"
+    default: 120
+    flag: "--export-timeout"
+    format: "flag"
+  - name: "validate_only"
+    type: "bool"
+    description: "仅离线复核输入类型、文件、URL/数量和参数依赖；不调用 systemd 或扫描器、不发送请求，输出数量/批次/预算。错误时给受控原因与可写的失败清单。"
+    default: false
+    flag: "--validate-only"
     format: "flag"
   - name: "output_format"
     type: "string"

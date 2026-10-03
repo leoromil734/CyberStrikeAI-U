@@ -26,7 +26,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 
 	server.RegisterTool(mcp.Tool{
 		Name: builtin.ToolCreateAsset, ShortDescription: "新增或去重更新资产",
-		Description: "向资产库新增资产。按目标+端口+协议去重；若资产已存在则更新非空字段。至少提供 host、ip、domain 之一。",
+		Description: "向资产库新增资产。默认关联当前对话项目，显式不一致的 project_id 会被拒绝。按域名（优先）或目标+端口+协议去重；保留原项目和历史 IP/来源观测，新增项目只追加关联。至少提供 host、ip、domain 之一。",
 		// Bedrock rejects tool schemas with top-level oneOf/allOf/anyOf. The
 		// host/ip/domain requirement is enforced by assetFromCreateArgs below.
 		InputSchema: map[string]interface{}{"type": "object", "properties": properties},
@@ -35,6 +35,12 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
+		projectID, _, err := agentAssetMutationProject(db, ctx, args)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		asset.ProjectID = projectID
+		bindAssetToolObservation(ctx, asset)
 		access, owner, global := assetAccessFromToolContext(ctx, "asset:write")
 		result, err := db.UpsertAssets([]*database.Asset{asset}, owner, global)
 		if err != nil {
@@ -44,7 +50,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		if result.Skipped > 0 || asset.ID == "" {
 			return textResult("资产未保存：同一资产已存在但当前用户无权更新，或目标字段为空", true), nil
 		}
-		saved, err := db.GetAsset(asset.ID, access)
+		saved, err := db.GetAssetForProject(asset.ID, projectID, access)
 		if err != nil {
 			return textResult("资产已保存，但无法读取结果: "+err.Error(), true), nil
 		}
@@ -52,28 +58,37 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		if result.Updated > 0 {
 			action = "updated"
 		}
-		return assetJSONResult(map[string]interface{}{"action": action, "asset": assetToolDetail(saved)})
+		detail, err := assetToolDetailWithEvidence(db, saved, access, projectID)
+		if err != nil {
+			return textResult("资产已保存，但无法读取观测: "+err.Error(), true), nil
+		}
+		return assetJSONResult(map[string]interface{}{"action": action, "asset": detail})
 	})
 
 	server.RegisterTool(mcp.Tool{
 		Name: builtin.ToolGetAsset, ShortDescription: "按 ID 查看资产详情", Description: "按资产 ID 返回完整资产详情。查询列表时先用 query_assets，避免一次拉取过多详情。",
 		InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "资产 ID"}}, "required": []string{"id"}},
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
-		projectID, projectScoped, err := agentAssetProjectScope(db, ctx)
+		if err := requireAssetToolAccess(ctx, "asset:read"); err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		projectID, _, err := agentAssetProjectScope(db, ctx)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		asset, err := db.GetAsset(strings.TrimSpace(strArg(args, "id")), assetAccessOnly(ctx, "asset:read"))
+		access := assetAccessOnly(ctx, "asset:read")
+		asset, err := db.GetAssetForProject(strings.TrimSpace(strArg(args, "id")), projectID, access)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return textResult("错误: 资产不存在或无权查看", true), nil
 			}
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		if projectScoped && strings.TrimSpace(asset.ProjectID) != projectID {
-			return textResult("错误: 资产不存在或不属于当前对话绑定的项目", true), nil
+		detail, err := assetToolDetailWithEvidence(db, asset, access, projectID)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
 		}
-		return assetJSONResult(assetToolDetail(asset))
+		return assetJSONResult(detail)
 	})
 
 	server.RegisterTool(mcp.Tool{
@@ -81,6 +96,9 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		Description: "分页查询资产。支持精确字段、时间范围、扫描状态和白名单排序。查最久未扫描资产请使用 sort_by=last_scan_at、sort_order=asc；从未扫描资产会排在最前。默认每页 20 条，最大 50 条，返回精简摘要；使用 get_asset 获取单条详情。",
 		InputSchema: assetQuerySchema(),
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		if err := requireAssetToolAccess(ctx, "asset:read"); err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
 		filter, page, pageSize, err := assetFilterFromToolArgs(args)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
@@ -117,35 +135,62 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 	updateProperties["id"] = map[string]interface{}{"type": "string", "description": "资产 ID"}
 	server.RegisterTool(mcp.Tool{
 		Name: builtin.ToolUpdateAsset, ShortDescription: "局部更新资产",
-		Description: "按 ID 局部更新资产，只修改显式传入的字段；可传空 project_id 清除项目绑定，可传空 tags 清空标签。",
+		Description: "按 ID 局部更新资产，只修改显式传入的字段。对话绑定项目后，只能更新该项目已关联的资产，不能切换或清除项目；新增项目关联保留原项目。未绑定项目的对话可传空 project_id 清除项目关联，可传空 tags 清空标签。",
 		InputSchema: map[string]interface{}{"type": "object", "properties": updateProperties, "required": []string{"id"}},
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		id := strings.TrimSpace(strArg(args, "id"))
-		access := assetAccessOnly(ctx, "asset:write")
-		asset, err := db.GetAsset(id, access)
+		projectID, scoped, err := agentAssetMutationProject(db, ctx, args)
 		if err != nil {
-			return textResult("错误: 资产不存在或无权更新", true), nil
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		access := assetAccessOnly(ctx, "asset:write")
+		// An explicit destination outside a conversation is an association to
+		// add, not a prerequisite for reading the pre-existing asset.
+		scope := ""
+		if scoped {
+			scope = projectID
+		}
+		asset, err := db.GetAssetForProject(id, scope, access)
+		if err != nil {
+			return textResult("错误: 资产不存在、无权更新或不属于当前对话项目", true), nil
 		}
 		if err := applyAssetPatch(asset, args); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		if err := db.UpdateAsset(id, asset, access); err != nil {
+		if scoped {
+			asset.ProjectID = projectID
+		}
+		if assetPatchContainsObservation(args) {
+			bindAssetToolObservation(ctx, asset)
+		}
+		if err := db.UpdateAssetForProject(id, asset, access, scope); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		updated, err := db.GetAsset(id, access)
+		updated, err := db.GetAssetForProject(id, scope, access)
 		if err != nil {
 			return textResult("资产已更新，但无法读取结果: "+err.Error(), true), nil
 		}
-		return assetJSONResult(map[string]interface{}{"action": "updated", "asset": assetToolDetail(updated)})
+		detail, err := assetToolDetailWithEvidence(db, updated, access, scope)
+		if err != nil {
+			return textResult("资产已更新，但无法读取观测: "+err.Error(), true), nil
+		}
+		return assetJSONResult(map[string]interface{}{"action": "updated", "asset": detail})
 	})
 
 	server.RegisterTool(mcp.Tool{
 		Name: builtin.ToolDeleteAsset, ShortDescription: "删除资产", Description: "按 ID 永久删除资产记录。仅在用户明确要求删除时调用。",
 		InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "资产 ID"}}, "required": []string{"id"}},
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		if err := requireAssetToolAccess(ctx, "asset:delete"); err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
 		id := strings.TrimSpace(strArg(args, "id"))
-		if err := db.DeleteAsset(id, assetAccessOnly(ctx, "asset:delete")); err != nil {
-			return textResult("错误: 资产不存在或无权删除", true), nil
+		projectID, _, err := agentAssetProjectScope(db, ctx)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
+		if err := db.DeleteAssetForProject(id, assetAccessOnly(ctx, "asset:delete"), projectID); err != nil {
+			return textResult("错误: 资产不存在、无权删除或不属于当前对话项目", true), nil
 		}
 		return textResult("资产已删除: "+id, false), nil
 	})
@@ -162,19 +207,30 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 			"required": []string{"id"},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		if err := requireAssetToolAccess(ctx, "asset:write"); err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
 		id := strings.TrimSpace(strArg(args, "id"))
 		conversationID := conversationIDFromToolCtx(ctx)
 		if conversationID == "" {
 			return textResult("错误: 无法确定当前扫描对话", true), nil
 		}
+		principal, _ := authctx.PrincipalFromContext(ctx)
+		if !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "conversation", conversationID) {
+			return textResult("错误: 无权关联当前扫描对话", true), nil
+		}
+		projectID, _, err := agentAssetProjectScope(db, ctx)
+		if err != nil {
+			return textResult("错误: "+err.Error(), true), nil
+		}
 		access := assetAccessOnly(ctx, "asset:write")
-		if err := db.CompleteAssetScan(id, conversationID, access); err != nil {
+		if err := db.CompleteAssetScanForProject(id, conversationID, access, projectID); err != nil {
 			if err == sql.ErrNoRows {
 				return textResult("错误: 资产不存在或无权回写扫描结果", true), nil
 			}
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		updated, err := db.GetAsset(id, access)
+		updated, err := db.GetAssetForProject(id, projectID, access)
 		if err != nil {
 			return textResult("扫描结果已回写，但无法读取资产: "+err.Error(), true), nil
 		}
@@ -198,8 +254,10 @@ func assetMutationProperties() map[string]interface{} {
 		"environment":     map[string]interface{}{"type": "string", "enum": []string{"production", "staging", "testing", "development", "other"}},
 		"criticality":     map[string]interface{}{"type": "string", "enum": []string{"critical", "high", "medium", "low"}},
 		"source":          map[string]interface{}{"type": "string"}, "source_query": map[string]interface{}{"type": "string"},
-		"status": map[string]interface{}{"type": "string", "enum": []string{"active", "inactive"}},
-		"tags":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "maxItems": 50},
+		"observed_at":  map[string]interface{}{"type": "string", "description": "可选观测时间（RFC3339）；默认当前时间"},
+		"execution_id": map[string]interface{}{"type": "string", "description": "可选执行引用，仅记录证据，不授予权限"},
+		"status":       map[string]interface{}{"type": "string", "enum": []string{"active", "inactive"}},
+		"tags":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "maxItems": 50},
 	}
 }
 
@@ -273,6 +331,23 @@ func applyAssetPatch(asset *database.Asset, args map[string]interface{}) error {
 			return fmt.Errorf("port 必须在 0-65535 之间")
 		}
 		asset.Port = port
+	}
+	if _, ok := args["observed_at"]; ok {
+		raw := strings.TrimSpace(strArg(args, "observed_at"))
+		observedAt, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return fmt.Errorf("observed_at 必须是 RFC3339 时间")
+		}
+		if asset.Observation == nil {
+			asset.Observation = &database.AssetObservation{}
+		}
+		asset.Observation.ObservedAt = observedAt
+	}
+	if _, ok := args["execution_id"]; ok {
+		if asset.Observation == nil {
+			asset.Observation = &database.AssetObservation{}
+		}
+		asset.Observation.ExecutionID = strings.TrimSpace(strArg(args, "execution_id"))
 	}
 	if raw, ok := args["tags"]; ok {
 		tags, err := stringSliceArg(raw)
@@ -414,6 +489,14 @@ func stringSliceArg(raw interface{}) ([]string, error) {
 	return values, nil
 }
 
+func requireAssetToolAccess(ctx context.Context, permission string) error {
+	principal, ok := authctx.PrincipalFromContext(ctx)
+	if !ok || strings.TrimSpace(principal.UserID) == "" || !principal.HasPermission(permission) {
+		return fmt.Errorf("缺少资产操作权限: %s", permission)
+	}
+	return nil
+}
+
 func assetAccessOnly(ctx context.Context, permission string) database.RBACListAccess {
 	principal, ok := authctx.PrincipalFromContext(ctx)
 	if !ok {
@@ -431,10 +514,68 @@ func assetAccessFromToolContext(ctx context.Context, permission string) (databas
 	return access, principal.UserID, access.Scope == database.RBACScopeAll
 }
 
-// agentAssetProjectScope returns the hard asset-read boundary implied by the
+// agentAssetMutationProject applies the conversation's hard project boundary
+// before any write. Explicit empty/different destinations cannot remove or
+// bypass a bound project; default inheritance receives the same project RBAC
+// check as an explicit project_id in the existing MCP authorizer.
+func agentAssetMutationProject(db *database.DB, ctx context.Context, args map[string]interface{}) (string, bool, error) {
+	projectID, scoped, err := agentAssetProjectScope(db, ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if err := requireAssetToolAccess(ctx, "asset:write"); err != nil {
+		return "", false, err
+	}
+	principal, _ := authctx.PrincipalFromContext(ctx)
+	if conversationID := conversationIDFromToolCtx(ctx); conversationID != "" && !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "conversation", conversationID) {
+		return "", false, fmt.Errorf("无权在当前对话记录资产")
+	}
+	if raw, explicit := args["project_id"]; explicit {
+		value, ok := raw.(string)
+		if !ok {
+			return "", false, fmt.Errorf("project_id 必须是字符串")
+		}
+		value = strings.TrimSpace(value)
+		if scoped && value != projectID {
+			return "", false, fmt.Errorf("project_id 与当前对话绑定项目不一致，不能切换或清除项目")
+		}
+		if !scoped {
+			projectID = value
+		}
+	}
+	if projectID != "" {
+		if !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "project", projectID) {
+			return "", false, fmt.Errorf("无权绑定该项目")
+		}
+		if _, err := db.GetProjectName(projectID); err != nil {
+			return "", false, fmt.Errorf("项目不存在或无法读取")
+		}
+	}
+	return projectID, scoped, nil
+}
+
+func assetPatchContainsObservation(args map[string]interface{}) bool {
+	for _, key := range []string{"ip", "source", "source_query", "observed_at", "execution_id"} {
+		if _, present := args[key]; present {
+			return true
+		}
+	}
+	return false
+}
+
+func bindAssetToolObservation(ctx context.Context, asset *database.Asset) {
+	if asset.Observation == nil {
+		asset.Observation = &database.AssetObservation{}
+	}
+	// The caller cannot claim another conversation's evidence or permissions.
+	asset.Observation.ConversationID = conversationIDFromToolCtx(ctx)
+}
+
+// agentAssetProjectScope returns the hard asset boundary implied by the
 // current conversation. An unbound conversation (or a tool call outside a
 // conversation) keeps the existing all-accessible-assets behavior. A bound
-// conversation can only read assets assigned to that exact project.
+// conversation can only access assets associated with that exact project,
+// through either the original project field or asset_project_links.
 func agentAssetProjectScope(db *database.DB, ctx context.Context) (projectID string, scoped bool, err error) {
 	conversationID := conversationIDFromToolCtx(ctx)
 	if conversationID == "" {
@@ -500,6 +641,34 @@ func assetToolDetail(asset *database.Asset) map[string]interface{} {
 		detail["tags_truncated"] = true
 	}
 	return detail
+}
+
+// Include only a small page of evidence, restricted to the bound project when
+// present. Asset fields remain backward compatible and retain the original
+// primary project; context_project_id explains visibility through a new link.
+func assetToolDetailWithEvidence(db *database.DB, asset *database.Asset, access database.RBACListAccess, projectID string) (map[string]interface{}, error) {
+	detail := assetToolDetail(asset)
+	observations, total, err := db.ListAssetObservations(asset.ID, 10, 0, access, projectID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]interface{}, 0, len(observations))
+	for _, observation := range observations {
+		items = append(items, map[string]interface{}{
+			"id": observation.ID, "project_id": observation.ProjectID,
+			"ip": truncateRunes(observation.IP, 100), "source": truncateRunes(observation.Source, 100),
+			"source_query": truncateRunes(observation.SourceQuery, 512), "observed_at": observation.ObservedAt,
+			"conversation_id": observation.ConversationID, "execution_id": truncateRunes(observation.ExecutionID, 255),
+		})
+	}
+	detail["observations"], detail["observations_total"] = items, total
+	if projectID != "" {
+		detail["context_project_id"] = projectID
+	}
+	if total > len(items) {
+		detail["observations_truncated"] = true
+	}
+	return detail, nil
 }
 
 func assetJSONResult(value interface{}) (*mcp.ToolResult, error) {

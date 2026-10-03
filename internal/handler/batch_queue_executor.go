@@ -13,6 +13,7 @@ import (
 	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 
@@ -256,7 +257,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		h.taskEventBus.Publish(conversationID, line)
 	}
 
-	if _, err := h.tasks.StartTask(conversationID, task.Message, cancelWithCause); err != nil {
+	if _, err := h.tasks.StartBatchTask(conversationID, task.Message, cancelWithCause); err != nil {
 		h.logger.Warn("批量队列子任务注册会话运行状态失败",
 			zap.String("queueId", queueID),
 			zap.String("taskId", task.ID),
@@ -276,6 +277,24 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		return
 	}
 
+	governedRun, governanceInstruction, governanceErr := h.beginGovernedBatchRun(queue, task, conversationID, projectID, assistantMessageID, resuming)
+	if governanceErr != nil {
+		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusBlocked, "", "初始化评估策略失败: "+governanceErr.Error())
+		finishStatus = BatchTaskStatusBlocked
+		return
+	}
+	finalMessage += governanceInstruction
+	defer func() {
+		if governedRun != nil {
+			reason := decision.CompletionReason
+			if reason == "" {
+				reason = finishStatus
+			}
+			if err := h.db.FinishAssessmentRun(governedRun.ID, finishStatus, reason, agentfinalizer.Outcome(finishStatus, reason, decision.FinalText)); err != nil {
+				h.logger.Warn("保存任务运行终态失败", zap.Error(err), zap.String("runId", governedRun.ID))
+			}
+		}
+	}()
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 	taskCtx = mcp.WithMCPConversationID(taskCtx, conversationID)
 	taskCtx = mcp.WithToolRunRegistry(taskCtx, h.tasks)
@@ -359,7 +378,8 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 
 		cumulativeMCPExecutionIDs = mergeMCPExecutionIDLists(cumulativeMCPExecutionIDs, resultMA.MCPExecutionIDs)
 		resultMA.MCPExecutionIDs = cumulativeMCPExecutionIDs
-		decision = h.decideAgentRunForDelivery(conversationID, assistantMessageID, "batch", resultMA, cumulativeMCPExecutionIDs)
+		requireExecution := queue.AssessmentMode == database.AssessmentModeExecution || queue.AssessmentMode == database.AssessmentModeComprehensive
+		decision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "batch", resultMA, cumulativeMCPExecutionIDs, requireExecution, queue.AssessmentMode == database.AssessmentModeComprehensive)
 		// 上游网关以 HTTP 200 返回错误正文：不能当成功交付，按可重试的模型错误处理。
 		if decision.CompletionReason == agentfinalizer.ReasonUpstreamErrorText {
 			if upstreamErrorRetries < maxRetry {
@@ -465,7 +485,9 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 // batchSubTaskDeliveryDecision 将批量交付状态与 RunResult 对齐；nil runErr 不是成功凭据。
 func batchSubTaskDeliveryDecision(result *multiagent.RunResult, decision agentfinalizer.Decision) agentfinalizer.Decision {
 	if decision.Finalizable {
-		decision.Status = BatchTaskStatusCompleted
+		if decision.Status != agentfinalizer.StatusDeclined {
+			decision.Status = BatchTaskStatusCompleted
+		}
 	} else {
 		decision.Finalized = false
 		switch decision.Status {
@@ -493,7 +515,7 @@ func batchSubTaskDoneEvent(conversationID, finishStatus string, decision agentfi
 		decision.CompletionReason = finishStatus
 	}
 	decision.Status = finishStatus
-	if finishStatus != BatchTaskStatusCompleted {
+	if finishStatus != BatchTaskStatusCompleted && finishStatus != BatchTaskStatusDeclined {
 		decision.Finalizable = false
 		decision.Finalized = false
 	}

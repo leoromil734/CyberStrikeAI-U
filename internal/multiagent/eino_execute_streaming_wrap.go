@@ -73,6 +73,7 @@ type einoStreamingShellWrap struct {
 	registerCancelMonitor   func(executionID string, cancel context.CancelFunc)
 	unregisterCancelMonitor func(executionID string)
 	finishMonitor           func(executionID, toolCallID, command, stdout string, success bool, invokeErr error)
+	prepareExecutionContext func(context.Context, string) context.Context
 }
 
 func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *filesystem.ExecuteRequest) (*schema.StreamReader[*filesystem.ExecuteResponse], error) {
@@ -104,6 +105,9 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 	}
 	toolRunReg := mcp.ToolRunRegistryFromContext(ctx)
 
+	if monitorExecID != "" && w.prepareExecutionContext != nil {
+		ctx = w.prepareExecutionContext(ctx, monitorExecID)
+	}
 	execCtx, execCancel := context.WithCancel(ctx)
 	var timeoutCancel context.CancelFunc
 	if w.toolTimeoutMinutes > 0 {
@@ -212,6 +216,10 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 		if idleWatch != nil {
 			defer idleWatch.Stop()
 		}
+		var outputActivity <-chan struct{}
+		if runtime, ok := mcp.LocalExecutionRuntimeFromContext(tctx); ok {
+			outputActivity = runtime.Activity
+		}
 		var waitTimeoutCh <-chan time.Time
 		var waitTimer *time.Timer
 		if waitTimeoutSec > 0 {
@@ -260,6 +268,10 @@ func (w *einoStreamingShellWrap) ExecuteStreaming(ctx context.Context, input *fi
 				idleCh = idleWatch.Expired
 			}
 			select {
+			case <-outputActivity:
+				if idleWatch != nil {
+					idleWatch.Bump()
+				}
 			case <-idleCh:
 				fireInactivityTimeout()
 				break recvLoop

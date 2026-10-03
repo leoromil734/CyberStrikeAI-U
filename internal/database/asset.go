@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,9 @@ type Asset struct {
 	VulnerabilityCount     int        `json:"vulnerability_count"`
 	RiskLevel              string     `json:"risk_level"`
 	OwnerUserID            string     `json:"-"`
+	// Optional observation metadata. Identity/IP/source are always taken from
+	// this Asset, not from caller-supplied observation identity fields.
+	Observation *AssetObservation `json:"observation,omitempty"`
 }
 
 type AssetListFilter struct {
@@ -299,96 +303,157 @@ func appendAssetAccess(query string, args []interface{}, access RBACListAccess, 
 	return query, append(args, access.UserID, access.UserID, access.UserID, access.UserID)
 }
 
+const assetInsertSQL = `INSERT INTO assets (
+	id,dedup_key,project_id,host,ip,port,domain,protocol,title,server,country,province,city,source,source_query,status,tags_json,
+	responsible_person,department,business_system,environment,criticality,
+	first_seen_at,last_seen_at,created_at,updated_at,owner_user_id
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT (dedup_key) DO NOTHING`
+
 func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...bool) (AssetImportResult, error) {
-	result := AssetImportResult{}
-	tx, err := db.Begin()
-	if err != nil {
-		return result, err
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	global := len(allowGlobal) > 0 && allowGlobal[0]
+	access := RBACListAccess{UserID: ownerUserID, Scope: RBACScopeOwn}
+	if global {
+		access.Scope = RBACScopeAll
 	}
-	defer tx.Rollback()
-	now := time.Now()
-	for _, asset := range assets {
+	type candidate struct {
+		index int
+		asset Asset
+		key   string
+	}
+	candidates := make([]candidate, 0, len(assets))
+	nilCount := 0
+	for i, asset := range assets {
 		if asset == nil {
-			result.Skipped++
+			nilCount++
 			continue
 		}
-		normalizeAsset(asset)
-		if err := validateAsset(asset); err != nil {
-			return result, fmt.Errorf("第 %d 个资产无效: %w", result.Created+result.Updated+result.Skipped+1, err)
+		// Do not expose generated IDs or partial successes before COMMIT, and
+		// start every transaction retry with the same normalized input.
+		copy := *asset
+		copy.Tags = append([]string(nil), asset.Tags...)
+		if asset.Observation != nil {
+			observation := *asset.Observation
+			copy.Observation = &observation
 		}
-		key := assetDedupKey(asset)
-		if key == "|0|" {
-			result.Skipped++
-			continue
+		normalizeAsset(&copy)
+		if err := validateAsset(&copy); err != nil {
+			return AssetImportResult{}, fmt.Errorf("第 %d 个资产无效: %w", i+1, err)
 		}
-		var existingID string
-		var existingOwner sql.NullString
-		err := tx.QueryRow(`SELECT id,owner_user_id FROM assets WHERE dedup_key = ?`, key).Scan(&existingID, &existingOwner)
-		tagsJSON, _ := json.Marshal(asset.Tags)
-		if err == sql.ErrNoRows {
-			asset.ID = uuid.NewString()
-			asset.FirstSeenAt, asset.LastSeenAt, asset.CreatedAt, asset.UpdatedAt = now, now, now, now
-			_, err = tx.Exec(`INSERT INTO assets (
-				id,dedup_key,project_id,host,ip,port,domain,protocol,title,server,country,province,city,source,source_query,status,tags_json,
-				responsible_person,department,business_system,environment,criticality,
-				first_seen_at,last_seen_at,created_at,updated_at,owner_user_id
-			) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-				asset.ID, key, nullIfEmpty(asset.ProjectID), asset.Host, asset.IP, asset.Port, asset.Domain, asset.Protocol, asset.Title, asset.Server,
-				asset.Country, asset.Province, asset.City, asset.Source, asset.SourceQuery, asset.Status, string(tagsJSON),
-				asset.ResponsiblePerson, asset.Department, asset.BusinessSystem, asset.Environment, asset.Criticality,
+		candidates = append(candidates, candidate{index: i, asset: copy, key: assetDedupKey(&copy)})
+	}
+	// A consistent lock order avoids opposite-order batch deadlocks in PG.
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].key < candidates[j].key })
+	var result AssetImportResult
+	committed := make([]Asset, len(candidates))
+	err := db.withAssetTransaction(func(tx *Tx) error {
+		result = AssetImportResult{Skipped: nilCount}
+		now := time.Now().UTC()
+		for i, input := range candidates {
+			a := input.asset
+			a.ID = ""
+			committed[i] = a
+			tagsJSON, _ := json.Marshal(a.Tags)
+			newID := uuid.NewString()
+			// SQLite obtains its write reservation before any read. PG waits on
+			// the unique key here, then reads/locks the winning row below. The
+			// conflict clause is intentionally not allowed to mutate metadata.
+			insert, err := tx.Exec(assetInsertSQL,
+				newID, input.key, nullIfEmpty(a.ProjectID), a.Host, a.IP, a.Port, a.Domain, a.Protocol, a.Title, a.Server,
+				a.Country, a.Province, a.City, a.Source, a.SourceQuery, a.Status, string(tagsJSON),
+				a.ResponsiblePerson, a.Department, a.BusinessSystem, a.Environment, a.Criticality,
 				now, now, now, now, nullIfEmpty(ownerUserID))
 			if err != nil {
-				return result, fmt.Errorf("创建资产失败: %w", err)
+				return fmt.Errorf("创建资产失败: %w", err)
 			}
-			if ownerUserID != "" {
-				if _, err := tx.Exec(`INSERT OR IGNORE INTO rbac_resource_assignments (id,user_id,resource_type,resource_id,created_at) SELECT ?,id,?,?,? FROM rbac_users WHERE id=?`, uuid.NewString(), "asset", asset.ID, now, ownerUserID); err != nil {
-					return result, fmt.Errorf("授权新资产失败: %w", err)
+			inserted, err := insert.RowsAffected()
+			if err != nil {
+				return err
+			}
+			var existingID, existingOwner, existingProject string
+			if err := tx.QueryRow(`SELECT id,COALESCE(owner_user_id,''),COALESCE(project_id,''),first_seen_at,created_at
+				FROM assets WHERE dedup_key=?`+db.assetRowLock(), input.key).Scan(
+				&existingID, &existingOwner, &existingProject, &a.FirstSeenAt, &a.CreatedAt); err != nil {
+				return fmt.Errorf("检查资产去重键失败: %w", err)
+			}
+			if inserted == 0 && !global {
+				// Preserve the import/upsert owner's strict write boundary even
+				// when an asset is explicitly assigned to another user for read.
+				if existingOwner != "" && strings.TrimSpace(existingOwner) != ownerUserID {
+					result.Skipped++
+					continue
+				}
+				// Ownerless legacy rows bound to a private project are not public.
+				if existingOwner == "" && existingProject != "" && ownerUserID != "" {
+					query, args := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id=?", []interface{}{existingID}, access, "assets")
+					var n int
+					if err := tx.QueryRow(query, args...).Scan(&n); err != nil {
+						return err
+					}
+					if n != 1 {
+						result.Skipped++
+						continue
+					}
 				}
 			}
-			result.Created++
-			continue
-		}
-		if err != nil {
-			return result, fmt.Errorf("检查资产去重键失败: %w", err)
-		}
-		asset.ID = existingID
-		global := len(allowGlobal) > 0 && allowGlobal[0]
-		if !global && existingOwner.Valid && strings.TrimSpace(existingOwner.String) != "" && strings.TrimSpace(existingOwner.String) != strings.TrimSpace(ownerUserID) {
-			result.Skipped++
-			continue
-		}
-		_, err = tx.Exec(`UPDATE assets SET
-			host=CASE WHEN ?<>'' THEN ? ELSE host END, ip=CASE WHEN ?<>'' THEN ? ELSE ip END,
-			domain=CASE WHEN ?<>'' THEN ? ELSE domain END, protocol=CASE WHEN ?<>'' THEN ? ELSE protocol END,
-			title=CASE WHEN ?<>'' THEN ? ELSE title END, server=CASE WHEN ?<>'' THEN ? ELSE server END,
-			country=CASE WHEN ?<>'' THEN ? ELSE country END, province=CASE WHEN ?<>'' THEN ? ELSE province END,
-			city=CASE WHEN ?<>'' THEN ? ELSE city END, source=CASE WHEN ?<>'' THEN ? ELSE source END,
-			source_query=CASE WHEN ?<>'' THEN ? ELSE source_query END, project_id=CASE WHEN ?<>'' THEN ? ELSE project_id END,
-			responsible_person=CASE WHEN ?<>'' THEN ? ELSE responsible_person END,
-			department=CASE WHEN ?<>'' THEN ? ELSE department END,
-			business_system=CASE WHEN ?<>'' THEN ? ELSE business_system END,
-			environment=CASE WHEN ?<>'' THEN ? ELSE environment END,
-			criticality=CASE WHEN ?<>'' THEN ? ELSE criticality END,
-			tags_json=CASE WHEN ?<>'[]' THEN ? ELSE tags_json END,
-			last_seen_at=?, updated_at=? WHERE id=?`,
-			asset.Host, asset.Host, asset.IP, asset.IP, asset.Domain, asset.Domain, asset.Protocol, asset.Protocol,
-			asset.Title, asset.Title, asset.Server, asset.Server, asset.Country, asset.Country, asset.Province, asset.Province,
-			asset.City, asset.City, asset.Source, asset.Source, asset.SourceQuery, asset.SourceQuery, asset.ProjectID, nullIfEmpty(asset.ProjectID),
-			asset.ResponsiblePerson, asset.ResponsiblePerson, asset.Department, asset.Department, asset.BusinessSystem, asset.BusinessSystem,
-			asset.Environment, asset.Environment, asset.Criticality, asset.Criticality, string(tagsJSON), string(tagsJSON),
-			now, now, existingID)
-		if err != nil {
-			return result, fmt.Errorf("更新资产失败: %w", err)
-		}
-		if ownerUserID != "" && (!existingOwner.Valid || strings.TrimSpace(existingOwner.String) == ownerUserID) {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO rbac_resource_assignments (id,user_id,resource_type,resource_id,created_at) SELECT ?,id,?,?,? FROM rbac_users WHERE id=?`, uuid.NewString(), "asset", existingID, now, ownerUserID); err != nil {
-				return result, fmt.Errorf("授权资产失败: %w", err)
+			if err := checkAssetProjectAccess(tx, a.ProjectID, access); err != nil {
+				return err
+			}
+			if inserted == 0 {
+				_, err = tx.Exec(`UPDATE assets SET
+					host=CASE WHEN ?<>'' THEN ? ELSE host END, ip=CASE WHEN ip='' THEN ? ELSE ip END,
+					domain=CASE WHEN ?<>'' THEN ? ELSE domain END, protocol=CASE WHEN ?<>'' THEN ? ELSE protocol END,
+					title=CASE WHEN ?<>'' THEN ? ELSE title END, server=CASE WHEN ?<>'' THEN ? ELSE server END,
+					country=CASE WHEN ?<>'' THEN ? ELSE country END, province=CASE WHEN ?<>'' THEN ? ELSE province END,
+					city=CASE WHEN ?<>'' THEN ? ELSE city END, source=CASE WHEN ?<>'' THEN ? ELSE source END,
+					source_query=CASE WHEN ?<>'' THEN ? ELSE source_query END,
+					project_id=CASE WHEN COALESCE(project_id,'')='' AND ?<>'' THEN ? ELSE project_id END,
+					responsible_person=CASE WHEN ?<>'' THEN ? ELSE responsible_person END,
+					department=CASE WHEN ?<>'' THEN ? ELSE department END,
+					business_system=CASE WHEN ?<>'' THEN ? ELSE business_system END,
+					environment=CASE WHEN ?<>'' THEN ? ELSE environment END,
+					criticality=CASE WHEN ?<>'' THEN ? ELSE criticality END,
+					tags_json=CASE WHEN ?<>'[]' THEN ? ELSE tags_json END,
+					last_seen_at=?, updated_at=? WHERE id=?`,
+					a.Host, a.Host, a.IP, a.Domain, a.Domain, a.Protocol, a.Protocol,
+					a.Title, a.Title, a.Server, a.Server, a.Country, a.Country, a.Province, a.Province,
+					a.City, a.City, a.Source, a.Source, a.SourceQuery, a.SourceQuery, a.ProjectID, nullIfEmpty(a.ProjectID),
+					a.ResponsiblePerson, a.ResponsiblePerson, a.Department, a.Department, a.BusinessSystem, a.BusinessSystem,
+					a.Environment, a.Environment, a.Criticality, a.Criticality, string(tagsJSON), string(tagsJSON),
+					now, now, existingID)
+				if err != nil {
+					return fmt.Errorf("更新资产失败: %w", err)
+				}
+			}
+			if err := linkAssetProject(tx, existingID, a.ProjectID, now); err != nil {
+				return fmt.Errorf("关联资产项目失败: %w", err)
+			}
+			if err := appendAssetObservation(tx, existingID, &a, now); err != nil {
+				return fmt.Errorf("保存资产观测失败: %w", err)
+			}
+			if ownerUserID != "" && (inserted == 1 || existingOwner == "" || strings.TrimSpace(existingOwner) == ownerUserID) {
+				if _, err := tx.Exec(`INSERT INTO rbac_resource_assignments (id,user_id,resource_type,resource_id,created_at)
+					SELECT ?,id,?,?,? FROM rbac_users WHERE id=? ON CONFLICT (user_id,resource_type,resource_id) DO NOTHING`,
+					uuid.NewString(), "asset", existingID, now, ownerUserID); err != nil {
+					return fmt.Errorf("授权资产失败: %w", err)
+				}
+			}
+			a.ID, a.LastSeenAt, a.UpdatedAt = existingID, now, now
+			committed[i] = a
+			if inserted == 1 {
+				result.Created++
+			} else {
+				result.Updated++
 			}
 		}
-		result.Updated++
+		return nil
+	})
+	if err != nil {
+		return AssetImportResult{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return result, err
+	for i, input := range candidates {
+		*assets[input.index] = committed[i]
 	}
 	return result, nil
 }
@@ -400,8 +465,9 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 		pattern := "%" + escapeAssetLike(strings.ToLower(q)) + "%"
 		query += ` AND (LOWER(assets.host) LIKE ? ESCAPE '\' OR LOWER(assets.ip) LIKE ? ESCAPE '\' OR LOWER(assets.domain) LIKE ? ESCAPE '\'
 			OR LOWER(assets.title) LIKE ? ESCAPE '\' OR LOWER(assets.server) LIKE ? ESCAPE '\' OR LOWER(assets.tags_json) LIKE ? ESCAPE '\'
-			OR LOWER(assets.responsible_person) LIKE ? ESCAPE '\' OR LOWER(assets.department) LIKE ? ESCAPE '\' OR LOWER(assets.business_system) LIKE ? ESCAPE '\')`
-		for i := 0; i < 9; i++ {
+			OR LOWER(assets.responsible_person) LIKE ? ESCAPE '\' OR LOWER(assets.department) LIKE ? ESCAPE '\' OR LOWER(assets.business_system) LIKE ? ESCAPE '\'
+			OR EXISTS (SELECT 1 FROM asset_observations o WHERE o.asset_id=assets.id AND LOWER(o.ip) LIKE ? ESCAPE '\'))`
+		for i := 0; i < 10; i++ {
 			args = append(args, pattern)
 		}
 	}
@@ -413,13 +479,12 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 		query += " AND assets.protocol = ?"
 		args = append(args, filter.Protocol)
 	}
-	if filter.ProjectID != "" {
-		query += " AND assets.project_id = ?"
-		args = append(args, filter.ProjectID)
-	}
+	query, args = appendAssetProjectScope(query, args, filter.ProjectID)
 	if filter.Source != "" {
-		query += " AND LOWER(assets.source) = LOWER(?)"
-		args = append(args, strings.TrimSpace(filter.Source))
+		query += ` AND (LOWER(assets.source) = LOWER(?) OR EXISTS (
+			SELECT 1 FROM asset_observations o WHERE o.asset_id=assets.id AND LOWER(o.source)=LOWER(?)
+		))`
+		args = append(args, strings.TrimSpace(filter.Source), strings.TrimSpace(filter.Source))
 	}
 	if tag := strings.TrimSpace(filter.Tag); tag != "" {
 		pattern := "%\"" + escapeAssetLike(strings.ToLower(tag)) + "\"%"
@@ -431,8 +496,10 @@ func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interf
 		args = append(args, strings.TrimSpace(filter.Host))
 	}
 	if filter.IP != "" {
-		query += " AND LOWER(assets.ip) = LOWER(?)"
-		args = append(args, strings.TrimSpace(filter.IP))
+		query += ` AND (LOWER(assets.ip) = LOWER(?) OR EXISTS (
+			SELECT 1 FROM asset_observations o WHERE o.asset_id=assets.id AND LOWER(o.ip)=LOWER(?)
+		))`
+		args = append(args, strings.TrimSpace(filter.IP), strings.TrimSpace(filter.IP))
 	}
 	if filter.Domain != "" {
 		query += " AND LOWER(assets.domain) = LOWER(?)"
@@ -608,13 +675,24 @@ func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, acces
 // the asset was launched as a batch task, keep its task/queue link only when
 // that task belongs to the current conversation; a later ad-hoc chat scan must
 // not retain stale task associations.
+// CompleteAssetScanForProject additionally enforces membership in the bound
+// conversation's project in the mutation statement itself.
+func (db *DB) CompleteAssetScanForProject(id, conversationID string, access RBACListAccess, projectID string) error {
+	return db.completeAssetScan(id, conversationID, access, projectID)
+}
+
 func (db *DB) CompleteAssetScan(id, conversationID string, access RBACListAccess) error {
+	return db.completeAssetScan(id, conversationID, access, "")
+}
+
+func (db *DB) completeAssetScan(id, conversationID string, access RBACListAccess, projectID string) error {
 	id = strings.TrimSpace(id)
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return fmt.Errorf("扫描对话不能为空")
 	}
-	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
+	where, args := appendAssetProjectScope(" WHERE assets.id = ?", []interface{}{id}, projectID)
+	where, args = appendAssetAccess(where, args, access, "assets")
 	now := time.Now()
 	res, err := db.Exec(`UPDATE assets SET
 		last_scan_at=?,last_scan_conversation_id=?,
@@ -741,27 +819,90 @@ func (db *DB) GetAsset(id string, access RBACListAccess) (*Asset, error) {
 }
 
 func (db *DB) UpdateAsset(id string, a *Asset, access RBACListAccess) error {
-	normalizeAsset(a)
-	if err := validateAsset(a); err != nil {
+	return db.updateAsset(id, a, access, "")
+}
+
+// UpdateAssetForProject keeps the project's membership check inside the same
+// transaction as the mutation. A shared asset keeps its legacy primary project
+// while observations are attributed to the current project's association.
+func (db *DB) UpdateAssetForProject(id string, a *Asset, access RBACListAccess, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if a == nil || (projectID != "" && strings.TrimSpace(a.ProjectID) != projectID) {
+		return fmt.Errorf("资产更新项目与当前对话项目不一致")
+	}
+	return db.updateAsset(id, a, access, projectID)
+}
+
+func (db *DB) updateAsset(id string, a *Asset, access RBACListAccess, projectScope string) error {
+	id = strings.TrimSpace(id)
+	if a == nil {
+		return assetValidationErrorf("资产不能为空")
+	}
+	copy := *a
+	copy.Tags = append([]string(nil), a.Tags...)
+	normalizeAsset(&copy)
+	if err := validateAsset(&copy); err != nil {
 		return err
 	}
-	key := assetDedupKey(a)
-	if key == "|0|" {
-		return fmt.Errorf("资产目标不能为空")
-	}
-	tags, _ := json.Marshal(a.Tags)
-	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
-	res, err := db.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
-		responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=?`+where,
-		append([]interface{}{key, nullIfEmpty(a.ProjectID), a.Host, a.IP, a.Port, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.Province, a.City,
-			a.ResponsiblePerson, a.Department, a.BusinessSystem, a.Environment, a.Criticality, a.Source, a.SourceQuery, a.Status, string(tags), time.Now()}, args...)...)
+	key := assetDedupKey(&copy)
+	tags, _ := json.Marshal(copy.Tags)
+	var committedProject string
+	var committedAt time.Time
+	err := db.withAssetTransaction(func(tx *Tx) error {
+		where, args := appendAssetProjectScope(" WHERE assets.id=?", []interface{}{strings.TrimSpace(id)}, projectScope)
+		where, args = appendAssetAccess(where, args, access, "assets")
+		var primaryProject, previousIP, previousSource, previousQuery string
+		if err := tx.QueryRow(`SELECT COALESCE(project_id,''),ip,source,source_query FROM assets`+where+db.assetRowLock(), args...).Scan(&primaryProject, &previousIP, &previousSource, &previousQuery); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		legacyProject := primaryProject
+		if copy.ProjectID == "" {
+			// Retain explicit legacy unbinding outside a bound conversation.
+			legacyProject = ""
+			if _, err := tx.Exec(`DELETE FROM asset_project_links WHERE asset_id=?`, id); err != nil {
+				return err
+			}
+		} else {
+			if copy.ProjectID != primaryProject {
+				if err := checkAssetProjectAccess(tx, copy.ProjectID, access); err != nil {
+					return err
+				}
+			}
+			if err := linkAssetProject(tx, id, copy.ProjectID, now); err != nil {
+				return err
+			}
+			if legacyProject == "" {
+				legacyProject = copy.ProjectID
+			}
+		}
+		res, err := tx.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
+			responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=?`+where,
+			append([]interface{}{key, nullIfEmpty(legacyProject), copy.Host, copy.IP, copy.Port, copy.Domain, copy.Protocol, copy.Title, copy.Server, copy.Country, copy.Province, copy.City,
+				copy.ResponsiblePerson, copy.Department, copy.BusinessSystem, copy.Environment, copy.Criticality, copy.Source, copy.SourceQuery, copy.Status, string(tags), now}, args...)...)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		committedProject, committedAt = legacyProject, now
+		// A metadata-only patch is not a new IP observation. In particular,
+		// do not fabricate project B evidence from project A's primary IP.
+		if copy.Observation == nil && copy.IP == previousIP && copy.Source == previousSource && copy.SourceQuery == previousQuery {
+			return nil
+		}
+		return appendAssetObservation(tx, id, &copy, now)
+	})
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
+	copy.ID, copy.ProjectID, copy.UpdatedAt = id, committedProject, committedAt
+	*a = copy
 	return nil
 }
 
@@ -993,10 +1134,21 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 		return 0, err
 	}
 	defer tx.Rollback()
-	primaryQuery, primaryArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id=?", []interface{}{primary.ID}, writeAccess, "assets")
-	var primaryCount int
-	if err := tx.QueryRow(primaryQuery, primaryArgs...).Scan(&primaryCount); err != nil || primaryCount != 1 {
+	primaryQuery, primaryArgs := appendAssetAccess("SELECT COALESCE(project_id,'') FROM assets WHERE id=?", []interface{}{primary.ID}, writeAccess, "assets")
+	var legacyProject string
+	if err := tx.QueryRow(primaryQuery+db.assetRowLock(), primaryArgs...).Scan(&legacyProject); err != nil {
 		return 0, fmt.Errorf("主资产不存在或无权更新")
+	}
+	if primary.ProjectID != "" && primary.ProjectID != legacyProject {
+		if err := checkAssetProjectAccess(tx, primary.ProjectID, writeAccess); err != nil {
+			return 0, err
+		}
+	}
+	if legacyProject == "" {
+		legacyProject = primary.ProjectID
+	}
+	if err := linkAssetProject(tx, primary.ID, primary.ProjectID, time.Now().UTC()); err != nil {
+		return 0, err
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(duplicates)), ",")
 	deleteArgs := make([]interface{}, len(duplicates))
@@ -1008,6 +1160,11 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 	if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil || accessible != len(duplicates) {
 		return 0, fmt.Errorf("部分重复资产不存在或无权删除")
 	}
+	for _, duplicateID := range duplicates {
+		if err := mergeAssetRelations(tx, primary.ID, duplicateID); err != nil {
+			return 0, err
+		}
+	}
 	deleteQuery, scopedDeleteArgs := appendAssetAccess("DELETE FROM assets WHERE id IN ("+placeholders+")", deleteArgs, deleteAccess, "assets")
 	if result, err := tx.Exec(deleteQuery, scopedDeleteArgs...); err != nil {
 		return 0, err
@@ -1016,7 +1173,7 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 	}
 	updateQuery, updateScopeArgs := appendAssetAccess(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
 		responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=? WHERE id=?`,
-		[]interface{}{key, nullIfEmpty(primary.ProjectID), primary.Host, primary.IP, primary.Port, primary.Domain, primary.Protocol, primary.Title, primary.Server,
+		[]interface{}{key, nullIfEmpty(legacyProject), primary.Host, primary.IP, primary.Port, primary.Domain, primary.Protocol, primary.Title, primary.Server,
 			primary.Country, primary.Province, primary.City, primary.ResponsiblePerson, primary.Department, primary.BusinessSystem, primary.Environment,
 			primary.Criticality, primary.Source, primary.SourceQuery, primary.Status, string(tagsJSON), time.Now(), primary.ID}, writeAccess, "assets")
 	result, err := tx.Exec(updateQuery, updateScopeArgs...)
@@ -1032,57 +1189,76 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 	return len(duplicates), nil
 }
 
-// UpdateAssetsProject atomically replaces the project binding for every asset.
-// It refuses the whole update when any requested asset is missing or outside
-// the caller's access scope, so a bulk action can never partially succeed.
+// UpdateAssetsProject atomically adds a project association without replacing
+// an existing primary project. An explicitly empty project removes all current
+// associations (the legacy unbind operation), but retains observation history.
+// Every requested asset and destination project must be accessible.
 func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACListAccess) (int, error) {
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
 	}
-
-	tx, err := db.Begin()
+	sort.Strings(unique)
+	projectID = strings.TrimSpace(projectID)
+	err := db.withAssetTransaction(func(tx *Tx) error {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
+		idArgs := make([]interface{}, len(unique))
+		for i, id := range unique {
+			idArgs[i] = id
+		}
+		countQuery, countArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id IN ("+placeholders+")", idArgs, access, "assets")
+		var accessible int
+		if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil {
+			return err
+		}
+		if accessible != len(unique) {
+			return fmt.Errorf("部分资产不存在或无权更新")
+		}
+		if err := checkAssetProjectAccess(tx, projectID, access); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		for _, id := range unique {
+			if projectID == "" {
+				if _, err := tx.Exec("DELETE FROM asset_project_links WHERE asset_id=?", id); err != nil {
+					return err
+				}
+			} else if err := linkAssetProject(tx, id, projectID, now); err != nil {
+				return err
+			}
+		}
+		setProject := `project_id=CASE WHEN COALESCE(project_id,'')='' THEN ? ELSE project_id END`
+		if projectID == "" {
+			setProject = `project_id=?`
+		}
+		updateArgs := append([]interface{}{nullIfEmpty(projectID), now}, idArgs...)
+		updateQuery, updateArgs := appendAssetAccess("UPDATE assets SET "+setProject+",updated_at=? WHERE id IN ("+placeholders+")", updateArgs, access, "assets")
+		result, err := tx.Exec(updateQuery, updateArgs...)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if int(updated) != len(unique) {
+			return fmt.Errorf("批量更新资产失败")
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
-
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
-	idArgs := make([]interface{}, len(unique))
-	for i, id := range unique {
-		idArgs[i] = id
-	}
-	countQuery, countArgs := appendAssetAccess("SELECT COUNT(*) FROM assets WHERE id IN ("+placeholders+")", idArgs, access, "assets")
-	var accessible int
-	if err := tx.QueryRow(countQuery, countArgs...).Scan(&accessible); err != nil {
-		return 0, err
-	}
-	if accessible != len(unique) {
-		return 0, fmt.Errorf("部分资产不存在或无权更新")
-	}
-
-	updateArgs := []interface{}{nullIfEmpty(strings.TrimSpace(projectID)), time.Now()}
-	updateArgs = append(updateArgs, idArgs...)
-	updateQuery, updateArgs := appendAssetAccess("UPDATE assets SET project_id=?,updated_at=? WHERE id IN ("+placeholders+")", updateArgs, access, "assets")
-	result, err := tx.Exec(updateQuery, updateArgs...)
-	if err != nil {
-		return 0, err
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if int(updated) != len(unique) {
-		return 0, fmt.Errorf("批量更新资产失败")
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return int(updated), nil
+	return len(unique), nil
 }
 
 func (db *DB) DeleteAsset(id string, access RBACListAccess) error {
-	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
+	return db.DeleteAssetForProject(id, access, "")
+}
+
+func (db *DB) DeleteAssetForProject(id string, access RBACListAccess, projectID string) error {
+	where, args := appendAssetProjectScope(" WHERE assets.id = ?", []interface{}{strings.TrimSpace(id)}, projectID)
+	where, args = appendAssetAccess(where, args, access, "assets")
 	res, err := db.Exec("DELETE FROM assets"+where, args...)
 	if err != nil {
 		return err

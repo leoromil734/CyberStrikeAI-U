@@ -96,6 +96,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 			if q == nil {
 				continue
 			}
+			h.decorateBatchQueueActivity(q)
 			slim = append(slim, toBatchTaskQueueMCPListItem(q))
 		}
 		payload := map[string]interface{}{
@@ -133,6 +134,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 		if !ok {
 			return batchMCPTextResult("队列不存在: "+qid, true), nil
 		}
+		h.decorateBatchQueueActivity(queue)
 		return batchMCPJSONResult(queue)
 	})
 
@@ -195,6 +197,13 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 					"type":        "boolean",
 					"description": "可选：每条任务创建独立项目，名称为目标加随机 ID，隔离项目 facts。需要项目功能与 project:write 权限；不得同时传共享 project_id。重跑沿用各自项目，默认 false 兼容共享项目模式。",
 				},
+				"assessment_mode": map[string]interface{}{
+					"type": "string", "enum": []string{"auto", "conversation", "execution", "comprehensive"},
+					"description": "执行/交付策略，与编排模式独立：auto 在绑定项目时全面评估，否则至少要求执行证据；conversation 为普通文字任务；comprehensive 由服务端初始化清单并强制覆盖门禁。",
+				},
+				"allow_duplicate_tasks": map[string]interface{}{
+					"type": "boolean", "description": "默认合并同批相同完整指令与模型的重复项；明确的对照实验可设 true。",
+				},
 				"concurrency": map[string]interface{}{
 					"type":        "integer",
 					"description": "同时执行的子任务数。0 或未填时按任务条数并行，最大 32。",
@@ -254,7 +263,12 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 			modelRetry = &n
 		}
 		independent, _ := mcpArgBool(args, "independent_projects")
-		opts := database.BatchQueueCreateOptions{IndependentProjects: independent}
+		assessmentMode, policyErr := database.NormalizeAssessmentMode(mcpArgString(args, "assessment_mode"), independent || projectID != "")
+		if policyErr != nil {
+			return batchMCPTextResult(policyErr.Error(), true), nil
+		}
+		allowDuplicates, _ := mcpArgBool(args, "allow_duplicate_tasks")
+		opts := database.BatchQueueCreateOptions{IndependentProjects: independent, AssessmentMode: assessmentMode, AllowDuplicateTasks: allowDuplicates}
 		if principal, ok := authctx.PrincipalFromContext(ctx); ok {
 			opts.OwnerUserID = principal.UserID
 		}
@@ -593,6 +607,7 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		}
 		queue, _ := h.batchTaskManager.GetBatchQueue(qid)
 		logger.Info("MCP batch_task_schedule_enabled", zap.String("queueId", qid), zap.Bool("enabled", en))
+		h.decorateBatchQueueActivity(queue)
 		return batchMCPJSONResult(queue)
 	})
 
@@ -681,6 +696,7 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		}
 		queue, _ := h.batchTaskManager.GetBatchQueue(qid)
 		logger.Info("MCP batch_task_update_task", zap.String("queueId", qid), zap.String("taskId", tid))
+		h.decorateBatchQueueActivity(queue)
 		return batchMCPJSONResult(queue)
 	})
 
@@ -714,6 +730,7 @@ schedule_mode 为 cron 时必须提供有效 cron_expr；为 manual 时会清除
 		}
 		queue, _ := h.batchTaskManager.GetBatchQueue(qid)
 		logger.Info("MCP batch_task_remove_task", zap.String("queueId", qid), zap.String("taskId", tid))
+		h.decorateBatchQueueActivity(queue)
 		return batchMCPJSONResult(queue)
 	})
 
@@ -726,9 +743,11 @@ const mcpBatchListTaskMessageMaxRunes = 160
 
 // batchTaskMCPListSummary 列表中的子任务摘要（完整字段用 batch_task_get）
 type batchTaskMCPListSummary struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	ID                 string `json:"id"`
+	Status             string `json:"status"`
+	Message            string `json:"message,omitempty"`
+	Outcome            string `json:"outcome,omitempty"`
+	ConversationActive bool   `json:"conversationActive,omitempty"`
 }
 
 // batchTaskQueueMCPListItem 列表中的队列摘要
@@ -752,6 +771,9 @@ type batchTaskQueueMCPListItem struct {
 	ExecutorActive        bool                      `json:"executorActive,omitempty"`
 	TaskTotal             int                       `json:"task_total"`
 	TaskCounts            map[string]int            `json:"task_counts"`
+	OutcomeCounts         map[string]int            `json:"outcome_counts"`
+	AssessmentMode        string                    `json:"assessmentMode"`
+	DuplicateTasksSkipped int                       `json:"duplicateTasksSkipped"`
 	Tasks                 []batchTaskMCPListSummary `json:"tasks"`
 }
 
@@ -785,17 +807,20 @@ func toBatchTaskQueueMCPListItem(q *BatchTaskQueue) batchTaskQueueMCPListItem {
 		"failed":    0,
 		"cancelled": 0,
 	}
+	outcomeCounts := map[string]int{}
 	tasks := make([]batchTaskMCPListSummary, 0, len(q.Tasks))
 	for _, t := range q.Tasks {
 		if t == nil {
 			continue
 		}
 		counts[t.Status]++
+		outcomeCounts[t.Outcome]++
 		// 列表视图限制子任务摘要数量，完整列表通过 batch_task_get 查看
 		if len(tasks) < mcpBatchListMaxTasksPerQueue {
 			tasks = append(tasks, batchTaskMCPListSummary{
 				ID:      t.ID,
 				Status:  t.Status,
+				Outcome: t.Outcome, ConversationActive: t.ConversationActive,
 				Message: truncateStringRunes(t.Message, mcpBatchListTaskMessageMaxRunes),
 			})
 		}
@@ -820,7 +845,8 @@ func toBatchTaskQueueMCPListItem(q *BatchTaskQueue) batchTaskQueueMCPListItem {
 		ExecutorActive:        q.ExecutorActive,
 		TaskTotal:             len(q.Tasks),
 		TaskCounts:            counts,
-		Tasks:                 tasks,
+		OutcomeCounts:         outcomeCounts, AssessmentMode: q.AssessmentMode, DuplicateTasksSkipped: q.DuplicateTasksSkipped,
+		Tasks: tasks,
 	}
 }
 

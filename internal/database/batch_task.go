@@ -97,6 +97,9 @@ func (db *DB) CreateBatchQueue(
 	if err := assignBatchResourceTx(tx, opts.OwnerUserID, "batch_task", queueID, now); err != nil {
 		return err
 	}
+	if err := saveBatchQueuePolicyTx(tx, queueID, opts.AssessmentMode, opts.DuplicateTasksSkipped, now); err != nil {
+		return fmt.Errorf("保存任务执行策略失败: %w", err)
+	}
 
 	// 插入任务
 	for _, task := range tasks {
@@ -416,7 +419,7 @@ func (db *DB) UpdateBatchTaskStatus(queueID, taskID, status string, conversation
 		args = append(args, now)
 	}
 
-	if status == "completed" || status == "failed" || status == "cancelled" {
+	if status == "completed" || status == "declined" || status == "failed" || status == "cancelled" {
 		updates = append(updates, "completed_at = COALESCE(completed_at, ?)")
 		args = append(args, now)
 	}

@@ -56,6 +56,8 @@ type Server struct {
 	executionService       *ExecutionService
 	toolWaitTimeout        time.Duration
 	toolResultMaxBytes     int
+	executionObserver      func(context.Context, *ToolExecution)
+	localExecutionGuard    func(context.Context, string, map[string]interface{}) (func(), error)
 	spillRootDir           string
 }
 
@@ -1038,6 +1040,8 @@ func (s *Server) BeginToolExecution(ctx context.Context, toolName string, args m
 	s.cleanupOldExecutions()
 	s.mu.Unlock()
 
+	ctx = storedExecutionProjectContext(ctx, s.storage, "")
+	s.notifyExecutionObserver(ctx, execution)
 	if s.storage != nil {
 		if err := s.storage.SaveToolExecution(execution); err != nil {
 			s.logger.Warn("保存执行记录到数据库失败", zap.Error(err))
@@ -1059,6 +1063,7 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 		id = uuid.New().String()
 	}
 
+	ctx = storedExecutionProjectContext(ctx, s.storage, id)
 	now := time.Now()
 	failed := invokeErr != nil
 	var finalResult *ToolResult
@@ -1120,6 +1125,7 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 	}
 	s.mu.Unlock()
 
+	s.notifyExecutionObserver(ctx, exec)
 	if s.storage != nil {
 		if err := s.storage.SaveToolExecution(exec); err != nil {
 			s.logger.Warn("保存执行记录到数据库失败", zap.Error(err))
