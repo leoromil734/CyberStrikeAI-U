@@ -1,0 +1,38 @@
+#settings-section-basic .ai-channel-manager-body { display: grid; grid-template-columns: minmax(230px, 300px) minmax(0, 1fr); gap: 20px; align-items: start; }
+#settings-section-basic .ai-channel-switcher { min-width: 0; position: sticky; top: 12px; }
+#settings-section-basic .ai-channel-list { display: flex; flex-direction: column; max-height: 630px; overflow: auto; padding: 2px; }
+#settings-section-basic .ai-channel-switcher-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+#settings-section-basic .ai-channel-switcher-actions button { flex: 1 1 auto; min-height: 33px; }
+#settings-section-basic .ai-channel-list-item { border-radius: 9px; margin-bottom: 7px; }
+#settings-section-basic .ai-channel-status-dot.stale { background: var(--warning-color, #d97706); }
+#settings-section-basic .ai-channel-status-label.stale { color: var(--warning-color, #d97706); }
+#settings-section-basic .model-management-panel { border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; background: var(--card-bg); }
+#settings-section-basic .model-management-panel summary { cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 600; }
+#settings-section-basic .model-management-panel .form-hint { display: block; line-height: 1.7; margin: 9px 0 14px; }
+#settings-section-basic .model-import-controls { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; }
+#settings-section-basic .model-import-controls label { display: flex; flex-direction: column; min-width: 0; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+#settings-section-basic .model-import-controls input, #settings-section-basic #ai-import-manual { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 7px; color: var(--text-primary); background: var(--input-bg); }
+#settings-section-basic .model-import-manual { margin: 14px 0; }
+#settings-section-basic .model-import-manual summary { font-size: 12px; color: var(--text-secondary); font-weight: 400; margin-bottom: 8px; }
+#settings-section-basic .model-import-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
+#settings-section-basic .model-import-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 7px; max-height: 310px; overflow: auto; margin: 12px 0; }
+#settings-section-basic .model-import-list label { display: flex; align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; color: var(--text-primary); }
+#settings-section-basic .model-import-list label:has(input:checked) { border-color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 7%, transparent); }
+#settings-section-basic .model-probe-heading { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#settings-section-basic .model-probe-heading h4 { margin: 0; flex: 1; }
+#settings-section-basic #ai-probe-progress { font-size: 12px; color: var(--text-secondary); }
+#settings-section-basic .model-probe-table-wrap { overflow: auto; max-height: 410px; }
+#settings-section-basic .model-probe-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; min-width: 750px; }
+#settings-section-basic .model-probe-table th { position: sticky; top: 0; background: var(--bg-secondary); z-index: 1; color: var(--text-secondary); font-weight: 500; }
+#settings-section-basic .model-probe-table th, #settings-section-basic .model-probe-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-color); }
+#settings-section-basic .model-probe-table td { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+#settings-section-basic .model-probe-table td small { display: block; margin-top: 5px; color: var(--text-secondary); overflow-wrap: anywhere; max-width: 220px; }
+#settings-section-basic .model-probe-error { max-width: 280px; overflow-wrap: anywhere; }
+#settings-section-basic .model-probe-status { display: inline-block; border-radius: 5px; padding: 3px 7px; background: var(--bg-secondary); }
+#settings-section-basic .model-probe-status.ready { color: var(--success-color, #15803d); }
+#settings-section-basic .model-probe-status.failed { color: var(--error-color, #dc2626); }
+#settings-section-basic .model-probe-status.stale { color: var(--warning-color, #d97706); }
+#settings-section-basic .model-vision-inherit { display: flex; align-items: center; gap: 8px; margin: 12px 0 18px; font-size: 13px; color: var(--text-secondary); }
+#settings-section-basic #vision-channel-config { border-left: 3px solid var(--accent-color); padding-left: 18px; }
+@media(max-width: 1000px) { #settings-section-basic .ai-channel-manager-body { grid-template-columns: 1fr; } #settings-section-basic .ai-channel-switcher { position: static; } #settings-section-basic .ai-channel-list { max-height: 260px; } }
+@media(max-width: 650px) { #settings-section-basic .model-import-controls { grid-template-columns: 1fr; } }

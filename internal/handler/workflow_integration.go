@@ -52,8 +52,6 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		sendEvent("done", "", map[string]interface{}{"conversationId": prep.ConversationID})
 		return true
 	}
-	h.recordConversationAIChannel(prep.ConversationID, req.AIChannelID)
-
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
 	userMessage := ""
@@ -77,7 +75,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	defer cancelWithCause(nil)
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
-	taskCtx = vision.WithSessionOpenAIConfig(taskCtx, runCfg.OpenAI)
+	taskCtx = vision.WithSessionConfig(taskCtx, runCfg.Vision, runCfg.OpenAI)
 
 	if _, err := h.tasks.StartTask(conversationID, userMessage, cancelWithCause); err != nil {
 		var errorMsg string
@@ -99,6 +97,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "workflow")
 	taskOwned = true
+	h.recordConversationAIChannel(conversationID, req.AIChannelID, runCfg)
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{
@@ -201,8 +200,6 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "conversationId": prep.ConversationID})
 		return true
 	}
-	h.recordConversationAIChannel(prep.ConversationID, req.AIChannelID)
-
 	conversationID := prep.ConversationID
 	assistantMessageID := prep.AssistantMessageID
 	userMessage := ""
@@ -223,7 +220,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	defer cancelWithCause(nil)
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
 	defer timeoutCancel()
-	taskCtx = vision.WithSessionOpenAIConfig(taskCtx, runCfg.OpenAI)
+	taskCtx = vision.WithSessionConfig(taskCtx, runCfg.Vision, runCfg.OpenAI)
 
 	if _, err := h.tasks.StartTask(conversationID, userMessage, cancelWithCause); err != nil {
 		if errors.Is(err, ErrTaskAlreadyRunning) {
@@ -239,6 +236,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "workflow")
 	taskOwned = true
+	h.recordConversationAIChannel(conversationID, req.AIChannelID, runCfg)
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{

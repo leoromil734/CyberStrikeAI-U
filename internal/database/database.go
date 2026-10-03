@@ -1054,6 +1054,9 @@ func (db *DB) initTables() error {
 	if err := db.initTaskGovernanceTables(); err != nil {
 		return fmt.Errorf("初始化任务结果治理失败: %w", err)
 	}
+	if err := db.initAIModelMetadata(); err != nil {
+		return fmt.Errorf("初始化模型来源和测试记录失败: %w", err)
+	}
 	db.logger.Debug("数据库表初始化完成")
 	return nil
 }

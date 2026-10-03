@@ -100,9 +100,9 @@ assert.equal(findClass(unsafe, 'conversation-item-channel-badge').textContent, u
 assert.equal(findClass(unsafe, 'conversation-item-channel-badge').innerHTML, '');
 // All task items use their own recorded model in both flat and expanded layouts.
 const tasks = [
-    {conversationId:'one', title:'task one', aiModel:'actual-model-one', status:'running'},
-    {conversationId:'two', title:'task two', aiModel:'actual-model-two', status:'running'},
-    {conversationId:'three', title:'task three', aiModel:'<unsafe-model>', status:'running'},
+    {conversationId:'one', title:'task one', aiModel:'actual-model-one', aiChannelName:'发现时渠道甲', status:'running'},
+    {conversationId:'two', title:'task two', aiModel:'actual-model-two', aiChannelId:'channel-b', status:'running'},
+    {conversationId:'three', title:'task three', aiModel:'<unsafe-model>', ai_channel_name:'<unsafe-channel>', status:'running'},
 ];
 renderActiveTasks(tasks.slice(0, 2));
 assert.equal(bar.children.length, 2);
@@ -110,6 +110,9 @@ assert.ok(bar.children[0].innerHTML.includes('actual-model-one'));
 assert.ok(bar.children[1].innerHTML.includes('actual-model-two'));
 assert.ok(!bar.children[0].innerHTML.includes('new-config-model'));
 assert.ok(bar.children[0].innerHTML.includes('title="AI 模型: actual-model-one"'));
+assert.ok(bar.children[0].innerHTML.includes('发现时渠道甲'));
+assert.ok(bar.children[1].innerHTML.includes('渠道乙'));
+assert.ok(bar.children[0].innerHTML.includes('active-task-channel'));
 renderActiveTasks(tasks);
 const expanded = findClass(bar, 'active-tasks-expanded-panel');
 assert.equal(expanded.children.length, 3);
@@ -117,8 +120,11 @@ assert.ok(expanded.children[0].innerHTML.includes('actual-model-one'));
 assert.ok(expanded.children[1].innerHTML.includes('actual-model-two'));
 assert.ok(expanded.children[2].innerHTML.includes('&lt;unsafe-model&gt;'));
 assert.ok(!expanded.children[2].innerHTML.includes('<unsafe-model>'));
+assert.ok(expanded.children[2].innerHTML.includes('&lt;unsafe-channel&gt;'));
+assert.ok(!expanded.children[2].innerHTML.includes('<unsafe-channel>'));
 renderActiveTasks([{conversationId:'unrecorded', title:'new', status:'running'}]);
 assert.ok(bar.children[0].innerHTML.includes('模型未记录'));
+assert.ok(bar.children[0].innerHTML.includes('渠道未记录'));
 console.log('chat model and channel label checks passed');
 `
 	cmd := exec.Command(node)

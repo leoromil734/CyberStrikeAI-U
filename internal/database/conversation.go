@@ -29,8 +29,9 @@ type Conversation struct {
 	Messages  []Message `json:"messages,omitempty"`
 	// AIChannelID / AIModel 不在 conversations 表中，由 conversation_ai_channels 表在列表接口按需附带，
 	// 用于前端在对话列表上显示该对话使用的通道与模型。
-	AIChannelID string `json:"aiChannelId,omitempty"`
-	AIModel     string `json:"aiModel,omitempty"`
+	AIChannelID   string `json:"aiChannelId,omitempty"`
+	AIChannelName string `json:"aiChannelName,omitempty"`
+	AIModel       string `json:"aiModel,omitempty"`
 }
 
 // Message 消息
@@ -938,21 +939,26 @@ func (db *DB) GetAgentTrace(conversationID string) (traceInputJSON, assistantOut
 
 // ConversationAIModel 对话最近使用的 AI 通道与模型（列表展示用）。
 type ConversationAIModel struct {
-	ChannelID string
-	Model     string
+	ChannelID   string
+	ChannelName string
+	Model       string
 }
 
 // SetConversationAIChannel 记录对话最近一次运行使用的 AI 通道/模型；每次运行开始时覆盖。
-func (db *DB) SetConversationAIChannel(conversationID, channelID, model string) error {
+func (db *DB) SetConversationAIChannel(conversationID, channelID, model string, names ...string) error {
 	conversationID = strings.TrimSpace(conversationID)
 	if db == nil || conversationID == "" {
 		return nil
 	}
+	name := ""
+	if len(names) > 0 {
+		name = strings.TrimSpace(names[0])
+	}
 	_, err := db.Exec(
-		`INSERT INTO conversation_ai_channels (conversation_id, ai_channel_id, model, updated_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(conversation_id) DO UPDATE SET ai_channel_id = excluded.ai_channel_id, model = excluded.model, updated_at = excluded.updated_at`,
-		conversationID, strings.TrimSpace(channelID), strings.TrimSpace(model), time.Now(),
+		`INSERT INTO conversation_ai_channels (conversation_id, ai_channel_id, model, updated_at, ai_channel_name)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(conversation_id) DO UPDATE SET ai_channel_id = excluded.ai_channel_id, model = excluded.model, updated_at = excluded.updated_at, ai_channel_name = excluded.ai_channel_name`,
+		conversationID, strings.TrimSpace(channelID), strings.TrimSpace(model), time.Now(), name,
 	)
 	if err != nil {
 		return fmt.Errorf("记录对话 AI 通道失败: %w", err)
@@ -989,7 +995,7 @@ func (db *DB) GetConversationAIModels(conversationIDs []string) map[string]Conve
 		args = append(args, id)
 	}
 	rows, err := db.Query(
-		"SELECT conversation_id, ai_channel_id, COALESCE(model, '') FROM conversation_ai_channels WHERE conversation_id IN ("+placeholders+")",
+		"SELECT conversation_id, ai_channel_id, COALESCE(model, ''), COALESCE(ai_channel_name, '') FROM conversation_ai_channels WHERE conversation_id IN ("+placeholders+")",
 		args...,
 	)
 	if err != nil {
@@ -997,11 +1003,11 @@ func (db *DB) GetConversationAIModels(conversationIDs []string) map[string]Conve
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var convID, channelID, model string
-		if scanErr := rows.Scan(&convID, &channelID, &model); scanErr != nil {
+		var convID, channelID, model, name string
+		if scanErr := rows.Scan(&convID, &channelID, &model, &name); scanErr != nil {
 			continue
 		}
-		out[strings.TrimSpace(convID)] = ConversationAIModel{ChannelID: strings.TrimSpace(channelID), Model: strings.TrimSpace(model)}
+		out[strings.TrimSpace(convID)] = ConversationAIModel{ChannelID: strings.TrimSpace(channelID), ChannelName: strings.TrimSpace(name), Model: strings.TrimSpace(model)}
 	}
 	return out
 }

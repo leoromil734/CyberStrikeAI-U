@@ -94,7 +94,7 @@ function fixture(channels = { a: firstChannel, b: secondChannel }) {
     const requests = [];
     const body = new Element('body');
     const document = {
-        body, addEventListener() {},
+        body, addEventListener() {}, querySelectorAll: () => [],
         getElementById: id => elements.get(id) || null,
         createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag),
     };
@@ -136,7 +136,7 @@ function fixture(channels = { a: firstChannel, b: secondChannel }) {
     elements.get('ai-channel-select').addEventListener('change', () => context.selectAIChannelForEditing(elements.get('ai-channel-select').value));
     const label = id => elements.get(id).parentNode.querySelector('.settings-custom-select-value').textContent;
     const config = () => JSON.parse(vm.runInContext('JSON.stringify(currentConfig)', context));
-    return { context, elements, requests, label, config };
+    return { context, elements, requests, label, config, add };
 }
 
 function assertSecondChannelForm(f, maxOutput = 32768) {
@@ -239,7 +239,7 @@ test('keyboard channel selection also synchronizes the visible reasoning control
 
 test('the settings script URL is versioned so browsers reload the parameter-sync fix', () => {
     const template = fs.readFileSync(path.join(__dirname, '../../templates/index.html'), 'utf8');
-    assert.match(template, /\/static\/js\/settings\.js\?v=20261002-model-params1/);
+    assert.match(template, /\/static\/js\/settings\.js\?v=20261003-model-management1/);
 });
 
 test('programmatic model loading synchronizes the existing model picker without a change event', () => {
@@ -250,4 +250,86 @@ test('programmatic model loading synchronizes the existing model picker without 
     assert.equal(f.elements.get('openai-model-select').value, 'model-b');
     const label = f.elements.get('openai-model-select').parentNode.querySelector('.model-pick-trigger-label');
     assert.equal(label.textContent, 'model-b');
+});
+
+function managementFixture(channels) {
+    const f = fixture(channels);
+    for (const id of ['vision-inherit-global', 'vision-enabled', 'vision-api-key', 'vision-base-url', 'vision-model', 'vision-max-image-bytes', 'vision-max-dimension', 'vision-jpeg-quality', 'vision-max-payload-bytes', 'vision-skip-preprocess-bytes', 'vision-timeout-seconds']) f.add(id);
+    f.add('vision-provider', 'select', [['', '复用'], ['openai', 'OpenAI'], ['claude', 'Claude']]);
+    f.add('vision-detail', 'select', [['low', 'low'], ['high', 'high'], ['auto', 'auto']]);
+    f.add('ai-probe-results', 'tbody'); f.add('ai-probe-progress', 'span');
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'model-management.js'), 'utf8'), f.context);
+    f.context.rememberSavedAIChannels(f.config().ai);
+    f.context.writeAIChannelToMainForm('a');
+    return f;
+}
+
+test('切换通道立即加载独立视觉配置，保留草稿且不修改全局视觉', () => {
+    const f = managementFixture({a:{...firstChannel, vision:{enabled:true,model:'vision-a',api_key:'v-key-a',max_dimension:1024}}, b:{...secondChannel,vision:{enabled:false,model:'vision-b',api_key:'v-key-b',max_dimension:3072}}});
+    assert.equal(f.elements.get('vision-model').value, 'vision-a');
+    f.elements.get('vision-model').value = 'vision-a-draft';
+    f.context.selectAIChannelForEditing('b');
+    assert.equal(f.elements.get('vision-model').value, 'vision-b');
+    assert.equal(f.elements.get('vision-enabled').checked, false);
+    assert.equal(f.elements.get('vision-api-key').value, 'v-key-b');
+    assert.equal(f.elements.get('vision-max-dimension').value, '3072');
+    f.context.selectAIChannelForEditing('a');
+    assert.equal(f.elements.get('vision-model').value, 'vision-a-draft');
+    assert.equal(f.elements.get('vision-api-key').value, 'v-key-a');
+    assert.equal(f.config().vision, undefined);
+});
+
+test('旧通道默认继承全局视觉，关闭继承后单独保存', () => {
+    const f = managementFixture();
+    vm.runInContext('currentConfig.vision = {enabled:true,model:"global-vision"}', f.context);
+    f.context.writeAIChannelToMainForm('a');
+    assert.equal(f.elements.get('vision-inherit-global').checked, true);
+    assert.equal(f.elements.get('vision-model').value, 'global-vision');
+    assert.equal(f.context.readAIChannelFromMainForm('a').vision, null);
+    f.elements.get('vision-inherit-global').checked = false;
+    f.context.syncAIChannelVisionInheritance();
+    f.elements.get('vision-model').value = 'custom';
+    assert.equal(f.context.readAIChannelFromMainForm('a').vision.model, 'custom');
+    assert.equal(f.config().vision.model, 'global-vision');
+});
+
+test('批量导入使用前缀加型号，去重并处理名称归一化碰撞，视觉配置不共享引用', () => {
+    const f = managementFixture();
+    const source = {...firstChannel,vision:{enabled:true,model:'vision-source'}};
+    const result = f.context.buildAIModelImports({existing:firstChannel},source,['model-a','model-b','model-b','a/b','a-b'],'供应商 / ');
+    assert.equal(result.added.length, 3);
+    assert.equal(new Set(result.added).size, 3);
+    const b = result.channels[result.added[0]];
+    assert.equal(b.name,'供应商 / model-b');
+    b.vision.model='edited';
+    assert.equal(result.channels[result.added[1]].vision.model,'vision-source');
+    assert.equal(source.vision.model,'vision-source');
+});
+
+test('一键全部测试忽略勾选，包含配置不完整的已保存模型，结果不会改变当前通道', async () => {
+    const f = managementFixture({a:firstChannel,b:secondChannel,c:{...firstChannel,name:'incomplete',model:''}});
+    vm.runInContext('selectedAIChannelBulkIds.add("b")', f.context);
+    const tested=[];
+    const saved=f.config();
+    f.context.apiFetch=async (url) => {
+        if(url==='/api/config') return {ok:true,json:async()=>clone(saved)};
+        const id=url.split('/').at(-2); tested.push(id);
+        return {ok:true,json:async()=>({channel_id:id,status:id==='c'?'failed':'ready',success:id!=='c',ttft_ms:id==='c'?null:25,latency_ms:70,tested_at:'2026-10-03T00:00:00Z'})};
+    };
+    await f.context.testSavedAIChannels(true);
+    assert.deepEqual(tested.sort(),['a','b','c']);
+    assert.equal(f.elements.get('ai-channel-select').value,'a');
+    assert.ok(f.elements.get('ai-probe-results').innerHTML.includes('25 ms'));
+    assert.ok(f.elements.get('ai-probe-results').innerHTML.includes('incomplete'));
+});
+
+test('刷新加载持久化测试记录，凭据草稿变更显示需重测', async () => {
+    const f=managementFixture();
+    f.context.apiFetch=async()=>({ok:true,json:async()=>({results:{a:{status:'ready',success:true,ttft_ms:0,latency_ms:30,tested_at:'2026-10-03T00:00:00Z'}}})});
+    await f.context.loadSavedAIChannelProbes();
+    assert.equal(f.context.getAIChannelProbeDisplay('a').status,'ready');
+    assert.ok(f.elements.get('ai-probe-results').innerHTML.includes('0 ms'));
+    f.elements.get('openai-api-key').value='rotated';
+    f.context.syncAIChannelEditorPreview();
+    assert.equal(f.context.getAIChannelProbeDisplay('a').status,'stale');
 });

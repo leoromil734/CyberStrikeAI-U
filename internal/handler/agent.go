@@ -368,12 +368,27 @@ func (h *AgentHandler) configForAIChannel(channelID string) (*config.Config, str
 	if h == nil || h.config == nil {
 		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
+	if strings.TrimSpace(channelID) != "" && len(h.config.AI.Channels) > 0 {
+		if _, exists := h.config.AI.Channels[config.NormalizeAIChannelID(channelID)]; !exists {
+			return nil, channelID, fmt.Errorf("AI 通道不存在: %s", channelID)
+		}
+	}
 	oa, resolvedID, ok := h.config.ResolveAIChannel(channelID)
 	if !ok {
 		return nil, resolvedID, fmt.Errorf("AI 通道不存在: %s", resolvedID)
 	}
 	cfgCopy := *h.config
 	cfgCopy.OpenAI = oa
+	cfgCopy.Vision = h.config.ResolveAIVision(resolvedID)
+	// Keep the selected channel's identity stable for the entire run, including
+	// batch default/fallback selection and later configuration edits.
+	channel, exists := h.config.AI.Channels[resolvedID]
+	if !exists {
+		channel = config.AIChannelFromOpenAI(resolvedID, resolvedID, oa)
+	}
+	visionCopy := cfgCopy.Vision
+	channel.Vision = &visionCopy
+	cfgCopy.AI = config.AIConfig{DefaultChannel: resolvedID, Channels: map[string]config.AIChannelConfig{resolvedID: channel}}
 	return &cfgCopy, resolvedID, nil
 }
 

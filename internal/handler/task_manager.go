@@ -33,6 +33,7 @@ type AgentTask struct {
 	Status          string    `json:"status"`
 	AgentMode       string    `json:"agentMode,omitempty"`   // eino_single / deep / plan_execute / supervisor / workflow
 	AIChannelID     string    `json:"aiChannelId,omitempty"` // 列表接口从本会话最近运行记录附加，非全局默认值
+	AIChannelName   string    `json:"aiChannelName,omitempty"`
 	AIModel         string    `json:"aiModel,omitempty"`
 	CancellingAt    time.Time `json:"-"` // 进入 cancelling 状态的时间，用于清理长时间卡住的任务
 

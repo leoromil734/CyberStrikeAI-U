@@ -52,7 +52,7 @@ func RunEinoSingleChatModelAgent(
 	if ma == nil {
 		return nil, fmt.Errorf("eino single: multi_agent 配置为空")
 	}
-	ctx = vision.WithSessionOpenAIConfig(ctx, appCfg.OpenAI)
+	ctx = vision.WithSessionConfig(ctx, appCfg.Vision, appCfg.OpenAI)
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
 
 	einoLoc, einoSkillMW, einoFSTools, skillsRoot, einoErr := prepareEinoSkills(ctx, appCfg.SkillsDir, ma, logger)

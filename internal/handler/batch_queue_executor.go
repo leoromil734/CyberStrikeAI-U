@@ -322,10 +322,10 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		}
 	}
 	h.tasks.SetTaskAgentMode(conversationID, batchMode)
-	h.recordConversationAIChannel(conversationID, task.AIChannelID)
+	runCfg := h.batchTaskRunConfig(task.AIChannelID)
+	h.recordConversationAIChannel(conversationID, task.AIChannelID, runCfg)
 	h.recordRunTargets(conversationID, task.Message)
 
-	runCfg := h.batchTaskRunConfig(task.AIChannelID)
 	maxRetry := normalizeModelErrorRetryMax(queue.ModelRetryMax)
 	// 最终化治理：候选文本先过 finalizer，未收敛时按原因自动续跑（含等待仍在跑的异步工具）。
 	segFinalMessage := finalMessage
@@ -613,13 +613,14 @@ func (h *AgentHandler) batchTaskRunConfig(channelID string) *config.Config {
 		return nil
 	}
 	channelID = strings.TrimSpace(channelID)
-	if channelID == "" {
-		return h.config
-	}
 	cfg, _, err := h.configForAIChannel(channelID)
 	if err != nil || cfg == nil {
 		if h.logger != nil {
 			h.logger.Warn("批量任务指定模型通道不可用，改用默认通道", zap.String("aiChannelId", channelID), zap.Error(err))
+		}
+		fallback, _, fallbackErr := h.configForAIChannel("")
+		if fallbackErr == nil && fallback != nil {
+			return fallback
 		}
 		return h.config
 	}

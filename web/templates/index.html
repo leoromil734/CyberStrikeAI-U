@@ -26,6 +26,8 @@
     <link rel="stylesheet" href="/static/css/style.css?v=20261002-governance">
     <link rel="stylesheet" href="/static/css/experience.css?v=20261002-ui1">
     <link rel="stylesheet" href="/static/css/targets.css?v=20261002-ui1">
+    <link rel="stylesheet" href="/static/css/vulnerability-models.css?v=20261003-1">
+    <link rel="stylesheet" href="/static/css/model-management.css?v=20261003-1">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
     <script src="/static/js/router.js?v=20260929-perf1"></script>
@@ -2758,6 +2760,30 @@
                             <datalist id="vulnerability-task-tag-suggestions"></datalist>
                         </div>
 
+                        <section class="vulnerability-model-panel" aria-labelledby="vulnerability-model-title">
+                            <div class="vulnerability-model-heading">
+                                <div>
+                                    <h3 id="vulnerability-model-title" data-i18n="vulnerabilityModels.title">通道与模型发现统计</h3>
+                                    <p data-i18n="vulnerabilityModels.hint">按发现时的来源快照统计，遵循当前筛选条件和访问权限；历史未记录来源的漏洞单独归类。数量不代表模型准确率。</p>
+                                </div>
+                                <label>
+                                    <span data-i18n="vulnerabilityModels.groupBy">分类方式</span>
+                                    <select id="vulnerability-model-group-by" onchange="loadVulnerabilityModelStats()">
+                                        <option value="channel_model" data-i18n="vulnerabilityModels.byChannelModel">通道 + 模型</option>
+                                        <option value="model" data-i18n="vulnerabilityModels.byModel">按模型</option>
+                                        <option value="channel" data-i18n="vulnerabilityModels.byChannel">按通道</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="vulnerability-model-filters">
+                                <label><span data-i18n="vulnerabilityModels.channel">通道名称</span><select id="vulnerability-ai-channel-filter" onchange="scheduleVulnerabilityFilterApply(true)"><option value="" data-i18n="vulnerabilityModels.allChannels">全部通道</option></select></label>
+                                <label><span data-i18n="vulnerabilityModels.model">模型型号</span><select id="vulnerability-ai-model-filter" onchange="scheduleVulnerabilityFilterApply(true)"><option value="" data-i18n="vulnerabilityModels.allModels">全部模型</option></select></label>
+                                <label><span data-i18n="vulnerabilityModels.attribution">来源记录</span><select id="vulnerability-ai-unattributed-filter" onchange="scheduleVulnerabilityFilterApply(true)"><option value="" data-i18n="vulnerabilityModels.allRecords">全部记录</option><option value="true" data-i18n="vulnerabilityModels.unrecorded">未记录</option></select></label>
+                                <span id="vulnerability-model-summary" class="vulnerability-model-summary" aria-live="polite"></span>
+                            </div>
+                            <div id="vulnerability-model-stats" aria-live="polite"></div>
+                        </section>
+
                         <!-- 漏洞列表 -->
                         <div id="vulnerabilities-list" class="vulnerabilities-list">
                             <div class="loading-spinner" data-i18n="vulnerabilityPage.loading">加载中...</div>
@@ -3608,7 +3634,8 @@
                                                     <select id="ai-channel-select" class="ai-channel-switch-select" onchange="selectAIChannelForEditing(this.value)"></select>
                                                 </div>
                                                 <div class="ai-channel-switcher-actions">
-                                                    <button type="button" class="btn-secondary" onclick="probeSelectedAIChannels()" data-i18n="settingsBasic.aiChannelBulkProbe" data-i18n-title="settingsBasic.aiChannelBulkProbeTitle" data-i18n-attr="title">批量探活</button>
+                                                    <button type="button" class="btn-secondary" data-model-probe-button onclick="probeSelectedAIChannels(true)" data-i18n="modelManagement.testAll">测试全部已保存模型</button>
+                                                    <button type="button" class="btn-secondary" data-model-probe-button onclick="probeSelectedAIChannels(false)" data-i18n="modelManagement.testSelected">测试选中</button>
                                                     <button type="button" class="btn-secondary" onclick="copyAIChannelFromForm()" data-i18n="settingsBasic.aiChannelCopy">复制</button>
                                                     <button type="button" class="btn-secondary" onclick="setSelectedAIChannelDefault()" data-i18n="settingsBasic.aiChannelSetDefault">设为默认</button>
                                                     <button type="button" class="btn-secondary danger" onclick="deleteSelectedAIChannel()" data-i18n="settingsBasic.aiChannelDelete">删除</button>
@@ -3638,7 +3665,7 @@
                                                         <div class="ai-channel-form-grid">
                                                             <div class="form-group">
                                                                 <label for="ai-channel-name" data-i18n="settingsBasic.aiChannelName">通道名称</label>
-                                                                <input type="text" id="ai-channel-name" placeholder="Qwen Max" maxlength="24" />
+                                                                <input type="text" id="ai-channel-name" placeholder="供应商 / 模型名称" maxlength="160" />
                                                             </div>
                                                             <div class="form-group">
                                                                 <label for="openai-provider" data-i18n="settingsBasic.apiProvider">API 提供商</label>
@@ -3740,9 +3767,32 @@
                                     </div>
                                 </div>
 
+                                <div class="settings-subsection model-management-panel">
+                                    <details id="ai-model-import-panel">
+                                        <summary data-i18n="modelManagement.importTitle">从当前地址和密钥批量导入模型</summary>
+                                        <p class="form-hint" data-i18n="modelManagement.importHint">复用当前连接和参数，勾选需要的型号。通道名称为「前缀 + 模型名称」，重复连接与型号自动跳过。导入后点击「保存更改」。</p>
+                                        <div class="model-import-controls">
+                                            <label><span data-i18n="modelManagement.prefix">命名前缀</span><input id="ai-import-prefix" type="text" placeholder="供应商 / " /></label>
+                                            <label><span data-i18n="modelManagement.search">搜索型号</span><input id="ai-import-search" type="search" oninput="renderAIModelImports()" /></label>
+                                            <button type="button" class="btn-secondary" onclick="fetchAIModelsForImport()" data-i18n="modelManagement.fetch">获取可导入模型</button>
+                                        </div>
+                                        <details class="model-import-manual"><summary data-i18n="modelManagement.manual">手动粘贴型号（兼容不提供模型列表的服务）</summary><textarea id="ai-import-manual" rows="3" placeholder="每行一个模型名称；填写后点击获取可导入模型"></textarea></details>
+                                        <div class="model-import-actions"><button type="button" class="btn-ghost" onclick="selectAIModelImports(true)" data-i18n="modelManagement.selectAll">全选当前搜索结果</button><button type="button" class="btn-ghost" onclick="selectAIModelImports(false)" data-i18n="modelManagement.deselect">取消选择</button><span id="ai-import-status" role="status"></span></div>
+                                        <div id="ai-import-models" class="model-import-list"></div>
+                                        <button type="button" class="btn-primary" onclick="importSelectedAIModels()" data-i18n="modelManagement.importSelected">导入选中模型（待保存）</button>
+                                    </details>
+                                </div>
+                                <div class="settings-subsection model-management-panel">
+                                    <div class="model-probe-heading"><h4 data-i18n="modelManagement.results">模型测试记录</h4><span id="ai-probe-progress" role="status" aria-live="polite"></span><button type="button" class="btn-ghost" onclick="loadSavedAIChannelProbes()" data-i18n="common.refresh">刷新</button></div>
+                                    <p class="form-hint" data-i18n="modelManagement.probeHint">测试已保存配置，会产生少量模型调用费用。首 token 是收到首个文本片段的耗时，不包含纯思考片段；结果保存在系统中，配置变更后标记为需重测。</p>
+                                    <div class="model-probe-table-wrap"><table class="model-probe-table"><thead><tr><th data-i18n="modelManagement.channelModel">通道 / 模型</th><th data-i18n="modelManagement.status">状态</th><th data-i18n="modelManagement.firstToken">首 token</th><th data-i18n="modelManagement.duration">总耗时</th><th data-i18n="modelManagement.testedAt">测试时间</th><th data-i18n="modelManagement.resultDetail">结果详情</th></tr></thead><tbody id="ai-probe-results"></tbody></table></div>
+                                </div>
+
                                 <!-- Vision 视觉分析 -->
-                                <div class="settings-subsection">
+                                <div class="settings-subsection" id="vision-channel-config">
                                     <h4 data-i18n="settingsBasic.visionConfig">视觉分析（analyze_image）</h4>
+                                    <p class="form-hint"><span data-i18n="modelManagement.visionFor">当前通道：</span><strong id="vision-channel-label"></strong></p>
+                                    <label class="model-vision-inherit"><input type="checkbox" id="vision-inherit-global" onchange="syncAIChannelVisionInheritance()" /><span data-i18n="modelManagement.inheritVision">沿用旧版全局视觉配置；取消勾选后为当前通道单独配置</span></label>
                                     <div class="settings-form">
                                         <div class="form-group">
                                             <label class="checkbox-label">
@@ -6868,10 +6918,11 @@
     <script src="/static/js/agents.js"></script>
     <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/chat-scroll.js?v=20260727-1"></script>
-    <script src="/static/js/monitor.js?v=20260929-perf1"></script>
+    <script src="/static/js/monitor.js?v=20261003-channel1"></script>
     <script src="/static/js/chat.js?v=20260929-perf1"></script>
     <script src="/static/js/hitl.js"></script>
-    <script src="/static/js/settings.js?v=20261002-model-params1"></script>
+    <script src="/static/js/settings.js?v=20261003-model-management1"></script>
+    <script src="/static/js/model-management.js?v=20261003-1"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
     <script src="/static/js/wechat-robot.js"></script>
@@ -6883,7 +6934,8 @@
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/fact-graph.js"></script>
     <script src="/static/js/projects.js?v=20261002-governance"></script>
-    <script src="/static/js/vulnerability.js?v=15"></script>
+    <script src="/static/js/vulnerability.js?v=20261003-models1"></script>
+    <script src="/static/js/vulnerability-models.js?v=20261003-1"></script>
     <script src="/static/js/webshell.js"></script>
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js?v=20261002-governance"></script>

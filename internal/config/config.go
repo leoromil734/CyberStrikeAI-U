@@ -861,6 +861,23 @@ type AIChannelConfig struct {
 	MaxTotalTokens      int                   `yaml:"max_total_tokens,omitempty" json:"max_total_tokens,omitempty"`
 	MaxCompletionTokens int                   `yaml:"max_completion_tokens,omitempty" json:"max_completion_tokens,omitempty"`
 	Reasoning           OpenAIReasoningConfig `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
+	// Nil inherits the legacy global vision configuration; a non-nil disabled
+	// configuration explicitly disables vision for this channel.
+	Vision *VisionConfig `yaml:"vision,omitempty" json:"vision,omitempty"`
+}
+
+func (c *Config) ResolveAIVision(channelID string) VisionConfig {
+	if c == nil {
+		return VisionConfig{}
+	}
+	id := NormalizeAIChannelID(channelID)
+	if strings.TrimSpace(channelID) == "" {
+		id = NormalizeAIChannelID(c.AI.DefaultChannel)
+	}
+	if channel, ok := c.AI.Channels[id]; ok && channel.Vision != nil {
+		return *channel.Vision
+	}
+	return c.Vision
 }
 
 func (c AIChannelConfig) ToOpenAIConfig() OpenAIConfig {

@@ -150,8 +150,14 @@ function syncSettingsCustomSelect(select) {
                 item.classList.add('settings-custom-select-option--probe', `probe-${probeStatus}`);
                 const status = document.createElement('span');
                 status.className = `settings-custom-select-status ${probeStatus}`;
-                status.innerHTML = `<span class="settings-custom-select-status-dot" aria-hidden="true"></span><span class="settings-custom-select-status-text"></span>`;
-                status.querySelector('.settings-custom-select-status-text').textContent = probeMessage || probeStatus;
+                const dot = document.createElement('span');
+                dot.className = 'settings-custom-select-status-dot';
+                dot.setAttribute('aria-hidden', 'true');
+                const text = document.createElement('span');
+                text.className = 'settings-custom-select-status-text';
+                text.textContent = probeMessage || probeStatus;
+                status.appendChild(dot);
+                status.appendChild(text);
                 item.appendChild(status);
             }
         }
@@ -753,7 +759,8 @@ async function loadConfig(loadTools = true, options = {}) {
         renderAIChannelSelect();
         writeAIChannelToMainForm(selectedAIChannelId);
 
-        fillVisionConfigFromCurrent(currentConfig.vision || {});
+        if (typeof rememberSavedAIChannels === 'function') rememberSavedAIChannels(currentConfig.ai);
+        if (typeof loadSavedAIChannelProbes === 'function') loadSavedAIChannelProbes();
         initModelListControls();
 
         // 填充FOFA配置
@@ -1952,7 +1959,6 @@ async function applySettings() {
         currentConfig.ai = ensureAIConfigShape(currentConfig);
         const activeChannelId = normalizeAIChannelId(selectedAIChannelId || currentConfig.ai.default_channel || 'default');
         currentConfig.ai.channels[activeChannelId] = readAIChannelFromMainForm(activeChannelId);
-        currentConfig.ai.default_channel = activeChannelId;
         renderAIChannelSelect();
         const activeChannel = currentConfig.ai.channels[activeChannelId] || {};
         const prevOpenai = activeChannel;
@@ -1968,7 +1974,6 @@ async function applySettings() {
             };
         const config = {
             ai: currentConfig.ai,
-            vision: visionPayload,
             fofa: {
                 api_key: document.getElementById('fofa-api-key')?.value.trim() || '',
                 base_url: document.getElementById('fofa-base-url')?.value.trim() || ''
@@ -2529,6 +2534,7 @@ function readAIChannelFromMainForm(id) {
         model: document.getElementById('openai-model')?.value.trim() || '',
         max_total_tokens: parseInt(document.getElementById('openai-max-total-tokens')?.value, 10) || 120000,
         max_completion_tokens: maxCompletionTokens,
+        vision: typeof collectAIChannelVision === 'function' ? collectAIChannelVision() : prev.vision,
         reasoning: {
             ...(prev.reasoning || {}),
             mode: document.getElementById('openai-reasoning-mode')?.value || 'auto',
@@ -2571,6 +2577,8 @@ function writeAIChannelToMainForm(id) {
     if (profileEl) profileEl.value = ['auto', 'deepseek_compat', 'openai_compat', 'output_config_effort'].includes(String(r.profile || '').toLowerCase()) ? String(r.profile || '').toLowerCase() : 'auto';
     const allowEl = document.getElementById('openai-reasoning-allow-client');
     if (allowEl) allowEl.checked = r.allow_client_reasoning !== false;
+    if (typeof fillAIChannelVision === 'function') fillAIChannelVision(ch);
+    if (typeof resetAIChannelTransientUI === 'function') resetAIChannelTransientUI();
     // Programmatic value changes do not emit change events. Refresh the visible
     // dropdowns explicitly, without turning a server-loaded channel into a draft.
     syncModelListFetchButtons();
@@ -2592,10 +2600,10 @@ function aiChannelSelectLabel(id, ch) {
 }
 
 function aiChannelOptionProbeMeta(id) {
-    const probe = aiChannelProbeResults[id];
+    const probe = typeof getAIChannelProbeDisplay === 'function' ? getAIChannelProbeDisplay(id) : aiChannelProbeResults[id];
     if (!probe) return null;
     const status = probe.status || '';
-    if (!['testing', 'ready', 'failed'].includes(status)) return null;
+    if (!['testing', 'ready', 'failed', 'stale'].includes(status)) return null;
     return {
         status,
         message: probe.message || (status === 'ready'
@@ -2623,8 +2631,10 @@ function updateAIChannelSelectOption(id) {
             delete opt.dataset.probeStatus;
             delete opt.dataset.probeMessage;
         }
-        select.value = channelId;
-        select.selectedIndex = opt.index;
+        if (channelId === selectedAIChannelId) {
+            select.value = channelId;
+            select.selectedIndex = opt.index;
+        }
     }
     if (typeof syncSettingsCustomSelect === 'function') {
         syncSettingsCustomSelect(select);
@@ -2692,7 +2702,7 @@ function renderAIChannelSelect() {
     renderAIChannelList(ids);
     const countLabel = typeof window.t === 'function'
         ? window.t('settingsBasic.aiChannelCount').replace('{count}', String(ids.length))
-        : `已保存 ${ids.length} 个通道`;
+        : `已配置 ${ids.length} 个通道；新增或修改后请保存`;
     showAIChannelSaveHint(countLabel, true);
 }
 
@@ -2714,7 +2724,7 @@ function renderAIChannelList(ids) {
         const ch = currentConfig.ai.channels[id] || {};
         const isDefault = id === currentConfig.ai.default_channel;
         const isComplete = !validateSelectedAIChannelPayload(ch);
-        const probe = aiChannelProbeResults[id] || null;
+        const probe = typeof getAIChannelProbeDisplay === 'function' ? getAIChannelProbeDisplay(id) : aiChannelProbeResults[id] || null;
         const item = document.createElement('div');
         item.className = 'ai-channel-list-item' + (id === selectedAIChannelId ? ' active' : '') + (selectedAIChannelBulkIds.has(id) ? ' checked' : '');
         item.setAttribute('role', 'button');
@@ -2722,6 +2732,7 @@ function renderAIChannelList(ids) {
         item.setAttribute('aria-current', id === selectedAIChannelId ? 'true' : 'false');
         item.onclick = () => selectAIChannelForEditing(id);
         item.onkeydown = (event) => {
+            if (event.target !== item) return;
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 selectAIChannelForEditing(id);
@@ -2744,9 +2755,9 @@ function renderAIChannelList(ids) {
         const displayName = displayAIChannelName(id, ch);
         const defaultBadge = isDefault ? `<span class="ai-channel-badge">${escapeAIChannelHtml(settingsT('settingsBasic.aiChannelDefaultBadge', '默认'))}</span>` : '';
         let statusText = isComplete
-            ? settingsT('settingsBasic.aiChannelReady', '可用')
+            ? settingsT('modelManagement.untested', '未测试')
             : settingsT('settingsBasic.aiChannelDraft', '待完善');
-        let statusClass = isComplete ? 'ready' : 'draft';
+        let statusClass = 'draft';
         if (probe) {
             statusText = probe.message || statusText;
             statusClass = probe.status || statusClass;
@@ -2769,6 +2780,7 @@ function renderAIChannelList(ids) {
         item.appendChild(body);
         list.appendChild(item);
     });
+    if (typeof renderAIChannelProbeTable === 'function') renderAIChannelProbeTable();
 }
 
 function showAIChannelSaveHint(message, ok) {
@@ -2804,6 +2816,7 @@ function validateSelectedAIChannelPayload(ch) {
     if (!String(ch.base_url || '').trim()) missing.push('Base URL');
     if (!String(ch.api_key || '').trim()) missing.push('API Key');
     if (!String(ch.model || '').trim()) missing.push('模型');
+    if (ch.vision?.enabled && !String(ch.vision.model || '').trim()) missing.push('视觉模型');
     if (missing.length) {
         return missing.join(', ');
     }
@@ -2842,6 +2855,8 @@ async function refreshAIChannelsFromServer(preferredId, preferredPayload) {
     if (typeof populateChatAIChannelSelect === 'function') {
         populateChatAIChannelSelect(currentConfig.ai);
     }
+    if (typeof rememberSavedAIChannels === 'function') rememberSavedAIChannels(currentConfig.ai);
+    if (typeof loadSavedAIChannelProbes === 'function') await loadSavedAIChannelProbes();
     return true;
 }
 
@@ -3045,57 +3060,8 @@ function selectedOrAllAIChannelIdsForProbe() {
     return ids.filter((id) => !validateSelectedAIChannelPayload(currentConfig.ai.channels[id] || {}));
 }
 
-async function probeSelectedAIChannels() {
-    if (typeof requirePermission === 'function' && !requirePermission('config:write')) return;
-    const ids = selectedOrAllAIChannelIdsForProbe();
-    if (!ids.length) {
-        alert(settingsT('settingsBasic.aiChannelProbeNoComplete', '没有可探活的完整通道，请先填写 Base URL、API Key 和模型'));
-        return;
-    }
-    showAIChannelSaveHint(settingsT('settingsBasic.aiChannelProbing', '正在探活 {count} 个通道...').replace('{count}', String(ids.length)), true);
-    ids.forEach((id) => {
-        aiChannelProbeResults[id] = { status: 'testing', message: settingsT('settingsBasic.testing', '测试中...') };
-        updateAIChannelSelectOption(id);
-    });
-    renderAIChannelList();
-    let okCount = 0;
-    let nextIndex = 0;
-    async function probeNextAIChannel() {
-        const id = ids[nextIndex++];
-        if (!id) return;
-        const ch = currentConfig.ai.channels[id] || {};
-        try {
-            const response = await apiFetch('/api/config/test-openai', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    provider: ch.provider || 'openai_compatible',
-                    base_url: ch.base_url || '',
-                    api_key: ch.api_key || '',
-                    model: ch.model || ''
-                })
-            });
-            const result = await response.json().catch(() => ({}));
-            if (response.ok && result.success) {
-                okCount += 1;
-                const latency = result.latency_ms ? ` ${result.latency_ms}ms` : '';
-                aiChannelProbeResults[id] = { status: 'ready', message: settingsT('settingsBasic.aiChannelReadyWithLatency', '可用{latency}').replace('{latency}', latency) };
-            } else {
-                aiChannelProbeResults[id] = { status: 'failed', message: formatConnectionTestError(result.error || settingsT('settingsBasic.testFailed', '连接失败')).message };
-            }
-        } catch (error) {
-            aiChannelProbeResults[id] = { status: 'failed', message: formatConnectionTestError(error.message || settingsT('settingsBasic.testError', '测试出错')).message };
-        }
-        updateAIChannelSelectOption(id);
-        renderAIChannelList();
-    }
-    const workers = Array.from({ length: Math.min(AI_CHANNEL_PROBE_CONCURRENCY, ids.length) }, async function () {
-        while (nextIndex < ids.length) {
-            await probeNextAIChannel();
-        }
-    });
-    await Promise.all(workers);
-    showAIChannelSaveHint(settingsT('settingsBasic.aiChannelProbeDone', '探活完成：{ok}/{total} 可用').replace('{ok}', String(okCount)).replace('{total}', String(ids.length)), okCount === ids.length);
+async function probeSelectedAIChannels(forceAll = false) {
+    return testSavedAIChannels(forceAll);
 }
 
 async function deleteCheckedAIChannels() {
@@ -3447,6 +3413,8 @@ async function testKnowledgeEmbedding() {
 async function fetchModelList(scope) {
     const tFn = typeof window.t === 'function' ? window.t : (k) => k;
     const creds = resolveModelListCredentials(scope);
+    const requestChannel = selectedAIChannelId;
+    const isCurrentRequest = () => requestChannel === selectedAIChannelId && JSON.stringify(creds) === JSON.stringify(resolveModelListCredentials(scope));
     const modelListUiIds = {
         openai: {
             btnId: 'fetch-openai-models-btn',
@@ -3504,6 +3472,7 @@ async function fetchModelList(scope) {
             body: JSON.stringify(creds)
         });
         const result = await response.json();
+        if (!isCurrentRequest()) return;
         if (!response.ok) {
             throw new Error(result.error || '请求失败');
         }
@@ -3524,7 +3493,7 @@ async function fetchModelList(scope) {
             resultEl.style.color = 'var(--success-color, #38a169)';
         }
     } catch (error) {
-        if (resultEl) {
+        if (isCurrentRequest() && resultEl) {
             resultEl.textContent = tFn('settingsBasic.modelsListFailed') + ': ' + error.message;
             resultEl.style.color = 'var(--error-color, #e53e3e)';
         }

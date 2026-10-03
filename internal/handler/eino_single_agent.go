@@ -158,9 +158,6 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
-	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
-	h.recordRunTargets(conversationID, req.Message)
-
 	var result *multiagent.RunResult
 	var runErr error
 
@@ -188,6 +185,8 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "eino_single")
 	taskOwned = true
+	h.recordConversationAIChannel(conversationID, resolvedAIChannelID, runCfg)
+	h.recordRunTargets(conversationID, req.Message)
 
 	var cumulativeMCPExecutionIDs []string
 	// 同一请求内分段续跑时，主代理 iteration 事件按偏移累计，避免 UI 出现「第3轮 → 第1轮」回跳。
@@ -444,7 +443,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
+	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID, runCfg)
 	h.recordRunTargets(prep.ConversationID, req.Message)
 
 	curHist := prep.History

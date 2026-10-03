@@ -36,12 +36,21 @@ func (c *Client) Analyze(ctx context.Context, img ImagePayload, question string)
 	if mime == "" {
 		mime = "image/jpeg"
 	}
+	visionCfg := c.cfg
 	oa, hasSessionConfig := SessionOpenAIConfigFromContext(ctx)
-	if !hasSessionConfig {
-		oa = c.cfg.OpenAICfgEffective(c.mainOA)
+	if sessionVision, ok := SessionVisionConfigFromContext(ctx); ok {
+		if !sessionVision.Enabled {
+			return "", fmt.Errorf("vision is disabled for the selected channel")
+		}
+		visionCfg = sessionVision
+		if !hasSessionConfig {
+			oa = c.mainOA
+		}
+		oa = visionCfg.OpenAICfgEffective(oa)
+	} else if !hasSessionConfig {
+		oa = visionCfg.OpenAICfgEffective(c.mainOA)
 	} else {
-		// Agent 会话必须完整使用本轮实际选中的地址、Key 和模型，
-		// 不允许启动时 vision 覆盖项把请求重新路由到旧渠道。
+		// 兼容只绑定主模型的旧调用；新运行路径绑定完整的视觉配置。
 		oa.Reasoning.Mode = "off"
 	}
 	if strings.TrimSpace(oa.APIKey) == "" {
@@ -51,7 +60,7 @@ func (c *Client) Analyze(ctx context.Context, img ImagePayload, question string)
 		return "", fmt.Errorf("vision model is empty")
 	}
 
-	timeout := time.Duration(c.cfg.TimeoutSecondsEffective()) * time.Second
+	timeout := time.Duration(visionCfg.TimeoutSecondsEffective()) * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -82,7 +91,7 @@ func (c *Client) Analyze(ctx context.Context, img ImagePayload, question string)
 
 	b64 := base64.StdEncoding.EncodeToString(img.Bytes)
 	detail := schema.ImageURLDetailLow
-	switch c.cfg.DetailEffective() {
+	switch visionCfg.DetailEffective() {
 	case "high":
 		detail = schema.ImageURLDetailHigh
 	case "auto":

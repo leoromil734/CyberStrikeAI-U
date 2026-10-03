@@ -815,11 +815,14 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			zap.Int("channels", len(h.config.AI.Channels)),
 		)
 	}
-	if req.OpenAI != nil {
+	if req.OpenAI != nil && req.AI == nil {
 		h.config.OpenAI = *req.OpenAI
 		h.config.AI.EnsureDefaultFromOpenAI(h.config.OpenAI)
 		if def := config.NormalizeAIChannelID(h.config.AI.DefaultChannel); def != "" {
-			h.config.AI.Channels[def] = config.AIChannelFromOpenAI(def, "Default", h.config.OpenAI)
+			previous := h.config.AI.Channels[def]
+			channel := config.AIChannelFromOpenAI(def, previous.Name, h.config.OpenAI)
+			channel.Vision = previous.Vision
+			h.config.AI.Channels[def] = channel
 		}
 		h.logger.Info("更新OpenAI配置",
 			zap.String("base_url", h.config.OpenAI.BaseURL),

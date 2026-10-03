@@ -5385,6 +5385,10 @@ function renderTaskItemIntoContainer(task, container, openActiveTaskConversation
     const modeLabel = task.agentMode ? agentModeLabel(task.agentMode) : '';
     const modelName = String(task.aiModel || task.ai_model || '').trim() || _t('chat.aiModelUnknown');
     const modelTitle = `${_t('chat.aiModelLabel')}: ${modelName}`;
+    const channelName = (typeof conversationAIChannelLabel === 'function'
+        ? conversationAIChannelLabel(task)
+        : String(task.aiChannelName || task.ai_channel_name || task.aiChannelId || task.ai_channel_id || '').trim()) || _t('chat.aiChannelUnknown');
+    const channelTitle = `${_t('chat.aiChannelLabel')}: ${channelName}`;
 
     if (task && task.conversationId) {
         item.dataset.conversationId = task.conversationId;
@@ -5394,6 +5398,7 @@ function renderTaskItemIntoContainer(task, container, openActiveTaskConversation
         <div class="active-task-info">
             <span class="active-task-status">${statusText}</span>
             ${modeLabel ? `<span class="active-task-mode">${escapeHtml(modeLabel)}</span>` : ''}
+            <span class="active-task-channel" title="${escapeHtml(channelTitle)}">${escapeHtml(channelName)}</span>
             <span class="active-task-model" title="${escapeHtml(modelTitle)}">${escapeHtml(modelName)}</span>
             <span class="active-task-message">${escapeHtml(taskDisplayName)}</span>
         </div>

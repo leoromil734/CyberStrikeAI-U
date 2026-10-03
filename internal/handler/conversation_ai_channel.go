@@ -3,6 +3,7 @@ package handler
 import (
 	"strings"
 
+	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ func attachConversationAIModels(db *database.DB, conversations []*database.Conve
 		}
 		if m, ok := models[strings.TrimSpace(conv.ID)]; ok {
 			conv.AIChannelID = m.ChannelID
+			conv.AIChannelName = m.ChannelName
 			conv.AIModel = m.Model
 		}
 	}
@@ -54,6 +56,7 @@ func attachAgentTaskAIModels(db *database.DB, tasks []*AgentTask) {
 		}
 		if model, ok := models[strings.TrimSpace(task.ConversationID)]; ok {
 			task.AIChannelID = model.ChannelID
+			task.AIChannelName = model.ChannelName
 			task.AIModel = model.Model
 		}
 	}
@@ -61,7 +64,7 @@ func attachAgentTaskAIModels(db *database.DB, tasks []*AgentTask) {
 
 // recordConversationAIChannel 记录某对话最近一次运行使用的 AI 通道与模型名（对话列表展示用）。
 // 传入的 channelID 允许为空（表示跟随默认通道），落库时用实际解析出的通道 ID 与模型名。
-func (h *AgentHandler) recordConversationAIChannel(conversationID, channelID string) {
+func (h *AgentHandler) recordConversationAIChannel(conversationID, channelID string, snapshots ...*config.Config) {
 	if h == nil || h.db == nil {
 		return
 	}
@@ -70,14 +73,23 @@ func (h *AgentHandler) recordConversationAIChannel(conversationID, channelID str
 		return
 	}
 	resolvedID := strings.TrimSpace(channelID)
-	model := ""
-	if h.config != nil {
-		if oa, id, ok := h.config.ResolveAIChannel(resolvedID); ok {
+	model, name := "", ""
+	cfg := h.config
+	if len(snapshots) > 0 && snapshots[0] != nil {
+		cfg = snapshots[0]
+		resolvedID = cfg.AI.DefaultChannel
+	}
+	if cfg != nil {
+		if oa, id, ok := cfg.ResolveAIChannel(resolvedID); ok {
 			resolvedID = strings.TrimSpace(id)
 			model = strings.TrimSpace(oa.Model)
+			name = strings.TrimSpace(cfg.AI.Channels[id].Name)
+		}
+		if len(snapshots) > 0 {
+			model = cfg.OpenAI.Model
 		}
 	}
-	if err := h.db.SetConversationAIChannel(conversationID, resolvedID, model); err != nil && h.logger != nil {
+	if err := h.db.SetConversationAIChannel(conversationID, resolvedID, model, name); err != nil && h.logger != nil {
 		// 只是列表展示信息，失败不影响本轮对话。
 		h.logger.Debug("记录对话 AI 通道失败", zap.String("conversationId", conversationID), zap.Error(err))
 	}

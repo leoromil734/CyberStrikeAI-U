@@ -165,8 +165,6 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
-	h.recordConversationAIChannel(conversationID, resolvedAIChannelID)
-	h.recordRunTargets(conversationID, req.Message)
 	effectiveOrchestration := config.NormalizeMultiAgentOrchestration(runCfg.MultiAgent.Orchestration)
 	if orch != "" {
 		effectiveOrchestration = config.NormalizeMultiAgentOrchestration(orch)
@@ -200,6 +198,8 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	}
 	h.tasks.SetTaskAgentMode(conversationID, effectiveOrchestration)
 	taskOwned = true
+	h.recordConversationAIChannel(conversationID, resolvedAIChannelID, runCfg)
+	h.recordRunTargets(conversationID, req.Message)
 
 	// 同一 HTTP 流内多段 Run（如中断并继续）合并 MCP execution id，供最终 response / 库表与工具芯片展示完整列表
 	var cumulativeMCPExecutionIDs []string
@@ -459,7 +459,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID)
+	h.recordConversationAIChannel(prep.ConversationID, resolvedAIChannelID, runCfg)
 	h.recordRunTargets(prep.ConversationID, req.Message)
 
 	curHist := prep.History

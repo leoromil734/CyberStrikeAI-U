@@ -92,7 +92,7 @@ func RunDeepAgent(
 	if appCfg == nil || ma == nil || ag == nil {
 		return nil, fmt.Errorf("multiagent: 配置或 Agent 为空")
 	}
-	ctx = vision.WithSessionOpenAIConfig(ctx, appCfg.OpenAI)
+	ctx = vision.WithSessionConfig(ctx, appCfg.Vision, appCfg.OpenAI)
 
 	runtimeUserMessage := prepareLatestUserMessageForModel(userMessage, appCfg, &ma.EinoMiddleware, conversationID, logger)
 

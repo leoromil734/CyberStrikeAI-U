@@ -19,7 +19,14 @@ func RegisterAnalyzeImageTool(mcpServer *mcp.Server, cfg *config.Config, logger 
 	if mcpServer == nil || cfg == nil {
 		return
 	}
-	if !cfg.Vision.Enabled {
+	enabled := cfg.Vision.Enabled
+	for _, channel := range cfg.AI.Channels {
+		if channel.Vision != nil && channel.Vision.Enabled {
+			enabled = true
+			break
+		}
+	}
+	if !enabled {
 		return
 	}
 
@@ -31,14 +38,9 @@ func RegisterAnalyzeImageTool(mcpServer *mcp.Server, cfg *config.Config, logger 
 		return
 	}
 
-	preOpt := PreprocessOptions{
-		MaxImageBytes:            cfg.Vision.MaxImageBytesEffective(),
-		MaxDimension:             cfg.Vision.MaxDimensionEffective(),
-		JPEGQuality:              cfg.Vision.JPEGQualityEffective(),
-		MaxPayloadBytes:          cfg.Vision.MaxPayloadBytesEffective(),
-		SkipPreprocessBelowBytes: cfg.Vision.SkipPreprocessBelowBytesEffective(),
-	}
-	client := NewClient(cfg.Vision, cfg.OpenAI)
+	// Capture the startup fallback by value; per-run overrides come from context.
+	fallbackVision := cfg.Vision
+	fallbackOpenAI := cfg.OpenAI
 
 	tool := mcp.Tool{
 		Name: builtin.ToolAnalyzeImage,
@@ -63,6 +65,21 @@ func RegisterAnalyzeImageTool(mcpServer *mcp.Server, cfg *config.Config, logger 
 	}
 
 	handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		visionCfg := fallbackVision
+		if selected, ok := SessionVisionConfigFromContext(ctx); ok {
+			visionCfg = selected
+		}
+		if !visionCfg.Enabled {
+			return textResult("当前通道未启用视觉分析", true), nil
+		}
+		preOpt := PreprocessOptions{
+			MaxImageBytes:            visionCfg.MaxImageBytesEffective(),
+			MaxDimension:             visionCfg.MaxDimensionEffective(),
+			JPEGQuality:              visionCfg.JPEGQualityEffective(),
+			MaxPayloadBytes:          visionCfg.MaxPayloadBytesEffective(),
+			SkipPreprocessBelowBytes: visionCfg.SkipPreprocessBelowBytesEffective(),
+		}
+		client := NewClient(visionCfg, fallbackOpenAI)
 		path, _ := args["path"].(string)
 		question, _ := args["question"].(string)
 
