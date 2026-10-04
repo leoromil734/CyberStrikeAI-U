@@ -114,7 +114,8 @@ type einoADKRunLoopArgs struct {
 	ModelName      string
 }
 
-func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs []adk.Message) (*RunResult, error) {
+func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs []adk.Message) (result *RunResult, runErr error) {
+	defer func() { result, runErr = applyRunBudgetStop(ctx, result, runErr) }()
 	if args == nil || args.DA == nil {
 		return nil, fmt.Errorf("eino run loop: args 或 Agent 为空")
 	}

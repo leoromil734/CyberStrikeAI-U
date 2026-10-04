@@ -1114,6 +1114,8 @@ type RedisConfig struct {
 }
 
 type AgentConfig struct {
+	// MaxFactWritesPerRun bounds model-written facts across all roles and automatic segments; <=0 uses 256.
+	MaxFactWritesPerRun                int `yaml:"max_fact_writes_per_run,omitempty" json:"max_fact_writes_per_run,omitempty"`
 	MaxIterations                      int `yaml:"max_iterations" json:"max_iterations"`
 	ToolTimeoutMinutes                 int `yaml:"tool_timeout_minutes" json:"tool_timeout_minutes"`                                     // 单次工具执行最大时长（分钟），超时自动终止，防止长时间挂起；0 表示不限制（不推荐）
 	ToolWaitTimeoutSeconds             int `yaml:"tool_wait_timeout_seconds" json:"tool_wait_timeout_seconds"`                           // 工具本轮等待秒数；到时返回 execution_id，worker 继续后台执行；0 表示等到完成
@@ -1129,6 +1131,13 @@ type AgentConfig struct {
 	SystemPromptPath string `yaml:"system_prompt_path,omitempty" json:"system_prompt_path,omitempty"`
 	// GPTInstruct 将 gpt-5.6-instruct v42 破甲提示词前置注入系统提示；仅按模型名匹配 GPT 系列（gpt-*/chatgpt-*），与 provider/协议无关。
 	GPTInstruct GPTInstructConfig `yaml:"gpt_instruct,omitempty" json:"gpt_instruct,omitempty"`
+}
+
+func (c AgentConfig) MaxFactWritesPerRunEffective() int {
+	if c.MaxFactWritesPerRun <= 0 {
+		return 256
+	}
+	return c.MaxFactWritesPerRun
 }
 
 // GPTInstructConfig 控制 GPT 系列模型的破甲提示词注入（上游：MDX-Tom/gpt-5.6-instruct v42）。

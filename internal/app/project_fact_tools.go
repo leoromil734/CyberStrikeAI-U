@@ -66,6 +66,8 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			"侦察账本 recon/source|endpoint|phase|asset|js/<slug>（category=recon）；v2 用 recon/{kind}/{assessment_id}/...，正文 assessment_id 与 key 一致，优先 body_fields。" +
 			"source 的 raw/unique/incremental 是真实整数，原始输出用 raw_output，covered 必须有 evidence；工具执行 success 不是覆盖终态。" +
 			"评估清单 schema_version=2、mode=comprehensive、status=active/completed，补齐真实 scope_kind 与 endpoint_count/js_count/risk_unit_count；缺字段的 active 仅保存启动记录，不能通过收尾门禁。" +
+			"原始 URL/库存明细留在 query_recon_inventory 与结果工件，不要逐行复制成 fact；仅记录新的可复用结论与必要证据。" +
+			"禁止为了结项而为历史 URL 批量套用 N/A/negated 或虚构逐项实测证据；超出补写预算应停止并报告未完成范围。" +
 			"同 fact_key 覆盖更新。需当前对话已绑定项目。",
 		ShortDescription: "写入/更新项目事实（含 recon 账本）",
 		InputSchema: map[string]interface{}{
@@ -132,6 +134,9 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 	}
 
 	mcpServer.RegisterTool(upsertTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+		if err := mcp.AdmitProjectFactWrite(ctx, cfg.Agent.MaxFactWritesPerRunEffective()); err != nil {
+			return textResult(err.Error(), true), err
+		}
 		projectID, err := projectIDFromConversation(db, ctx)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil

@@ -161,8 +161,12 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	var result *multiagent.RunResult
 	var runErr error
 
-	baseCtx, cancelWithCause = context.WithCancelCause(detachedAgentContext(c.Request.Context()))
-	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
+	runDeadline := newAgentRunDeadline(detachedAgentContext(c.Request.Context()), time.Now().Add(600*time.Minute))
+	defer runDeadline.close()
+	var taskCtx context.Context
+	var segmentCancel context.CancelFunc
+	baseCtx, cancelWithCause, taskCtx, segmentCancel = runDeadline.newEinoSegment()
+	defer func() { segmentCancel() }()
 
 	if _, err := h.tasks.StartTask(conversationID, req.Message, cancelWithCause); err != nil {
 		var errorMsg string
@@ -180,7 +184,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errorMsg, time.Now(), assistantMessageID)
 		}
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
-		timeoutCancel()
+		segmentCancel()
 		return
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "eino_single")
@@ -233,22 +237,34 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			return h.interceptHITLForEinoTool(ctx, cancelWithCause, conversationID, assistantMessageID, sendEvent, toolName, arguments)
 		})
 
-		result, runErr = multiagent.RunEinoSingleChatModelAgent(
-			taskCtxLoop,
-			runCfg,
-			&runCfg.MultiAgent,
-			h.agent,
-			h.db,
-			h.logger,
-			conversationID,
-			h.conversationProjectID(conversationID),
-			curFinalMessage,
-			curHistory,
-			roleTools,
-			progressCallback,
-			chatReasoningToClientIntent(req.Reasoning),
-			h.agentSessionContextBlock(conversationID),
-		)
+		runErr = agentRunContextError(taskCtx)
+		if runErr == nil {
+			result, runErr = multiagent.RunEinoSingleChatModelAgent(
+				taskCtxLoop,
+				runCfg,
+				&runCfg.MultiAgent,
+				h.agent,
+				h.db,
+				h.logger,
+				conversationID,
+				h.conversationProjectID(conversationID),
+				curFinalMessage,
+				curHistory,
+				roleTools,
+				progressCallback,
+				chatReasoningToClientIntent(req.Reasoning),
+				h.agentSessionContextBlock(conversationID),
+			)
+		}
+		if runErr == nil {
+			runErr = agentRunContextError(taskCtx)
+		}
+		if err := agentRunContextError(runDeadline); err != nil {
+			runErr = err
+			// The request may have expired after this segment was interrupted.
+			// Report the terminal cause rather than suppressing its SSE error.
+			baseCtx = runDeadline
+		}
 
 		if result != nil && len(result.MCPExecutionIDs) > 0 {
 			cumulativeMCPExecutionIDs = mergeMCPExecutionIDLists(cumulativeMCPExecutionIDs, result.MCPExecutionIDs)
@@ -261,22 +277,25 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			mw := &h.config.MultiAgent.EinoMiddleware
 			if h.tryContinueOnEinoEmptyResponse(taskCtx, mw, conversationID, result, &emptyResponseContinueAttempt, &curHistory, &curFinalMessage, false, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
-				timeoutCancel()
-				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
+				baseCtx, cancelWithCause, taskCtx, segmentCancel = h.rebindEinoRunningTask(runDeadline, conversationID, segmentCancel)
 				continue
 			}
 			finalizationDecision = h.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, "eino_single", result, cumulativeMCPExecutionIDs, requestRequiresExecutionEvidence(&req), requestRequiresCoverageEvidence(&req))
 			if h.tryAutoContinueAfterFinalization(taskCtx, conversationID, result, finalizationDecision, &finalizationAutoContinueAttempt, &curHistory, &curFinalMessage, progressCallback) {
 				mainIterationOffset += segmentMainIterationMax
-				timeoutCancel()
-				baseCtx, cancelWithCause, taskCtx, timeoutCancel = h.rebindEinoRunningTask(taskCtx, conversationID, timeoutCancel)
+				baseCtx, cancelWithCause, taskCtx, segmentCancel = h.rebindEinoRunningTask(runDeadline, conversationID, segmentCancel)
 				continue
 			}
-			timeoutCancel()
+			segmentCancel()
 			break
 		}
 
 		cause := context.Cause(baseCtx)
+		if err := agentRunContextError(runDeadline); err != nil {
+			runErr = err
+			baseCtx = runDeadline
+			cause = context.Cause(runDeadline)
+		}
 		if errors.Is(cause, multiagent.ErrInterruptContinue) {
 			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
 				h.persistEinoAgentTraceForResume(conversationID, result)
@@ -300,11 +319,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"source":         "interrupt_continue",
 			})
 			mainIterationOffset += segmentMainIterationMax
-			timeoutCancel()
-			baseCtx, cancelWithCause = context.WithCancelCause(detachedAgentContext(baseCtx))
-			h.tasks.BindTaskCancel(conversationID, cancelWithCause)
-			taskCtx, timeoutCancel = context.WithTimeout(baseCtx, 600*time.Minute)
-			h.tasks.UpdateTaskStatus(conversationID, "running")
+			baseCtx, cancelWithCause, taskCtx, segmentCancel = h.rebindEinoRunningTask(runDeadline, conversationID, segmentCancel)
 			continue
 		}
 
@@ -331,7 +346,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"messageId":      assistantMessageID,
 			})
 			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
-			timeoutCancel()
+			segmentCancel()
 			return
 		}
 
@@ -349,7 +364,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"errorType":      "timeout",
 			})
 			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
-			timeoutCancel()
+			segmentCancel()
 			return
 		}
 
@@ -366,11 +381,11 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			"messageId":      assistantMessageID,
 		})
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
-		timeoutCancel()
+		segmentCancel()
 		return
 	}
 
-	timeoutCancel()
+	segmentCancel()
 
 	finalizationDecision = finalizationStoppedDecision(finalizationDecision, &finalizationAutoContinueAttempt)
 	applyFinalizationDecisionToResult(result, finalizationDecision)
@@ -425,10 +440,10 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		progressBuf.WriteString(eventType)
 		progressBuf.WriteByte('\n')
 	}
-	baseCtx, cancelWithCause := context.WithCancelCause(c.Request.Context())
-	defer cancelWithCause(nil)
-	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
-	defer timeoutCancel()
+	runDeadline := newAgentRunDeadline(c.Request.Context(), time.Now().Add(600*time.Minute))
+	defer runDeadline.close()
+	baseCtx, cancelWithCause, taskCtx, segmentCancel := runDeadline.newEinoSegment()
+	defer segmentCancel()
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, progressCallbackRaw)
 	taskCtx = multiagent.WithHITLToolInterceptor(taskCtx, func(ctx context.Context, toolName, arguments string) (string, error) {
 		return h.interceptHITLForEinoTool(ctx, cancelWithCause, prep.ConversationID, prep.AssistantMessageID, nil, toolName, arguments)
@@ -455,22 +470,28 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 	var decision agentfinalizer.Decision
 	var cumulativeMCPExecutionIDs []string
 	for {
-		result, runErr = multiagent.RunEinoSingleChatModelAgent(
-			taskCtx,
-			runCfg,
-			&runCfg.MultiAgent,
-			h.agent,
-			h.db,
-			h.logger,
-			prep.ConversationID,
-			h.conversationProjectID(prep.ConversationID),
-			curMsg,
-			curHist,
-			prep.RoleTools,
-			progressCallback,
-			chatReasoningToClientIntent(req.Reasoning),
-			h.agentSessionContextBlock(prep.ConversationID),
-		)
+		runErr = agentRunContextError(taskCtx)
+		if runErr == nil {
+			result, runErr = multiagent.RunEinoSingleChatModelAgent(
+				taskCtx,
+				runCfg,
+				&runCfg.MultiAgent,
+				h.agent,
+				h.db,
+				h.logger,
+				prep.ConversationID,
+				h.conversationProjectID(prep.ConversationID),
+				curMsg,
+				curHist,
+				prep.RoleTools,
+				progressCallback,
+				chatReasoningToClientIntent(req.Reasoning),
+				h.agentSessionContextBlock(prep.ConversationID),
+			)
+		}
+		if runErr == nil {
+			runErr = agentRunContextError(taskCtx)
+		}
 		if runErr != nil {
 			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
 				h.persistEinoAgentTraceForResume(prep.ConversationID, result)

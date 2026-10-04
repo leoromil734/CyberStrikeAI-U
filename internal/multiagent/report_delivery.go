@@ -12,7 +12,8 @@ import (
 
 // CoverageContinuationHeader identifies an internal repair segment, not a new
 // user request. Keep this shared with the handler that creates the instruction.
-const CoverageContinuationHeader = coverageRepairInstructionPrefix + "只补本轮缺口，保留用户排除项，不重复、不扩范围。读 pentest-blackboard/references/coverage-contract.md；blocked/N/A 须原始证据，未测不能算覆盖。\n" +
+const CoverageContinuationHeader = coverageRepairInstructionPrefix + "只补本轮少量缺口，保留用户排除项，不重复、不扩范围。读 pentest-blackboard/references/coverage-contract.md；blocked/N/A 须原始证据，未测不能算覆盖。\n" +
+	"原始 URL 明细保留在库存和工件，不得分派逐行抄写 fact、禁止网络只写账本的长任务。若需要大量新建端点/风险事实，停止补写并报告未完成范围、库存数量和需要的分类/范围决策；不能把未知候选统一写成 N/A、negated 或已安全。\n" +
 	"实际工作尚未执行就先做或委派，再用 upsert_project_fact.body_fields 写 recon/phase/*；报告不代替落库，未执行不得 passed。\n" +
 	"从本轮 recon/source/* 取真实 execution_id，query_recon_inventory(execution_id, grouped=true, offset=0) 分页取 key 填 inventory_group_key。discovery-* 是数据库标识，勿 glob/grep 盲找或编造。原件用 list_result_artifacts/read_result_artifact；库存候选本身不证明已测试。\n" +
 	"常驻工具按当前 schema 调用，搜索空不证明缺失；工具缺失记配置阻断并继续可执行项。\n" +

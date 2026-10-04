@@ -64,9 +64,17 @@ type Decision struct {
 	ConversationID       string   `json:"conversationId,omitempty"`
 	AssistantMessageID   string   `json:"messageId,omitempty"`
 	CandidateResponseLen int      `json:"candidateResponseLen,omitempty"`
-	CoverageValidFacts   int      `json:"coverageValidFacts,omitempty"`
-	Outcome              string   `json:"outcome,omitempty"`
-	CoverageBlockers     []string `json:"coverageBlockers,omitempty"`
+	// CoverageValidFacts is retained for compatibility/diagnostics only. Fact
+	// writes must never be used as evidence of assessment progress.
+	CoverageValidFacts         int      `json:"coverageValidFacts,omitempty"`
+	CoverageProgressKnown      bool     `json:"coverageProgressKnown"`
+	CoverageInventoryGroups    int      `json:"coverageInventoryGroups"`
+	CoverageUnresolvedGroups   int      `json:"coverageUnresolvedGroups"`
+	CoverageMappedGroups       int      `json:"coverageMappedGroups"`
+	CoverageEvidenceExecutions int      `json:"coverageEvidenceExecutions"`
+	CoverageRepairBlocked      bool     `json:"coverageRepairBlocked"`
+	Outcome                    string   `json:"outcome,omitempty"`
+	CoverageBlockers           []string `json:"coverageBlockers,omitempty"`
 }
 
 // Input 判定输入。Response 为候选文本，其余为运行时状态与策略。
@@ -215,12 +223,19 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 
+	coverage := coverageForDelivery(db, in)
+	d.CoverageValidFacts = coverage.ValidFacts
+	d.setCoverageProgress(coverage.Progress)
+
 	// 文本非空但明显是半截话（「接下来我去看 X」或缺少句末标点）：不能交付，交给自动续跑再跑一段。
 	if why := incompleteCandidateReason(text); why != "" {
 		d.Status = StatusInProgress
 		d.CompletionReason = ReasonIncompleteCandidate
 		d.EvidenceVerified = false
 		d.MissingChecks = append(d.MissingChecks, why)
+		if d.CoverageRepairBlocked {
+			d.MissingChecks = append(d.MissingChecks, coverage.Missing...)
+		}
 		return d
 	}
 
@@ -229,14 +244,15 @@ func Decide(db *database.DB, in Input) Decision {
 		d.CompletionReason = ReasonMissingEvidence
 		d.EvidenceVerified = false
 		d.MissingChecks = append(d.MissingChecks, "execution evidence is required but no completed tool execution was recorded")
+		if d.CoverageRepairBlocked {
+			d.MissingChecks = append(d.MissingChecks, coverage.Missing...)
+		}
 		return d
 	}
 
-	coverage := coverageForDelivery(db, in)
 	if coverage.Active && len(coverage.Missing) == 0 {
 		coverage.Missing = append(coverage.Missing, reportFindingChecks(db, in)...)
 	}
-	d.CoverageValidFacts = coverage.ValidFacts
 	if coverage.Active && len(coverage.Missing) > 0 {
 		d.Status = StatusInProgress
 		d.CompletionReason = ReasonCoverageIncomplete
@@ -263,17 +279,23 @@ func Decide(db *database.DB, in Input) Decision {
 // ResponsePayload 生成 SSE response 事件需要携带的终态字段。
 func ResponsePayload(d Decision, extra map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{
-		"finalized":           d.Finalized,
-		"finalizable":         d.Finalizable,
-		"status":              d.Status,
-		"completionReason":    d.CompletionReason,
-		"evidenceVerified":    d.EvidenceVerified,
-		"evidenceRefs":        d.EvidenceRefs,
-		"pendingExecutionIds": d.PendingExecutionIDs,
-		"pendingToolRuns":     d.PendingToolRuns,
-		"missingChecks":       d.MissingChecks,
-		"outcome":             Outcome(d.Status, d.CompletionReason, d.FinalText),
-		"coverageBlockers":    d.CoverageBlockers,
+		"finalized":                  d.Finalized,
+		"finalizable":                d.Finalizable,
+		"status":                     d.Status,
+		"completionReason":           d.CompletionReason,
+		"evidenceVerified":           d.EvidenceVerified,
+		"evidenceRefs":               d.EvidenceRefs,
+		"pendingExecutionIds":        d.PendingExecutionIDs,
+		"pendingToolRuns":            d.PendingToolRuns,
+		"missingChecks":              d.MissingChecks,
+		"outcome":                    Outcome(d.Status, d.CompletionReason, d.FinalText),
+		"coverageBlockers":           d.CoverageBlockers,
+		"coverageProgressKnown":      d.CoverageProgressKnown,
+		"coverageInventoryGroups":    d.CoverageInventoryGroups,
+		"coverageUnresolvedGroups":   d.CoverageUnresolvedGroups,
+		"coverageMappedGroups":       d.CoverageMappedGroups,
+		"coverageEvidenceExecutions": d.CoverageEvidenceExecutions,
+		"coverageRepairBlocked":      d.CoverageRepairBlocked,
 	}
 	if d.ConversationID != "" {
 		out["conversationId"] = d.ConversationID

@@ -1,9 +1,16 @@
+/* The manager is now two-column, but style.css still defines the old
+   horizontal switcher. Reset its children explicitly so the list cannot shrink
+   between the selector and the action buttons. */
+#settings-section-basic .ai-channel-manager { container: ai-channel-manager / inline-size; }
 #settings-section-basic .ai-channel-manager-body { display: grid; grid-template-columns: minmax(230px, 300px) minmax(0, 1fr); gap: 20px; align-items: start; }
-#settings-section-basic .ai-channel-switcher { min-width: 0; position: sticky; top: 12px; }
-#settings-section-basic .ai-channel-list { display: flex; flex-direction: column; max-height: 630px; overflow: auto; padding: 2px; }
-#settings-section-basic .ai-channel-switcher-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-#settings-section-basic .ai-channel-switcher-actions button { flex: 1 1 auto; min-height: 33px; }
-#settings-section-basic .ai-channel-list-item { border-radius: 9px; margin-bottom: 7px; }
+#settings-section-basic .ai-channel-switcher { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 14px; min-width: 0; position: sticky; top: 12px; }
+#settings-section-basic .ai-channel-switcher-field { grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; gap: 8px; }
+#settings-section-basic .ai-channel-switcher-field :is(select, .settings-custom-select) { width: 100%; min-width: 0; max-width: 100%; }
+#settings-section-basic .ai-channel-list { display: flex; flex-direction: column; width: 100%; min-width: 0; max-height: 630px; overflow: auto; padding: 2px; }
+#settings-section-basic .ai-channel-switcher-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; min-width: 0; gap: 7px; }
+#settings-section-basic .ai-channel-switcher-actions button { width: 100%; min-width: 0; min-height: 34px; white-space: normal; overflow-wrap: anywhere; }
+#settings-section-basic .ai-channel-switcher-actions button:first-child { grid-column: 1 / -1; }
+#settings-section-basic .ai-channel-list-item { flex: 0 0 auto; min-width: 0; border-radius: 9px; margin-bottom: 7px; }
 #settings-section-basic .ai-channel-status-dot.stale { background: var(--warning-color, #d97706); }
 #settings-section-basic .ai-channel-status-label.stale { color: var(--warning-color, #d97706); }
 #settings-section-basic .model-management-panel { border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; background: var(--card-bg); }
@@ -34,5 +41,15 @@
 #settings-section-basic .model-probe-status.stale { color: var(--warning-color, #d97706); }
 #settings-section-basic .model-vision-inherit { display: flex; align-items: center; gap: 8px; margin: 12px 0 18px; font-size: 13px; color: var(--text-secondary); }
 #settings-section-basic #vision-channel-config { border-left: 3px solid var(--accent-color); padding-left: 18px; }
+/* Account for both application sidebars, not just the browser viewport. */
+@container ai-channel-manager (max-width: 760px) {
+    #settings-section-basic .ai-channel-manager-body { grid-template-columns: 1fr; }
+    #settings-section-basic .ai-channel-switcher { position: static; }
+    #settings-section-basic .ai-channel-list { max-height: 260px; }
+    #settings-section-basic .ai-channel-form-grid,
+    #settings-section-basic .ai-channel-reasoning-grid { grid-template-columns: minmax(0, 1fr); }
+    #settings-section-basic .ai-channel-form-section-head { flex-direction: column; gap: 12px; }
+    #settings-section-basic .ai-channel-section-actions { min-width: 0; max-width: 100%; justify-content: flex-start; }
+}
 @media(max-width: 1000px) { #settings-section-basic .ai-channel-manager-body { grid-template-columns: 1fr; } #settings-section-basic .ai-channel-switcher { position: static; } #settings-section-basic .ai-channel-list { max-height: 260px; } }
 @media(max-width: 650px) { #settings-section-basic .model-import-controls { grid-template-columns: 1fr; } }

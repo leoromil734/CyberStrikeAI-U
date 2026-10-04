@@ -225,6 +225,8 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 
 	principalCtx := authctx.WithPrincipal(context.Background(), principal)
 	baseCtx, cancelWithCause := context.WithCancelCause(principalCtx)
+	baseCtx = mcp.WithAgentRunBudget(baseCtx, cancelWithCause)
+	defer mcp.CloseAgentRunBudget(baseCtx)
 	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 6*time.Hour)
 
 	registered := false

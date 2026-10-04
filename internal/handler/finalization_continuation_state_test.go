@@ -20,13 +20,14 @@ import (
 )
 
 func coverageDecision(valid int, checks ...string) agentfinalizer.Decision {
-	return agentfinalizer.Decision{Status: agentfinalizer.StatusInProgress, CompletionReason: agentfinalizer.ReasonCoverageIncomplete, CoverageValidFacts: valid, MissingChecks: checks}
+	return agentfinalizer.Decision{Status: agentfinalizer.StatusInProgress, CompletionReason: agentfinalizer.ReasonCoverageIncomplete, CoverageValidFacts: valid, CoverageProgressKnown: true, MissingChecks: checks}
 }
 
 func TestCoverageContinuationProgressAndHardBudget(t *testing.T) {
 	state := &finalizationContinuationState{}
 	for attempt := 0; attempt < finalizationCoverageMaxAttempts; attempt++ {
 		d := coverageDecision(attempt+1, "still incomplete")
+		d.CoverageEvidenceExecutions = attempt + 1
 		if !observeFinalizationContinuation(d, state) {
 			t.Fatalf("real progress stopped at %d: %+v", attempt, state)
 		}
@@ -63,8 +64,10 @@ func TestCoverageContinuationNoProgressAndBrokenManifest(t *testing.T) {
 	}
 	state := &finalizationContinuationState{}
 	for _, count := range []int{0, 1, 1, 2, 2, 3} {
-		if !observeFinalizationContinuation(coverageDecision(count, "gap"), state) {
-			t.Fatalf("new valid facts should reset stagnation: %+v", state)
+		d := coverageDecision(count, "gap")
+		d.CoverageEvidenceExecutions = count
+		if !observeFinalizationContinuation(d, state) {
+			t.Fatalf("new independent evidence should reset stagnation: %+v", state)
 		}
 		state.Attempts++
 	}

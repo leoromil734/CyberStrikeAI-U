@@ -743,6 +743,7 @@ type UpdateConfigRequest struct {
 // AgentConfigUpdate 用于 PATCH /api/config 的 agent 段：仅 JSON 中出现的字段（指针非 nil）覆盖内存配置。
 // 避免旧版「整包替换 *AgentConfig」时，未传的整型字段被反序列化为 0 误覆盖（例如 tool_timeout_minutes 变成 0）。
 type AgentConfigUpdate struct {
+	MaxFactWritesPerRun                *int                      `json:"max_fact_writes_per_run,omitempty"`
 	MaxIterations                      *int                      `json:"max_iterations,omitempty"`
 	ToolTimeoutMinutes                 *int                      `json:"tool_timeout_minutes,omitempty"`
 	ToolWaitTimeoutSeconds             *int                      `json:"tool_wait_timeout_seconds,omitempty"`
@@ -757,6 +758,9 @@ type AgentConfigUpdate struct {
 func applyAgentConfigUpdate(dst *config.AgentConfig, src *AgentConfigUpdate) {
 	if dst == nil || src == nil {
 		return
+	}
+	if src.MaxFactWritesPerRun != nil {
+		dst.MaxFactWritesPerRun = *src.MaxFactWritesPerRun
 	}
 	if src.MaxIterations != nil {
 		dst.MaxIterations = *src.MaxIterations
@@ -1952,6 +1956,7 @@ func writeYAMLDocument(path string, doc *yaml.Node) error {
 func updateAgentConfig(doc *yaml.Node, agent config.AgentConfig) {
 	root := doc.Content[0]
 	agentNode := ensureMap(root, "agent")
+	setIntInMap(agentNode, "max_fact_writes_per_run", agent.MaxFactWritesPerRun)
 	setIntInMap(agentNode, "max_iterations", agent.MaxIterations)
 	setIntInMap(agentNode, "tool_timeout_minutes", agent.ToolTimeoutMinutes)
 	setIntInMap(agentNode, "tool_wait_timeout_seconds", agent.ToolWaitTimeoutSeconds)

@@ -8,20 +8,27 @@ import (
 	"cyberstrike-ai/internal/database"
 )
 
+type deliveryCoverage struct {
+	coverage.Report
+	Progress CoverageProgress
+}
+
 // coverageForDelivery checks only a manifest written in this assistant turn,
 // unless the caller explicitly requires coverage. It neither guesses intent from
 // prose nor lets another conversation's project facts satisfy this assessment.
-func coverageForDelivery(db *database.DB, in Input) coverage.Report {
-	failure := func(message string) coverage.Report { return coverage.Report{Active: true, Missing: []string{message}} }
+func coverageForDelivery(db *database.DB, in Input) deliveryCoverage {
+	failure := func(message string) deliveryCoverage {
+		return deliveryCoverage{Report: coverage.Report{Active: true, Missing: []string{message}}, Progress: CoverageProgress{RepairBlocked: true}}
+	}
 	if db == nil || strings.TrimSpace(in.ConversationID) == "" {
 		if in.RequireCoverageEvidence {
 			return failure("coverage requires a persisted conversation bound to a project")
 		}
-		return coverage.Report{}
+		return deliveryCoverage{}
 	}
 	if !in.RequireCoverageEvidence {
 		if strings.TrimSpace(in.AssistantMessageID) == "" {
-			return coverage.Report{}
+			return deliveryCoverage{}
 		}
 		var count int
 		err := db.QueryRow(`SELECT COUNT(*) FROM project_facts f
@@ -33,7 +40,7 @@ func coverageForDelivery(db *database.DB, in Input) coverage.Report {
 			return failure(fmt.Sprintf("cannot query current assessment manifest: %v", err))
 		}
 		if count == 0 {
-			return coverage.Report{}
+			return deliveryCoverage{}
 		}
 	}
 	projectID, err := db.GetConversationProjectID(in.ConversationID)
@@ -65,7 +72,13 @@ func coverageForDelivery(db *database.DB, in Input) coverage.Report {
 		}
 	}
 	if newest == nil {
-		return coverage.Check(nil, true)
+		delivery := deliveryCoverage{Report: coverage.Check(nil, true)}
+		// Missing or malformed manifests must not hide a governed assessment's
+		// independent inventory from the continuation budget.
+		if lockedAssessment != "" {
+			delivery.Progress = checkIndependentInventory(db, projectID, in.ConversationID, lockedAssessment, nil, &delivery.Report)
+		}
+		return delivery
 	}
 	selected := make([]coverage.Fact, 0, len(facts))
 	for _, fact := range facts {
@@ -78,9 +91,9 @@ func coverageForDelivery(db *database.DB, in Input) coverage.Report {
 		selected = append(selected, coverage.Fact{Key: fact.FactKey, Body: fact.Body})
 	}
 	// Once a manifest activated the gate, an invalid mode/body cannot disable it.
-	report := coverage.Check(selected, true)
+	delivery := deliveryCoverage{Report: coverage.Check(selected, true)}
 	if lockedAssessment != "" {
-		checkIndependentInventory(db, projectID, in.ConversationID, lockedAssessment, selected, &report)
+		delivery.Progress = checkIndependentInventory(db, projectID, in.ConversationID, lockedAssessment, selected, &delivery.Report)
 	}
-	return report
+	return delivery
 }

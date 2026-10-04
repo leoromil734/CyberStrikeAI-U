@@ -24,7 +24,7 @@ type Report struct {
 	Missing      []string
 	Blocked      []string // evidenced limitations are distinct from unclosed gaps
 	EvidenceRefs []string
-	ValidFacts   int // validated ledger records, used only to detect repair progress
+	ValidFacts   int // validated ledger records for diagnostics, not evidence of execution/repair progress
 }
 
 var assessmentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)

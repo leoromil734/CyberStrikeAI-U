@@ -22,17 +22,19 @@ const (
 	finalizationAutoContinueMaxAttempts = 2
 	finalizationCoverageMaxAttempts     = 8
 	finalizationCoverageNoProgressLimit = 2
+	finalizationCoverageRepairTimeout   = 15 * time.Minute
 	finalizationPendingWaitTimeout      = 20 * time.Minute
 	finalizationPendingPollInterval     = 5 * time.Second
 )
 
-// A bounded continuation budget belongs to this run, not to a model response.
-// Progress is an increase in validated ledger records, not a shorter error list:
-// breaking a manifest can hide many gaps and must never count as a repair.
+// A bounded continuation budget belongs to this request, not to a model response.
+// New fact rows or a shorter error list are not evidence progress. Only new,
+// independently recorded evidence executions can renew the stagnation allowance.
 type finalizationContinuationState struct {
 	Attempts                    int
 	CoverageObserved            bool
 	CoverageValidFactsHighWater int
+	CoverageEvidenceHighWater   int
 	CoverageNoProgress          int
 	StopReason                  string
 	StopStatus                  string
@@ -74,19 +76,30 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 		return false
 	}
 	if d.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+		if d.CoverageRepairBlocked {
+			if !d.CoverageProgressKnown {
+				state.StopReason = "独立库存或执行证据状态无法完整核实，已停止自动补写；保留原始缺口，不把读取失败或候选清单当作已覆盖"
+			} else {
+				state.StopReason = fmt.Sprintf("独立库存仍有 %d 组未处置候选，已停止自动逐条补写；保留全部原件，先按范围、当前性与业务功能分类，未测项不能写成 N/A 或安全", d.CoverageUnresolvedGroups)
+			}
+			return false
+		}
 		if state.CoverageObserved {
-			if d.CoverageValidFacts > state.CoverageValidFactsHighWater {
+			if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
 				state.CoverageNoProgress = 0
 			} else {
 				state.CoverageNoProgress++
 			}
 		}
 		state.CoverageObserved = true
+		if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
+			state.CoverageEvidenceHighWater = d.CoverageEvidenceExecutions
+		}
 		if d.CoverageValidFacts > state.CoverageValidFactsHighWater {
 			state.CoverageValidFactsHighWater = d.CoverageValidFacts
 		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
-			state.StopReason = fmt.Sprintf("连续 %d 段续跑未增加有效覆盖账本，已停止自动重试；保留缺口与轨迹供修复后恢复", finalizationCoverageNoProgressLimit)
+			state.StopReason = fmt.Sprintf("连续 %d 段续跑未增加独立执行证据，已停止自动补写；新增或改写 fact 不视为测试进展，原件与未完成范围已保留", finalizationCoverageNoProgressLimit)
 			return false
 		}
 	}
@@ -238,6 +251,7 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	*curFinalMessage = ""
 	var coverageChecksFile string
 	if decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+		mcp.StartCoverageRepairBudget(taskCtx, finalizationCoverageRepairTimeout)
 		root := ""
 		if h.config != nil {
 			root = h.config.MultiAgent.EinoMiddleware.ReductionRootDir
@@ -258,8 +272,10 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"maxAttempts": finalizationContinuationLimit(decision), "status": decision.Status,
 			"completionReason": decision.CompletionReason, "missingChecks": decision.MissingChecks,
 			"coverageChecksFile": coverageChecksFile, "coverageValidFacts": decision.CoverageValidFacts,
-			"coverageNoProgress": state.CoverageNoProgress, "pendingExecutionIds": decision.PendingExecutionIDs,
-			"contextInjection": decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
+			"coverageNoProgress": state.CoverageNoProgress, "coverageEvidenceExecutions": decision.CoverageEvidenceExecutions,
+			"coverageUnresolvedGroups": decision.CoverageUnresolvedGroups, "repairTimeoutSeconds": int(finalizationCoverageRepairTimeout.Seconds()),
+			"pendingExecutionIds": decision.PendingExecutionIDs,
+			"contextInjection":    decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
 		})
 	}
 	select {

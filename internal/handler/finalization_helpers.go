@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/agentfinalizer"
+	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 
 	"go.uber.org/zap"
@@ -177,8 +178,22 @@ func finalizationBlockedMessage(d agentfinalizer.Decision) string {
 	if len(d.PendingExecutionIDs) > 0 {
 		parts = append(parts, fmt.Sprintf("仍有 %d 个工具执行未结束: %s", len(d.PendingExecutionIDs), strings.Join(d.PendingExecutionIDs, ", ")))
 	}
+	if d.CoverageProgressKnown {
+		parts = append(parts, fmt.Sprintf("独立候选库存：共 %d 组，已关联有证据的处置记录 %d 组，未完成 %d 组；这不是漏洞数量或已验证安全数量。", d.CoverageInventoryGroups, d.CoverageMappedGroups, d.CoverageUnresolvedGroups))
+	}
+	if d.CoverageRepairBlocked {
+		parts = append(parts, "已停止自动逐 URL 补写。原始明细仍在库存/结果工件中，应先按范围、当前性与业务功能分类，不能统一标记为 N/A、否定或安全。")
+	}
+	if mcp.IsAgentRunBudgetReason(d.CompletionReason) && d.FinalText != "" {
+		parts = append(parts, d.FinalText)
+	}
 	if len(d.MissingChecks) > 0 {
-		parts = append(parts, "缺失检查: "+strings.Join(d.MissingChecks, "; "))
+		checks := d.MissingChecks
+		if (d.CoverageRepairBlocked || mcp.IsAgentRunBudgetReason(d.CompletionReason)) && len(checks) > 20 {
+			checks = checks[:20]
+			parts = append(parts, fmt.Sprintf("以下仅显示前 20 条；完整 %d 条诊断保留在本次 finalization_check 过程记录中。", len(d.MissingChecks)))
+		}
+		parts = append(parts, "缺失检查: "+strings.Join(checks, "; "))
 	}
 	return strings.Join(parts, "\n")
 }

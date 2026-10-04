@@ -12,16 +12,25 @@ import (
 	"go.uber.org/zap"
 )
 
-// rebindEinoRunningTask 中断并继续 / 空正文续跑：重建 cancel 链与超时 ctx，保持任务 running。
-func (h *AgentHandler) rebindEinoRunningTask(parent context.Context, conversationID string, timeoutCancel context.CancelFunc) (context.Context, context.CancelCauseFunc, context.Context, context.CancelFunc) {
-	if timeoutCancel != nil {
-		timeoutCancel()
+// newEinoSegment scopes interrupt-and-continue to this segment while retaining
+// the request's absolute deadline and terminal user cancellation.
+func (r *agentRunDeadline) newEinoSegment() (context.Context, context.CancelCauseFunc, context.Context, context.CancelFunc) {
+	ctx, cancelWithCause, segmentCancel := r.newSegment(multiagent.ErrInterruptContinue)
+	return ctx, cancelWithCause, ctx, segmentCancel
+}
+
+// rebindEinoRunningTask replaces only the segment cancellation chain. All
+// automatic, empty-response and interrupt continuations share the request root.
+func (h *AgentHandler) rebindEinoRunningTask(run *agentRunDeadline, conversationID string, segmentCancel context.CancelFunc) (context.Context, context.CancelCauseFunc, context.Context, context.CancelFunc) {
+	if segmentCancel != nil {
+		segmentCancel()
 	}
-	baseCtx, cancelWithCause := context.WithCancelCause(detachedAgentContext(parent))
+	baseCtx, cancelWithCause, taskCtx, newSegmentCancel := run.newEinoSegment()
 	h.tasks.BindTaskCancel(conversationID, cancelWithCause)
-	taskCtx, newTimeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
-	h.tasks.UpdateTaskStatus(conversationID, "running")
-	return baseCtx, cancelWithCause, taskCtx, newTimeoutCancel
+	if agentRunContextError(taskCtx) == nil {
+		h.tasks.UpdateTaskStatus(conversationID, "running")
+	}
+	return baseCtx, cancelWithCause, taskCtx, newSegmentCancel
 }
 
 // tryContinueOnEinoEmptyResponse Run 成功但缺少可交付正文时退避续跑；true 表示已准备下一段 Run。
@@ -37,6 +46,9 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	progressCallback func(eventType, message string, data interface{}),
 ) bool {
 	inject, continueKind := multiagent.EinoResponseContinueInstruction(result, preferFinalReport)
+	if agentRunContextError(taskCtx) != nil {
+		return false
+	}
 	if result == nil || inject == "" || !multiagent.HasEinoResumeTrace(result) {
 		return false
 	}
@@ -75,6 +87,9 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 		return false
 	case <-time.After(backoff):
 	}
+	if agentRunContextError(taskCtx) != nil {
+		return false
+	}
 
 	h.applyEinoTraceResumeSegment(conversationID, result, curHistory, curFinalMessage, inject)
 	if progressCallback != nil {
@@ -87,5 +102,5 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 			"contextSource":  continueKind,
 		})
 	}
-	return true
+	return agentRunContextError(taskCtx) == nil
 }
