@@ -22,6 +22,7 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 		modeLifecycleSection(mode),
 		InitialReconSection(),
 		ExecutionCoverageSection(),
+		DirectoryDiscoverySection(),
 		EvidenceLoopSection(),
 		SkipLowValueSection(),
 		IndependentBoundarySection(),
@@ -31,6 +32,7 @@ func ComposeSystemPrompt(roleInstruction string, mode PromptMode) string {
 		ComprehensiveAssessmentSection(),
 		ConciseBlackboardSection(mode == PromptModeDeep || mode == PromptModeSupervisor || mode == PromptModePlanExecute, mode == PromptModeSubAgent),
 		CompletionContractSection(),
+		reportSubmissionSection(mode),
 		ShellExecExecuteGuidanceSection(),
 	)
 }
@@ -128,7 +130,7 @@ func ComprehensiveAssessmentSection() string {
 全面/完整/深度/品牌资产用deep，维护phase_ledger：全面侦察→资产分级→JS/API→匿名/认证业务流→风险矩阵→缺口复核。Top-N只定顺序，不缩范围。
 绑定项目先读pentest-blackboard/references/coverage-contract.md，body_fields建recon/assessment/{id}（schema_version:2、mode:comprehensive、status:active）；填真实scope_kind与库存计数，各账本带assessment_id；禁止只改报告/phase过检查。
 
-阶段仅pending、active、passed、blocked。passed附证据；blocked附错误与替代。pending/active或可执行gap只能报进度，禁止结案。
+阶段仅pending、active、passed、blocked。passed附证据；blocked附错误与替代。pending/active或可执行gap不得宣称全面完成；能继续则执行，否则交阶段报告。
 
 - Deep 根域至少跑 subfinder、oneforall、dnsx，补证书/历史/品牌/测绘。每来源用body_fields写recon/source/{id}/{tool}/{target}，含status、raw、unique、incremental、error、alt_tried、evidence；raw是真整数，文本用raw_output，success≠covered；缺来源recon_sources不得passed。
 - HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；jsapiscan + grep/rg 双通道写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
@@ -156,13 +158,35 @@ func ConciseBlackboardSection(coordinator, subAgent bool) string {
 func CompletionContractSection() string {
 	return `## 完成与交付
 
-目标/阶段门禁有证据，或到达范围/时间/权限/可达性/工具边界且替代用尽，或用户叫停时收尾。全面交付覆盖账本与Source Coverage；blocked/gap不写已覆盖。
+门禁通过、边界/预算耗尽或用户叫停时收尾。全面交付覆盖账本与Source Coverage；blocked/gap不写已覆盖。
 
-Deep/全面收尾硬闸门（缺一则只输出进度，禁止结案）：(1) recon/source 含本轮 fofa_search（所有范围必需）以及根域的 subfinder、oneforall、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 有工具+grep/rg 两路证据或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段，非 CDN IP 扩测及 SSH/数据库/邮件弱口令无未处理 gap；(4) 有数据或管理功能的资产上，未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传均有测完、blocked 或有能力证据的 N/A。口头“已全覆盖”无效。
+Deep/全面收尾硬闸门（不满足则不能宣称完整结案；有预算继续，无预算交阶段报告）：(1) recon/source 含本轮 fofa_search（所有范围必需）以及根域的 subfinder、oneforall、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 有工具+grep/rg 两路证据或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段，非 CDN IP 扩测及 SSH/数据库/邮件弱口令无未处理 gap；(4) 有数据或管理功能的资产上，未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传均有测完、blocked 或有能力证据的 N/A。口头“已全覆盖”无效。
 
-草稿仍列范围内可执行动作，它只是进度更新：继续执行/路由/委派，不得包装成“后续建议”。仅保留越界或替代路径用尽的blocked；最终报告不保留可执行的 high-value tentative/gap。
+草稿仍列可执行动作，它只是进度更新：继续执行/路由/委派，不得包装成“后续建议”。完整最终报告不保留可执行的 high-value tentative/gap；边界/预算已到则提交有缺口的阶段报告，写明未完成、blocked/gap 和证据，不宣称全面完成。
 
-最终交付面向用户。全面任务在exit.final_result写正式报告：风险概览、Source Coverage、资产/入口账本、发现及证据、风险族、负结果、blocked/gap、范围限制；无高危也报覆盖。禁止只留内部状态/过程消息。其他任务用简洁自然语言，不以JSON包正文，不把计划/猜测/工具命中写成确定漏洞。`
+全面报告：风险概览、Source Coverage、资产/入口账本、发现及证据、风险族、负结果、blocked/gap、范围限制；无高危也报覆盖。禁止只留内部状态/过程消息。其他任务用简洁自然语言，不以JSON包正文，不把计划/猜测/工具命中写成确定漏洞。`
+}
+
+// reportSubmissionSection is role-scoped: general-purpose Deep children may
+// inherit the root prompt, so the child exception must remain explicit there.
+func reportSubmissionSection(mode PromptMode) string {
+	switch mode {
+	case PromptModeDeep, PromptModeSupervisor:
+		return `## 报告提交
+
+过程、草稿与报告提交必须区分：仅 Deep/Supervisor 根角色提交正式报告时，必须实际调用 exit，把报告全文写入 exit.final_result；不能只在普通助手正文自称“正式最终报告”，也不能仅提交摘要或文件路径。exit 只是请求结束当前模型执行，不是覆盖证明；提交不等于覆盖完整、验证通过或任务成功，平台仍独立判定。普通对话可用自然语言回答。
+子角色只返回所分配子目标及证据，不提交父任务最终报告；子角色的 exit 只结束自身执行，不得提前终止父任务。`
+	case PromptModePlanExecute:
+		return `## 报告提交
+
+Plan-Execute 保留计划/执行/重规划的原有返回机制，不要求执行器用 exit 提前终止父任务。返回报告不等于覆盖或证据校验通过。`
+	case PromptModeSubAgent:
+		return `## 子任务交付
+
+只返回所分配子目标及证据，不提交父任务最终报告；子角色的 exit 只结束自身执行，不得提前终止父任务。`
+	default:
+		return ""
+	}
 }
 
 func joinPromptSections(sections ...string) string {

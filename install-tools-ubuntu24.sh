@@ -156,7 +156,7 @@ TOOLS_CORE_EXTRA=(
   "tcpdump|tcpdump|apt|tcpdump"
   "ncat|ncat|apt|ncat"
   # Web 小字典由 minimal 中的 install_web_wordlist 提供；不依赖 Kali 专属 seclists/wordlists 包
-  # go（目录爆破主用 ffuf；不再装 gobuster/jaeles）
+  # go（参数/vhost/自定义请求模糊测试用 ffuf；目录/文件优先下方 pip 的 dirsearch；不再装 gobuster/jaeles）
   "katana|katana|go|github.com/projectdiscovery/katana/cmd/katana@latest"
   "naabu|naabu|go|github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"
   "dnsx|dnsx|go|github.com/projectdiscovery/dnsx/cmd/dnsx@latest"

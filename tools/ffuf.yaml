@@ -1,11 +1,11 @@
 name: "ffuf"
 command: "ffuf"
 enabled: true
-short_description: "Web 模糊与路径发现；默认自动选择已存在小字典并校准 catch-all"
+short_description: "参数、虚拟主机和自定义请求模糊测试首选；目录发现优先 dirsearch，可复用等价扫描证据"
 description: |
   FFuf是一个快速的Web模糊测试工具，用于目录发现、参数模糊测试和内容发现。
 
-  **定位：** Web 模糊/目录发现的**主用工具**（替代已弃用的 gobuster；也可与 dirsearch 配合）。
+  **定位：** 参数、虚拟主机和自定义请求模糊测试的首选工具；目录、文件和扩展名枚举优先 dirsearch。需要自定义请求/过滤或 dirsearch 不可用时，可承担等价的有界目录扫描；同范围已有充分且仍有效的扫描证据可复用，不为调用次数重复扫描。
 
   **主要功能：**
   - 快速目录和文件发现
@@ -24,17 +24,18 @@ description: |
   - 先用 2–3 个随机路径建立 catch-all 基线，再运行 ffuf
   - 默认启用自动校准并匹配全部状态码，避免漏掉 405/500 等高价值差分
   - 优先小字典快速覆盖；只有发现技术栈、命名规律或高价值入口后才升级大字典
-  - 调用时优先省略 wordlist，由执行器自动选择存在的字典；显式传入不存在的路径会自动回退并在结果中提示
+  - 仅作为目录发现替代时可省略 wordlist，执行器自动选择已有路径字典；参数/虚拟主机/自定义请求任务必须传入真实且适配该维度的字典，收到字典回退提示后须确认语义，不能把目录字典结果当参数覆盖
+  - 单次扫描默认最多 300 秒；显式设定范围、候选集与速率，超时/限流/中断未完成留 gap/blocked，不按进程成功或零新增宣称全覆盖
 parameters:
   - name: "url"
     type: "string"
-    description: "目标URL（使用FUZZ作为占位符）"
+    description: "目标 URL；按任务在 URL、Header 或请求体中设置 FUZZ 占位符"
     required: true
     flag: "-u"
     format: "flag"
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径；建议省略，执行器按候选路径选择第一个真实存在的文件；显式路径不存在时自动回退到候选字典并在结果中给出提示"
+    description: "任务维度对应的真实字典路径；仅目录扫描可省略并自动选路径字典。参数/虚拟主机/自定义请求需显式传入适配字典；无效路径回退时必须核对语义"
     required: false
     existing_file: true
     fallback_paths:
@@ -88,6 +89,14 @@ parameters:
     required: false
     default: 10
     flag: "-timeout"
+    format: "flag"
+  - name: "max_time"
+    type: "int"
+    description: "单次扫描总时限（秒）；默认 300，必须为正数；超时未完成不能写全覆盖"
+    required: false
+    minimum: 1
+    default: 300
+    flag: "-maxtime"
     format: "flag"
   - name: "filter_size"
     type: "string"

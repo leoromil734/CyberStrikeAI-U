@@ -45,6 +45,12 @@ type RunResult struct {
 	LastAgentTraceInput  string // 已序列化的消息带（JSON）：原生循环或 Eino 均写入，供续跑/攻击链等恢复上下文
 	LastAgentTraceOutput string // 本轮助手侧对外展示文本（摘要或最终回复）
 
+	// 仅本次 run loop 观察到根执行路径成功执行 exit 时置位；历史、子任务、
+	// 普通助手正文及未执行的工具参数均不能提交。提交不代表覆盖完整或校验通过。
+	ReportSubmitted          bool
+	ReportSubmissionRequired bool   // Deep/Supervisor root lifecycle, including batch/robot callers.
+	SubmittedReport          string // 已执行 root exit 的原始全文（不去重、不截断），可为空
+
 	// 以下为终态字段：Response 只是「候选文本」，只有在 agentfinalizer.Decide 判定
 	// Finalizable=true 后才允许提升为最终回复并写入 messages.content。
 	// 由 agentfinalizer.FromRunResult 回填，供 handler 与 SSE 收尾统一使用。
@@ -640,7 +646,7 @@ func RunDeepAgent(
 			Backend:                deepBackend,
 			StreamingShell:         deepShell,
 			Handlers:               deepHandlers,
-			ToolsConfig:            mainToolsCfg,
+			ToolsConfig:            deepToolsWithExit(mainToolsCfg),
 		}
 		if deepOutKey != "" {
 			dcfg.OutputKey = deepOutKey

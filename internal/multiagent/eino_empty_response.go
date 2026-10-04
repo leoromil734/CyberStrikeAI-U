@@ -115,5 +115,5 @@ func FormatEmptyResponseContinueUserMessage() string {
 // FormatFinalReportContinueUserMessage 要求协调者从已有证据生成报告，不为凑篇幅重跑扫描。
 func FormatFinalReportContinueUserMessage() string {
 	return strings.TrimSpace(`【系统交付修复 / Final report required】
-上一轮只返回了阶段状态或“可以交付”，没有生成用户要求的正式报告。不要重复已完成的扫描，也不要只再次声明完成。请基于已有轨迹、phase_ledger、项目事实和工具证据，直接输出完整最终报告；全面任务至少包含结论与风险概览、资产/入口覆盖账本、已确认发现及复现证据、适用风险族测试结果、负结果、blocked/gap 和范围限制。Supervisor 必须把报告全文写入 exit.final_result。`)
+上一轮只返回了阶段状态或“可以交付”，没有生成用户要求的正式报告。不要重复已完成的扫描，也不要只再次声明完成。请基于已有轨迹、phase_ledger、项目事实和工具证据，直接输出完整最终报告；全面任务至少包含结论与风险概览、资产/入口覆盖账本、已确认发现及复现证据、适用风险族测试结果、负结果、blocked/gap 和范围限制。Deep/Supervisor 根角色必须实际调用 exit，把报告全文写入 exit.final_result；提交不代表覆盖通过，未完成项保留为阶段报告缺口。`)
 }

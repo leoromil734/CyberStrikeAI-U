@@ -205,7 +205,17 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	if state == nil || decision.Finalizable || decision.Finalized {
 		return false
 	}
-	if stopFinalizationForContext(taskCtx, state) || !observeFinalizationContinuation(decision, state) {
+	if stopFinalizationForContext(taskCtx, state) {
+		return false
+	}
+	// A submitted root exit ends the model run. A complete ordinary report
+	// candidate also must not trigger a new coverage bookkeeping loop. Neither
+	// signal waives coverage/evidence, pending tools, errors or approval gates.
+	if reportEndsFinalizationContinuation(result, decision) {
+		state.StopReason = "报告已提交或已产生完整候选，本次运行停止；检查未通过的部分保留为缺口，不再自动补写覆盖台账"
+		return false
+	}
+	if !observeFinalizationContinuation(decision, state) {
 		return false
 	}
 	if result == nil || !multiagent.HasEinoResumeTrace(result) {
@@ -284,6 +294,21 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 		return false
 	case <-time.After(finalizationAutoContinueBackoff(state.Attempts)):
 		return true
+	}
+}
+
+func reportEndsFinalizationContinuation(result *multiagent.RunResult, decision agentfinalizer.Decision) bool {
+	if result == nil || decision.Finalizable || decision.Finalized {
+		return false
+	}
+	if result.ReportSubmitted {
+		return true
+	}
+	switch decision.CompletionReason {
+	case agentfinalizer.ReasonCoverageIncomplete, agentfinalizer.ReasonMissingEvidence, agentfinalizer.ReasonReportNotSubmitted:
+		return multiagent.IsAssessmentReportCandidate(decision.FinalText)
+	default:
+		return false
 	}
 }
 

@@ -1345,6 +1345,7 @@ function webshellFinalizationReasonLabel(reason, status) {
         missing_execution_evidence: '缺少完成态证据',
         awaiting_hitl: '等待人工确认',
         empty_response: '未捕获到有效回复',
+        report_not_submitted_via_exit: '报告未通过 exit 提交',
         missing_finalization_contract: '缺少最终化证明',
         in_progress: '仍在验证',
         blocked: '检查未通过',
@@ -1370,6 +1371,7 @@ function webshellFinalizationMissingCheckLabel(check) {
  * WebShell AI 最终回复治理：未通过 finalizer 时，用提示文案替代候选输出。
  */
 function webshellFinalizationNotice(data, eventMessage, hasContract) {
+    if (typeof window.finalizationNoticeMarkdown === 'function') return window.finalizationNoticeMarkdown(data, eventMessage);
     var reason = hasContract
         ? webshellFinalizationReasonLabel(data && data.completionReason, data && data.status)
         : webshellFinalizationReasonLabel('missing_finalization_contract');
@@ -1388,6 +1390,63 @@ function webshellFinalizationNotice(data, eventMessage, hasContract) {
         lines.push('候选输出已移入过程详情。');
     }
     return lines.join('\n');
+}
+
+function webshellResponseDelivery(data, message) {
+    if (typeof window.getResponseDeliveryState === 'function') return window.getResponseDeliveryState(data, message);
+    // 公共合约模块不可用时仍 fail-closed，绝不依据正文长度/标题推断阶段报告。
+    var finalized = !!(data && data.finalized === true && data.deliveryKind !== 'partial_report');
+    return { kind: finalized ? 'final_report' : 'candidate', delivered: finalized, finalized: finalized,
+        text: finalized ? (message || '') : webshellFinalizationNotice(data, message, !!(data && data.completionReason)) };
+}
+
+function preserveWebshellAssistantBody(element, delivery) {
+    if (typeof window.shouldPreserveAssistantBody === 'function') return window.shouldPreserveAssistantBody(element, delivery);
+    return !!(element && (element.dataset.persistedAssistantBody === 'true'
+        || (!delivery.delivered && element.dataset.deliveryAvailable === 'true')));
+}
+
+function applyWebshellResponse(element, data, message) {
+    var delivery = webshellResponseDelivery(data, message);
+    if (preserveWebshellAssistantBody(element, delivery)) {
+        if (element.dataset.persistedAssistantBody === 'true' && typeof window.markAssistantDeliveryState === 'function') {
+            window.markAssistantDeliveryState(element, data);
+        }
+        return null;
+    }
+    webshellStreamingTypingId += 1; // 终止旧打字机，防止晚到 tick 覆盖已交付正文。
+    element.classList.remove('webshell-ai-msg-error');
+    if (typeof formatMarkdown === 'function') element.innerHTML = formatMarkdown(delivery.text);
+    else element.textContent = delivery.text;
+    element.dataset.originalContent = delivery.text;
+    element.dataset.finalized = delivery.finalized ? 'true' : 'false';
+    element.dataset.deliveryAvailable = delivery.delivered ? 'true' : 'false';
+    element.dataset.deliveryKind = delivery.kind;
+    element.classList.toggle('webshell-ai-candidate-output', !delivery.delivered);
+    element.classList.toggle('webshell-ai-finalized-output', delivery.finalized);
+    if (typeof window.markAssistantDeliveryState === 'function') window.markAssistantDeliveryState(element, data);
+    return delivery.text;
+}
+
+function renderWebshellHistoricalAssistant(element, message) {
+    var content = (message.content || '').trim();
+    var details = Array.isArray(message.processDetails) ? message.processDetails : [];
+    var delivered = details.some(function (detail) {
+        return detail && ['response', 'finalization_check'].indexOf(detail.eventType) >= 0
+            && webshellResponseDelivery(detail.data || {}, '').delivered;
+    });
+    // 报告内提及失败或 API 错误不能将整篇正文降为错误摘要。
+    if (!delivered && isLikelyWebshellAiErrorMessage(content, message)) renderWebshellAiErrorMessage(element, content);
+    else if (typeof formatMarkdown === 'function') element.innerHTML = formatMarkdown(content);
+    else element.textContent = content;
+    element.dataset.originalContent = content;
+    element.dataset.persistedAssistantBody = content && content !== '处理中...' && content !== '…' ? 'true' : 'false';
+    if (typeof window.restoreAssistantDeliveryState === 'function') window.restoreAssistantDeliveryState(element, details);
+}
+
+function webshellCandidateTitle(data) {
+    return typeof window.einoMainStreamPlanningTitle === 'function'
+        ? window.einoMainStreamPlanningTitle(data || {}) : '📝 候选输出（尚未交付）';
 }
 
 function escapeSingleQuotedShellArg(value) {
@@ -2122,7 +2181,7 @@ function simplifyWebshellAiError(rawMessage) {
 }
 
 function renderWebshellAiErrorMessage(targetEl, rawMessage) {
-    if (!targetEl) return;
+    if (!targetEl || preserveWebshellAssistantBody(targetEl, { delivered: false })) return;
     var full = String(rawMessage || '').trim();
     var shortMsg = simplifyWebshellAiError(full);
     targetEl.classList.add('webshell-ai-msg-error');
@@ -2147,12 +2206,8 @@ function renderWebshellAiErrorMessage(targetEl, rawMessage) {
 function isLikelyWebshellAiErrorMessage(content, msg) {
     var text = String(content || '').trim();
     if (!text) return false;
-    var lower = text.toLowerCase();
-    if (/^(执行失败|请求失败|请求异常|error)\s*[:：]/i.test(text)) return true;
-    if (/(status code\s*:\s*4\d{2}|unauthorized|forbidden|apikey|api key|invalid api key)/i.test(lower)) return true;
-    if (/(noderunerror|tool[-_ ]?error|agent[-_ ]?error|执行失败)/i.test(lower)) return true;
-    var details = msg && Array.isArray(msg.processDetails) ? msg.processDetails : [];
-    return details.some(function (d) { return String((d && d.eventType) || '').toLowerCase() === 'error'; });
+    var firstLine = text.split(/\r?\n/, 1)[0];
+    return /^(执行失败|请求失败|请求异常|error|noderunerror|tool[-_ ]?error|agent[-_ ]?error)\s*[:：]/i.test(firstLine);
 }
 
 function formatWebshellAiConvDate(updatedAt) {
@@ -2183,6 +2238,10 @@ function buildWebshellTimelineItemFromDetail(detail) {
         title = ap + '🤔 ' + ((typeof window.t === 'function') ? window.t('chat.aiThinking') : 'AI 思考');
     } else if (eventType === 'reasoning_chain') {
         title = ap + '🔗 ' + ((typeof window.t === 'function') ? window.t('chat.reasoningChain') : '推理过程');
+    } else if (eventType === 'planning' || eventType === 'response') {
+        title = webshellCandidateTitle(data);
+    } else if (eventType === 'finalization_check') {
+        title = typeof window.finalizationCheckTitle === 'function' ? window.finalizationCheckTitle(data) : '最终回复检查';
     } else if (eventType === 'tool_calls_detected') {
         title = ap + '🔧 ' + ((typeof window.t === 'function') ? window.t('chat.toolCallsDetected', { count: data.count || 0 }) : ('检测到 ' + (data.count || 0) + ' 个工具调用'));
     } else if (eventType === 'tool_call') {
@@ -2359,13 +2418,7 @@ function webshellAiConvListSelect(conn, convId, messagesContainer, listEl) {
                 if (role === 'user') {
                     div.textContent = content;
                 } else {
-                    if (isLikelyWebshellAiErrorMessage(content, msg)) {
-                        renderWebshellAiErrorMessage(div, content);
-                    } else if (typeof formatMarkdown === 'function') {
-                        div.innerHTML = formatMarkdown(content);
-                    } else {
-                        div.textContent = content;
-                    }
+                    renderWebshellHistoricalAssistant(div, msg);
                 }
                 messagesContainer.appendChild(div);
                 if (role === 'assistant') {
@@ -3295,13 +3348,7 @@ function loadWebshellAiHistory(conn, messagesContainer) {
                 if (role === 'user') {
                     div.textContent = content;
                 } else {
-                    if (isLikelyWebshellAiErrorMessage(content, msg)) {
-                        renderWebshellAiErrorMessage(div, content);
-                    } else if (typeof formatMarkdown === 'function') {
-                        div.innerHTML = formatMarkdown(content);
-                    } else {
-                        div.textContent = content;
-                    }
+                    renderWebshellHistoricalAssistant(div, msg);
                 }
                 messagesContainer.appendChild(div);
                 if (role === 'assistant') {
@@ -3452,11 +3499,12 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         if (wsPid) body.projectId = wsPid;
     }
 
-    // 流式输出：支持 progress 实时更新、response 打字机效果；若后端发送多段 response 则追加
-    var streamingTarget = '';  // 当前要打字显示的目标全文（用于打字机效果）
-    var streamingTypingId = 0;  // 防重入，每次新 response 自增
+    // 候选模型流只进入过程详情，主消息仅接受明确的交付事件。
+    var streamingTarget = ''; // 当前主消息正文，与候选流缓冲独立。
+    var candidateTarget = '';
+    var candidateItem = null;
 
-    resolveWebshellAiStreamRequest().then(function (info) {
+    return resolveWebshellAiStreamRequest().then(function (info) {
         if (info && info.orchestration) {
             body.orchestration = info.orchestration;
         }
@@ -3514,74 +3562,80 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
 
                     // ─── Response streaming ───
                     } else if (_et === 'response_start') {
-                        streamingTarget = '';
-                        webshellStreamingTypingId += 1;
-                        streamingTypingId = webshellStreamingTypingId;
-                        assistantDiv.dataset.finalized = 'false';
-                        assistantDiv.classList.add('webshell-ai-candidate-output');
-                        assistantDiv.textContent = '…';
-                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                        candidateTarget = typeof _ed.accumulated === 'string' ? _ed.accumulated : '';
+                        candidateItem = appendTimelineItem('planning', webshellCandidateTitle(_ed), '', _ed);
+                        var candidateBody = document.createElement('div');
+                        candidateBody.className = 'webshell-ai-timeline-msg';
+                        candidateBody.textContent = candidateTarget;
+                        candidateItem.appendChild(candidateBody);
+                        if (!streamingTarget && !preserveWebshellAssistantBody(assistantDiv, { delivered: false })) {
+                            assistantDiv.textContent = '候选输出（尚未交付）';
+                        }
                     } else if (_et === 'response_delta') {
                         var deltaText = (_em != null && _em !== '') ? String(_em) : '';
                         var mergeBuf = (typeof window.mergeStreamBuffer === 'function')
                             ? window.mergeStreamBuffer
-                            : function (cur, dlt) {
+                            : function (cur, dlt, meta) {
+                                if (meta && typeof meta.accumulated === 'string') return meta.accumulated;
                                 var normR = (typeof window.normalizeStreamingDeltaJs === 'function')
                                     ? window.normalizeStreamingDeltaJs(cur, dlt)
                                     : [cur + dlt, dlt];
                                 return normR[0];
                             };
                         if (deltaText || (_ed && _ed.accumulated != null)) {
-                            streamingTarget = mergeBuf(streamingTarget, deltaText, _ed);
-                            webshellStreamingTypingId += 1;
-                            streamingTypingId = webshellStreamingTypingId;
-                            runWebshellAiStreamingTyping(assistantDiv, streamingTarget, streamingTypingId, messagesContainer);
+                            candidateTarget = mergeBuf(candidateTarget, deltaText, _ed);
+                            if (!candidateItem) candidateItem = appendTimelineItem('planning', webshellCandidateTitle(_ed), '', _ed);
+                            var bodyEl = candidateItem.querySelector('.webshell-ai-timeline-msg');
+                            if (!bodyEl) {
+                                bodyEl = document.createElement('div');
+                                bodyEl.className = 'webshell-ai-timeline-msg';
+                                candidateItem.appendChild(bodyEl);
+                            }
+                            bodyEl.textContent = candidateTarget;
                         }
+                    } else if (_et === 'planning') {
+                        appendTimelineItem('planning', webshellCandidateTitle(_ed), _em, _ed);
                     } else if (_et === 'response') {
                         var text = (_em != null && _em !== '') ? _em : (typeof _ed === 'string' ? _ed : '');
-                        var finalized = !!(_ed && _ed.finalized === true);
-                        var hasFinalizationContract = !!(_ed && (
-                            Object.prototype.hasOwnProperty.call(_ed, 'finalized') ||
-                            Object.prototype.hasOwnProperty.call(_ed, 'finalizable') ||
-                            Object.prototype.hasOwnProperty.call(_ed, 'completionReason') ||
-                            Object.prototype.hasOwnProperty.call(_ed, 'evidenceVerified') ||
-                            Object.prototype.hasOwnProperty.call(_ed, 'missingChecks')
-                        ));
-                        assistantDiv.dataset.finalized = finalized ? 'true' : 'false';
-                        assistantDiv.classList.toggle('webshell-ai-candidate-output', !finalized);
-                        assistantDiv.classList.toggle('webshell-ai-finalized-output', finalized);
-                        if (!finalized && !hasFinalizationContract && text) {
-                            appendTimelineItem('finalization_check', '候选输出缺少最终化证明', text, Object.assign({}, _ed || {}, { missingFinalizationContract: true }));
-                            text = webshellFinalizationNotice(_ed || {}, text, false);
-                        } else if (!finalized && hasFinalizationContract) {
-                            text = webshellFinalizationNotice(_ed || {}, text, true);
-                        }
-                        if (text) {
-                            streamingTarget = String(text);
-                            webshellStreamingTypingId += 1;
-                            streamingTypingId = webshellStreamingTypingId;
-                            runWebshellAiStreamingTyping(assistantDiv, streamingTarget, streamingTypingId, messagesContainer);
-                        }
+                        if (!candidateItem && text) appendTimelineItem('planning', webshellCandidateTitle(_ed), text, _ed);
+                        var appliedText = applyWebshellResponse(assistantDiv, _ed, text);
+                        if (appliedText !== null) streamingTarget = appliedText;
+                        candidateTarget = '';
+                        candidateItem = null;
 
                     // ─── Terminal events ───
                     } else if (_et === 'finalization_check') {
-                        var finalizationOk = !!(_ed && _ed.finalized === true);
-                        appendTimelineItem('finalization_check', finalizationOk ? '最终回复检查通过' : '最终回复检查未通过', finalizationOk ? (_em || '最终回复检查通过。') : webshellFinalizationNotice(_ed || {}, _em, true), _ed);
+                        var checkDelivery = webshellResponseDelivery(_ed, _em);
+                        var checkTitle = typeof window.finalizationCheckTitle === 'function'
+                            ? window.finalizationCheckTitle(_ed) : '最终回复检查';
+                        appendTimelineItem('finalization_check', checkTitle,
+                            checkDelivery.kind === 'partial_report' ? checkTitle : (checkDelivery.finalized ? _em : checkDelivery.text), _ed);
+                        if (checkDelivery.kind === 'partial_report') {
+                            var partialText = applyWebshellResponse(assistantDiv, _ed, '');
+                            if (partialText !== null) streamingTarget = partialText;
+                        }
                     } else if (_et === 'finalization_auto_continue') {
                         appendTimelineItem('progress', '继续验证', _em, _ed);
                     } else if (_et === 'error' && _em) {
-                        streamingTypingId += 1;
+                        webshellStreamingTypingId += 1;
                         var errLabel = wsTOr('chat.error', '错误');
                         appendTimelineItem('error', '❌ ' + errLabel, _em, _ed);
                         renderWebshellAiErrorMessage(assistantDiv, errLabel + ': ' + _em);
                     } else if (_et === 'cancelled') {
-                        streamingTypingId += 1;
+                        webshellStreamingTypingId += 1;
                         var cancelLabel = wsTOr('chat.taskCancelled', '任务已取消');
                         appendTimelineItem('cancelled', '⛔ ' + cancelLabel, _em, _ed);
                         if (!streamingTarget && !assistantDiv.dataset.hasContent) {
                             assistantDiv.textContent = cancelLabel;
                         }
                     } else if (_et === 'done') {
+                        // 与主聊天一致：done 只有严格阶段报告合约才能交付正文。
+                        if (webshellResponseDelivery(_ed, '').kind === 'partial_report') {
+                            var donePartialText = applyWebshellResponse(assistantDiv, _ed, '');
+                            if (donePartialText !== null) streamingTarget = donePartialText;
+                            candidateTarget = '';
+                            candidateItem = null;
+                        }
                         // 清理流式状态
                         wsThinkingStreams.clear();
                         wsToolResultStreams.clear();
@@ -3806,19 +3860,13 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         webshellAiAbortController = null;
         webshellAiStreamReader = null;
         wsSetAiSendingState(false);
-        if (assistantDiv.textContent === '…' && !streamingTarget) {
-            // 没有任何 response 内容，保持纯文本提示
+        if (!streamingTarget && candidateItem && !preserveWebshellAssistantBody(assistantDiv, { delivered: false })) {
+            // 流 EOF 不是交付证明，未收到 response 的草稿也只留在过程详情。
+            applyWebshellResponse(assistantDiv, {}, candidateTarget);
+        } else if (assistantDiv.textContent === '…' && !streamingTarget) {
             assistantDiv.textContent = '无回复内容';
-        } else if (streamingTarget) {
-            // 流式结束：先终止当前打字机循环，避免后续 tick 把 HTML 覆盖回纯文本
-            webshellStreamingTypingId += 1;
-            // 再使用 Markdown 渲染完整内容
-            if (typeof formatMarkdown === 'function') {
-                assistantDiv.innerHTML = formatMarkdown(streamingTarget);
-            } else {
-                assistantDiv.textContent = streamingTarget;
-            }
         }
+        // 正文已在合约事件中渲染；EOF 不能再用候选缓冲覆盖正文或移除状态标签。
         // 生成结果后：将执行过程折叠并保留，供后续查看；统一放在「助手回复下方」（与刷新后加载历史一致，最佳实践）
         if (timelineContainer && timelineContainer.classList.contains('has-items') && !timelineContainer.closest('.webshell-ai-process-block')) {
             var headerLabel = (typeof window.t === 'function') ? (window.t('chat.penetrationTestDetail') || '任务执行详情') : '任务执行详情';

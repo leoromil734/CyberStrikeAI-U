@@ -23,6 +23,35 @@ func deliveryTraceJSON(t *testing.T, msgs ...*schema.Message) string {
 	return string(data)
 }
 
+func TestFinalReportInstructionRequiresRootSubmission(t *testing.T) {
+	instruction := FormatFinalReportContinueUserMessage()
+	for _, required := range []string{"Deep/Supervisor 根角色", "实际调用 exit", "报告全文写入 exit.final_result", "提交不代表覆盖通过", "阶段报告缺口"} {
+		if !strings.Contains(instruction, required) {
+			t.Fatalf("delivery instruction missing %q", required)
+		}
+	}
+}
+
+func TestIsAssessmentReportCandidate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"complete draft", deliveryTestReport(), true},
+		{"partial report with gaps", strings.ReplaceAll(deliveryTestReport(), "全面评估已完成。", "阶段报告：覆盖不完整，blocked/gap 仍存在。"), true},
+		{"empty", "", false},
+		{"diagnostics only", "覆盖账本已修复，库存计数已对齐。", false},
+		{"heading without report body", "## 风险概览\n\n## Source Coverage\n\n待处理", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsAssessmentReportCandidate(tc.text); got != tc.want {
+				t.Fatalf("candidate=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFinalReportAfterCoverageRepair(t *testing.T) {
 	report := deliveryTestReport()
 	notice := "覆盖计数已对齐。有效端点是 3 个，风险单元是 7 条。测试结论没有变化。"
@@ -76,6 +105,9 @@ func TestFinalReportRecoveryBoundaries(t *testing.T) {
 		{"old user report", notice, deliveryTraceJSON(t, schema.UserMessage("old task"), schema.AssistantMessage(report, nil), schema.UserMessage("new task"), schema.UserMessage(CoverageContinuationHeader)), true},
 		{"generic tool is not a report", notice, deliveryTraceJSON(t, schema.UserMessage("current task"), schema.ToolMessage(report, "call-file", schema.WithToolName("read_file")), schema.UserMessage(CoverageContinuationHeader)), true},
 		{"failed exit output", notice, deliveryTraceJSON(t, schema.UserMessage("current task"), schema.ToolMessage("__CYBERSTRIKE_AI_TOOL_ERROR__\n"+report, "call-exit", schema.WithToolName("exit")), schema.UserMessage(CoverageContinuationHeader)), true},
+		{"unexecuted exit arguments", notice, deliveryTraceJSON(t, schema.UserMessage("current task"), submissionExitCall(t, report), schema.UserMessage(CoverageContinuationHeader)), true},
+		{"unscoped exit output", notice, deliveryTraceJSON(t, schema.UserMessage("current task"), toolExitMsg(report, "child-or-legacy-exit"), schema.UserMessage(CoverageContinuationHeader)), true},
+		{"old submitted report before new request", notice, deliveryTraceJSON(t, schema.UserMessage("old task"), historicalExitMsg(report, "old-exit"), schema.UserMessage("new task"), schema.UserMessage(CoverageContinuationHeader)), true},
 		{"no prior report", notice, deliveryTraceJSON(t, schema.UserMessage("current task"), schema.UserMessage(CoverageContinuationHeader)), true},
 		{"already regenerated report", report, deliveryTraceJSON(t, schema.AssistantMessage(report+" old", nil), schema.UserMessage(CoverageContinuationHeader)), false},
 		{"error text", "AI provider temporarily unavailable. Do not resend the same request.", deliveryTraceJSON(t, schema.AssistantMessage(report, nil), schema.UserMessage(CoverageContinuationHeader)), false},
@@ -94,13 +126,8 @@ func TestFinalReportRecoveryBoundaries(t *testing.T) {
 func TestFinalReportRecoveryFromSupervisorExit(t *testing.T) {
 	report := deliveryTestReport()
 	notice := "Coverage counts are aligned."
-	args, err := json.Marshal(map[string]string{"final_result": report})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, exit := range []*schema.Message{
-		schema.ToolMessage(report, "call-exit", schema.WithToolName("exit")),
-		schema.AssistantMessage("", []schema.ToolCall{{ID: "call-exit", Function: schema.FunctionCall{Name: "exit", Arguments: string(args)}}}),
+		historicalExitMsg(report, "call-exit"),
 	} {
 		trace := deliveryTraceJSON(t, schema.UserMessage("current task"), exit, schema.UserMessage(CoverageContinuationHeader))
 		got, repairOnly := FinalReportAfterCoverageRepair(notice, trace)

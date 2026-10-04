@@ -118,10 +118,42 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 	}
 }
 
+func TestReportSubmissionContractIsScopedToLifecycle(t *testing.T) {
+	for _, mode := range []PromptMode{PromptModeDeep, PromptModeSupervisor} {
+		prompt := ComposeSystemPrompt("role", mode)
+		for _, required := range []string{
+			"过程、草稿与报告提交必须区分", "必须实际调用 exit", "报告全文写入 exit.final_result",
+			"exit 只是请求结束当前模型执行，不是覆盖证明", "提交不等于覆盖完整", "普通对话可用自然语言回答",
+			"子角色的 exit 只结束自身执行", "不得提前终止父任务", "有缺口的阶段报告",
+		} {
+			if !strings.Contains(prompt, required) {
+				t.Errorf("mode %s missing %q", mode, required)
+			}
+		}
+	}
+	for _, mode := range []PromptMode{PromptModeSingle, PromptModePlanExecute, PromptModeSubAgent} {
+		prompt := ComposeSystemPrompt("role", mode)
+		if strings.Contains(prompt, "必须实际调用 exit") || strings.Contains(prompt, "报告全文写入 exit.final_result") {
+			t.Errorf("root exit requirement leaked into %s", mode)
+		}
+	}
+	if !strings.Contains(ComposeSystemPrompt("role", PromptModePlanExecute), "保留计划/执行/重规划的原有返回机制") {
+		t.Fatal("plan-execute lifecycle changed")
+	}
+}
+
 func TestSharedContractStaticBudget(t *testing.T) {
 	prompt := ComposeSystemPrompt("", PromptModeSingle)
-	// 共享记忆与联网检索指引增加后，仍对所有模式的静态契约设置明确上限。
-	if got := utf8.RuneCountInString(prompt); got > 5600 {
+	// 保留既有契约 5600 字符预算；目录覆盖单独限为 600，避免新增规则无界增长。
+	const directoryBudget = 600
+	if got := utf8.RuneCountInString(DirectoryDiscoverySection()); got > directoryBudget {
+		t.Fatalf("directory discovery contract too large: %d runes", got)
+	}
+	basePrompt := strings.Replace(prompt, "\n\n"+DirectoryDiscoverySection(), "", 1)
+	if got := utf8.RuneCountInString(basePrompt); got > 5600 {
+		t.Fatalf("existing shared contract too large: %d runes", got)
+	}
+	if got := utf8.RuneCountInString(prompt); got > 5600+directoryBudget {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
 	scope := ScopeAuthorizationSection()

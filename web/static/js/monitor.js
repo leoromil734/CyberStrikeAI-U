@@ -162,6 +162,7 @@ function einoMainStreamPlanningTitle(responseData) {
     const orch = responseData && responseData.orchestration;
     const agent = responseData && responseData.einoAgent != null ? String(responseData.einoAgent).trim() : '';
     const prefix = timelineAgentBracketPrefix(responseData);
+    const candidate = reportDeliveryLabel('candidate');
     if (orch === 'plan_execute' && agent) {
         const a = agent.toLowerCase();
         let key = 'chat.planExecuteStreamPhase';
@@ -169,15 +170,9 @@ function einoMainStreamPlanningTitle(responseData) {
         else if (a === 'executor') key = 'chat.planExecuteStreamExecutor';
         else if (a === 'replanner' || a === 'execute_replan' || a === 'plan_execute_replan') key = 'chat.planExecuteStreamReplanning';
         const label = typeof window.t === 'function' ? window.t(key) : '输出';
-        return prefix + '📝 ' + label;
+        return prefix + '📝 ' + candidate + ' · ' + label;
     }
-    // eino_single / deep / supervisor：主通道是模型流式输出，不是「规划」；模型偶发复述工具 stdout 时，旧文案易被误认为工具结果标题。
-    if (orch != null && String(orch).trim() !== '' && orch !== 'plan_execute') {
-        const streamLabel = typeof window.t === 'function' ? window.t('chat.assistantStreamPhase') : '助手输出';
-        return prefix + '📝 ' + streamLabel;
-    }
-    const plan = typeof window.t === 'function' ? window.t('chat.planning') : '规划中';
-    return prefix + '📝 ' + plan;
+    return prefix + '📝 ' + candidate;
 }
 
 /**
@@ -198,25 +193,116 @@ function resolveFinalAssistantResponseText(finalMessage, streamState) {
     return finalMessage;
 }
 
-/**
- * 最终回复治理（Finalization Contract）前端侧判断。
- * 只有 data.finalized === true 的 response 才是可交付结论；其余仅作候选/进度展示，
- * 避免把「像结论的过程文本」误判为最终回复。
- */
+/** 覆盖校验和报告交付是两个独立状态，阶段报告绝不能将 finalized 提升为 true。 */
 function isFinalizedResponseData(data) {
-    return !!(data && data.finalized === true);
+    return !!(data && data.finalized === true && data.deliveryKind !== 'partial_report');
+}
+
+function isStoppedReportStatus(status) {
+    return ['blocked', 'failed', 'timeout', 'cancelled'].includes(status);
+}
+
+function hasPendingReportWork(data) {
+    if (!data || typeof data !== 'object') return false;
+    // 缺省/null 表示后端未报告 pending；格式异常或非空列表均保守拒绝交付。
+    if (data.pendingExecutionIds != null && (!Array.isArray(data.pendingExecutionIds) || data.pendingExecutionIds.length > 0)) return true;
+    if (data.pendingToolRuns != null && (!Array.isArray(data.pendingToolRuns) || data.pendingToolRuns.length > 0)) return true;
+    if (['pending_tool_executions', 'awaiting_hitl'].includes(data.completionReason)) return true;
+    if (data.workflowStatus === 'awaiting_hitl' || data.status === 'awaiting_hitl' || data.awaitingHitl === true) return true;
+    const checks = Array.isArray(data.missingChecks) ? data.missingChecks : [data.missingChecks || ''];
+    return checks.some(check => /tool execution still queued or running|workflow is awaiting HITL approval/i.test(String(check)));
+}
+
+function isPartialReportResponseData(data) {
+    return !!(data && data.deliveryAvailable === true && data.deliveryKind === 'partial_report'
+        && data.runTerminated === true && isStoppedReportStatus(data.status)
+        && typeof data.deliveryText === 'string' && data.deliveryText.trim() !== ''
+        && !hasPendingReportWork(data));
+}
+
+function reportDeliveryLabel(kind) {
+    const labels = {
+        candidate: ['chat.candidateOutput', '候选输出（尚未交付）'],
+        partial_report: ['chat.partialReport', '阶段报告 / 评估未完成'],
+        final_report: ['chat.deliveredFinalReply', '最终回复（已交付）'],
+        stopped: ['chat.assessmentStopped', '评估已停止，尚无可交付报告']
+    };
+    const entry = labels[kind] || labels.candidate;
+    const translated = typeof window.t === 'function' ? window.t(entry[0]) : '';
+    return translated && translated !== entry[0] ? translated : entry[1];
+}
+
+function getResponseDeliveryState(data, message) {
+    if (isPartialReportResponseData(data)) {
+        return { kind: 'partial_report', delivered: true, finalized: false, text: data.deliveryText };
+    }
+    if (isFinalizedResponseData(data)) {
+        return { kind: 'final_report', delivered: true, finalized: true, text: message || '' };
+    }
+    return { kind: 'candidate', delivered: false, finalized: false, text: finalizationNoticeMarkdown(data, message) };
+}
+
+function hasDeliveredAssistantContent(element) {
+    return !!(element && element.dataset && element.dataset.deliveryAvailable === 'true'
+        && ['partial_report', 'final_report'].includes(element.dataset.deliveryKind));
+}
+
+function shouldPreserveAssistantBody(element, delivery) {
+    return !!(element && (element.dataset.persistedAssistantBody === 'true'
+        || (!delivery.delivered && hasDeliveredAssistantContent(element))));
+}
+
+/** 同时供主聊天和 WebShell 使用；状态标签放在正文外，懒加载不会替换消息 Markdown。 */
+function markAssistantDeliveryState(element, data) {
+    if (!element) return;
+    const state = getResponseDeliveryState(data, '');
+    if (hasDeliveredAssistantContent(element) && !state.delivered) return;
+    element.dataset.finalized = state.finalized ? 'true' : 'false';
+    element.dataset.deliveryAvailable = state.delivered ? 'true' : 'false';
+    element.dataset.deliveryKind = state.kind;
+    element.dataset.runTerminated = data && data.runTerminated === true ? 'true' : 'false';
+    element.dataset.finalizationStatus = data && data.status ? String(data.status) : '';
+    element.classList.toggle('assistant-finalized', state.finalized);
+    element.classList.toggle('assistant-not-finalized', !state.finalized);
+    element.classList.toggle('assistant-partial-report', state.kind === 'partial_report');
+    const host = element.querySelector('.message-content') || element;
+    let label = host.querySelector('.report-delivery-label');
+    if (!label) {
+        label = document.createElement('div');
+        label.className = 'report-delivery-label';
+        label.setAttribute('role', 'status');
+        host.insertBefore(label, host.firstChild);
+    }
+    label.dataset.deliveryKind = state.kind;
+    label.textContent = reportDeliveryLabel(state.kind);
+}
+
+/** 只恢复明确的 response/check 合约或 done 阶段报告；planning 不能升级交付状态。 */
+function restoreAssistantDeliveryState(element, details) {
+    const rows = Array.isArray(details) ? details : [];
+    let latestContract = null;
+    let deliveredContract = null;
+    rows.forEach(detail => {
+        if (!detail || (!['response', 'finalization_check'].includes(detail.eventType)
+            && !(detail.eventType === 'done' && isPartialReportResponseData(detail.data)))) return;
+        if (!hasFinalizationContract(detail.data)) return;
+        latestContract = detail.data;
+        if (getResponseDeliveryState(detail.data, '').delivered) deliveredContract = detail.data;
+    });
+    const contract = deliveredContract || latestContract;
+    // 翻到更早的页时，只补尚未确定的状态，不回滚最新页或实时交付。
+    if (contract && !hasDeliveredAssistantContent(element)) markAssistantDeliveryState(element, contract);
 }
 
 function hasFinalizationContract(data) {
     if (!data || typeof data !== 'object') return false;
-    return Object.prototype.hasOwnProperty.call(data, 'finalized')
-        || Object.prototype.hasOwnProperty.call(data, 'finalizable')
-        || Object.prototype.hasOwnProperty.call(data, 'completionReason')
-        || Object.prototype.hasOwnProperty.call(data, 'evidenceVerified')
-        || Object.prototype.hasOwnProperty.call(data, 'missingChecks');
+    return ['finalized', 'finalizable', 'completionReason', 'evidenceVerified', 'missingChecks',
+        'deliveryAvailable', 'deliveryKind', 'runTerminated', 'deliveryText']
+        .some(key => Object.prototype.hasOwnProperty.call(data, key));
 }
 
 function finalizationCheckTitle(data) {
+    if (isPartialReportResponseData(data)) return reportDeliveryLabel('partial_report');
     return isFinalizedResponseData(data) ? '最终回复检查通过' : '最终回复检查未通过';
 }
 
@@ -227,9 +313,12 @@ function finalizationReasonLabel(reason, status) {
         missing_execution_evidence: '缺少完成态证据',
         awaiting_hitl: '等待人工确认',
         empty_response: '未捕获到有效回复',
+        report_not_submitted_via_exit: '报告未通过 exit 提交',
         missing_finalization_contract: '缺少最终化证明',
         in_progress: '仍在验证',
         blocked: '检查未通过',
+        coverage_incomplete: '覆盖校验未完成',
+        timeout: '任务已超时',
         failed: '任务失败',
         cancelled: '任务已取消',
         verified: '已验证'
@@ -260,7 +349,8 @@ function finalizationNoticeMarkdown(responseData, eventMessage) {
     const reason = hasContract
         ? finalizationReasonLabel(responseData && responseData.completionReason, responseData && responseData.status)
         : finalizationReasonLabel('missing_finalization_contract');
-    const lines = ['**仍在验证，暂不生成最终结论**', '', '状态：' + reason];
+    const stopped = responseData && responseData.runTerminated === true && isStoppedReportStatus(responseData.status);
+    const lines = ['**' + (stopped ? reportDeliveryLabel('stopped') : '仍在验证，暂不生成最终结论') + '**', '', '状态：' + reason];
     const pending = compactStringList(responseData && responseData.pendingExecutionIds, 3);
     if (pending.length) {
         lines.push('待完成工具：`' + pending.join('`, `') + '`');
@@ -280,13 +370,19 @@ function finalizationNoticeMarkdown(responseData, eventMessage) {
 }
 
 function markAssistantFinalizationState(assistantMessageId, responseData) {
-    const assistantElement = document.getElementById(assistantMessageId);
-    if (!assistantElement) return;
-    const finalized = isFinalizedResponseData(responseData);
-    assistantElement.dataset.finalized = finalized ? 'true' : 'false';
-    assistantElement.dataset.finalizationStatus = responseData && responseData.status ? String(responseData.status) : '';
-    assistantElement.classList.toggle('assistant-finalized', finalized);
-    assistantElement.classList.toggle('assistant-not-finalized', !finalized);
+    markAssistantDeliveryState(document.getElementById(assistantMessageId), responseData);
+}
+
+if (typeof window !== 'undefined') {
+    window.getResponseDeliveryState = getResponseDeliveryState;
+    window.isPartialReportResponseData = isPartialReportResponseData;
+    window.hasDeliveredAssistantContent = hasDeliveredAssistantContent;
+    window.shouldPreserveAssistantBody = shouldPreserveAssistantBody;
+    window.markAssistantDeliveryState = markAssistantDeliveryState;
+    window.restoreAssistantDeliveryState = restoreAssistantDeliveryState;
+    window.reportDeliveryLabel = reportDeliveryLabel;
+    window.finalizationCheckTitle = finalizationCheckTitle;
+    window.finalizationNoticeMarkdown = finalizationNoticeMarkdown;
 }
 
 /**
@@ -2229,7 +2325,7 @@ function handleStreamEvent(event, progressElement, progressId,
     }
 
     const timeline = resolveStreamTimeline(progressId);
-    const canHandleWithoutTimeline = ['conversation', 'response', 'error', 'cancelled', 'done'].includes(String(event.type || ''));
+    const canHandleWithoutTimeline = ['conversation', 'response', 'finalization_check', 'error', 'cancelled', 'done'].includes(String(event.type || ''));
     if (!timeline && !canHandleWithoutTimeline) return;
 
     // 补流可能从任意 delta 开始，首个可用快照无需等待 start 就能恢复展示。
@@ -2266,7 +2362,9 @@ function handleStreamEvent(event, progressElement, progressId,
         for (const id of preferredIds) {
             const element = document.getElementById(id);
             if (element) {
-                updateAssistantBubbleContent(id, message, true);
+                if (!shouldPreserveAssistantBody(element, { delivered: false })) {
+                    updateAssistantBubbleContent(id, message, true);
+                }
                 setAssistantId(id);
                 return { assistantId: id, assistantElement: element };
             }
@@ -3023,6 +3121,41 @@ function handleStreamEvent(event, progressElement, progressId,
             finalizeOutstandingToolCallsForProgress(progressId, 'failed');
             break;
 
+        case 'planning': {
+            addTimelineItem(timeline, 'planning', {
+                title: einoMainStreamPlanningTitle(event.data || {}),
+                message: event.message || '',
+                data: event.data || {},
+                expanded: false
+            });
+            break;
+        }
+
+        case 'finalization_check': {
+            const data = event.data || {};
+            if (timeline) {
+                addTimelineItem(timeline, 'finalization_check', {
+                    title: finalizationCheckTitle(data),
+                    message: isPartialReportResponseData(data)
+                        ? reportDeliveryLabel('partial_report')
+                        : (isFinalizedResponseData(data) ? event.message : finalizationNoticeMarkdown(data, event.message)),
+                    data: data,
+                    expanded: false
+                });
+            }
+            // 阶段报告正文只取服务端 deliveryText；check 中的内部说明不进入主消息。
+            if (isPartialReportResponseData(data)) {
+                handleStreamEvent({ type: 'response', message: '', data: Object.assign({}, data, {
+                    streamId: undefined, streamSeq: undefined, accumulated: undefined
+                }) }, progressElement, progressId, getAssistantId, setAssistantId, getMcpIds, setMcpIds, options);
+            }
+            break;
+        }
+
+        case 'finalization_auto_continue':
+            addTimelineItem(timeline, 'progress', { title: '继续验证', message: event.message || '', data: event.data || {} });
+            break;
+
         case 'response_start': {
             const responseTaskState = progressTaskState.get(progressId);
             const responseOriginalConversationId = responseTaskState?.conversationId;
@@ -3154,46 +3287,42 @@ function handleStreamEvent(event, progressElement, progressId,
             const streamState = responseStreamStateByProgressId.get(progressId);
             const existingAssistantId = streamState?.assistantId || getAssistantId();
             let assistantIdFinal = existingAssistantId;
-            // 只有 finalized===true 的 response 才作为最终结论；否则显示为「仍在验证」提示，
-            // 候选文本只进过程详情，避免把过程性输出误判为交付结果。
             const responseFinalized = isFinalizedResponseData(responseData);
-            const responseHasFinalizationContract = hasFinalizationContract(responseData);
             const resolvedResponseText = resolveFinalAssistantResponseText(event.message, streamState);
-            const bubbleText = responseFinalized
-                ? resolvedResponseText
-                : finalizationNoticeMarkdown(responseData, event.message);
+            const delivery = getResponseDeliveryState(responseData, resolvedResponseText);
+            const bubbleText = delivery.text;
+            const existingAssistant = assistantIdFinal ? document.getElementById(assistantIdFinal) : null;
+            const preserveBody = shouldPreserveAssistantBody(existingAssistant, delivery);
 
             if (!assistantIdFinal) {
                 assistantIdFinal = addMessage('assistant', bubbleText, mcpIds, progressId);
                 setAssistantId(assistantIdFinal);
             } else {
                 setAssistantId(assistantIdFinal);
-                updateAssistantBubbleContent(assistantIdFinal, bubbleText, true);
+                if (!preserveBody) updateAssistantBubbleContent(assistantIdFinal, bubbleText, true);
             }
             markAssistantFinalizationState(assistantIdFinal, responseData);
 
-            // 将 response_start/response_delta 占位固化为 planning，与后端落库一致后再快照过程详情
+            // 模型流和旧 planning 仅是候选记录；交付正文由上面的合约单独选择。
             if (streamState && streamState.itemId) {
                 finalizeMainResponseStreamItem(streamState, responseFinalized ? event.message : '', responseData);
-            } else if (timeline && responseFinalized && bubbleText && String(bubbleText).trim() && !isEinoEmptyResponsePlaceholder(event.message)) {
+            } else if (timeline && resolvedResponseText && String(resolvedResponseText).trim() && !isEinoEmptyResponsePlaceholder(event.message)) {
                 addTimelineItem(timeline, 'planning', {
-                    title: typeof einoMainStreamPlanningTitle === 'function'
-                        ? einoMainStreamPlanningTitle(responseData)
-                        : ('📝 ' + (typeof window.t === 'function' ? window.t('chat.planning') : '规划中')),
-                    message: event.message,
+                    title: einoMainStreamPlanningTitle(responseData),
+                    message: resolvedResponseText,
                     data: responseData,
                     expanded: false
                 });
-            } else if (timeline && !responseFinalized && !responseHasFinalizationContract && resolvedResponseText && String(resolvedResponseText).trim()) {
-                addTimelineItem(timeline, 'finalization_check', {
-                    title: '候选输出缺少最终化证明',
-                    message: resolvedResponseText,
-                    data: Object.assign({}, responseData, { missingFinalizationContract: true }),
-                    expanded: true
-                });
             }
 
-            // 最终回复时隐藏进度卡片（多代理模式下，迭代过程已完整展示）
+            const responseTerminated = delivery.delivered
+                || (responseData.runTerminated === true && isStoppedReportStatus(responseData.status) && !hasPendingReportWork(responseData));
+            // 尚在校验或仍有工具/HITL 时保留进度卡片，不把候选 response 当作任务成功结束。
+            if (!responseTerminated) {
+                if (responseData.messageId) applyBackendMessageIdToAssistantDom(assistantIdFinal, responseData.messageId);
+                responseStreamStateByProgressId.delete(progressId);
+                break;
+            }
             hideProgressMessageForFinalReply(progressId);
 
             // Before integrating/removing the progress DOM, close any outstanding running tool calls
@@ -3285,6 +3414,12 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
             
         case 'done':
+            // 批量子任务可能仅以 done 携带交付合约；复用 response 路径创建/更新正文。
+            if (isPartialReportResponseData(event.data)) {
+                handleStreamEvent({ type: 'response', message: '', data: Object.assign({}, event.data, {
+                    streamId: undefined, streamSeq: undefined, accumulated: undefined
+                }) }, progressElement, progressId, getAssistantId, setAssistantId, getMcpIds, setMcpIds, options);
+            }
             if (event.data && event.data.workflowStatus === 'awaiting_hitl') {
                 const waitingTitle = document.querySelector(`#${progressId} .progress-title`);
                 if (waitingTitle) {
@@ -3310,10 +3445,22 @@ function handleStreamEvent(event, progressElement, progressId,
             if (window.csTaskReplay && window.csTaskReplay.progressId === progressId) {
                 clearCsTaskReplay();
             }
-            // 完成，更新进度标题（如果进度消息还存在）
+            // done 表示传输结束，不保证覆盖校验成功；阶段报告保留停止状态。
+            const doneAssistant = document.getElementById(getAssistantId());
+            const doneStatus = (event.data && event.data.status)
+                || (doneAssistant && doneAssistant.dataset.finalizationStatus);
+            const doneSuccess = isFinalizedResponseData(event.data)
+                || (hasDeliveredAssistantContent(doneAssistant) && doneAssistant.dataset.finalized === 'true');
+            const doneIncomplete = !doneSuccess || hasPendingReportWork(event.data)
+                || isStoppedReportStatus(doneStatus)
+                || (doneAssistant && doneAssistant.dataset.finalized === 'false');
+            const doneLabel = doneIncomplete
+                ? (doneAssistant && doneAssistant.dataset.deliveryKind === 'partial_report'
+                    ? reportDeliveryLabel('partial_report') : '评估未完成')
+                : (typeof window.t === 'function' ? window.t('chat.penetrationTestComplete') : '渗透测试完成');
             const doneTitle = document.querySelector(`#${progressId} .progress-title`);
             if (doneTitle) {
-                doneTitle.textContent = '✅ ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestComplete') : '渗透测试完成');
+                doneTitle.textContent = (doneIncomplete ? '⚠️ ' : '✅ ') + doneLabel;
             }
             // 更新对话ID
             if (event.data && event.data.conversationId) {
@@ -3324,7 +3471,7 @@ function handleStreamEvent(event, progressElement, progressId,
                 updateProgressConversation(progressId, event.data.conversationId);
             }
             if (progressTaskState.has(progressId)) {
-                finalizeProgressTask(progressId, typeof window.t === 'function' ? window.t('tasks.statusCompleted') : '已完成');
+                finalizeProgressTask(progressId, doneIncomplete ? doneLabel : (typeof window.t === 'function' ? window.t('tasks.statusCompleted') : '已完成'));
             }
             
             // 检查时间线中是否有错误项
@@ -7763,15 +7910,11 @@ function refreshProgressAndTimelineI18n() {
             }
         } else if (type === 'reasoning_chain') {
             titleSpan.textContent = ap + '\uD83D\uDD17 ' + _t('chat.reasoningChain');
-        } else if (type === 'planning') {
-            if (item.dataset.orchestration && typeof einoMainStreamPlanningTitle === 'function') {
-                titleSpan.textContent = einoMainStreamPlanningTitle({
-                    orchestration: item.dataset.orchestration,
-                    einoAgent: item.dataset.einoAgent || ''
-                });
-            } else {
-                titleSpan.textContent = ap + '\uD83D\uDCDD ' + _t('chat.planning');
-            }
+        } else if (type === 'planning' || type === 'response') {
+            titleSpan.textContent = einoMainStreamPlanningTitle({
+                orchestration: item.dataset.orchestration || '',
+                einoAgent: item.dataset.einoAgent || ''
+            });
         } else if (type === 'tool_calls_detected' && item.dataset.toolCallsCount != null) {
             const count = parseInt(item.dataset.toolCallsCount, 10) || 0;
             titleSpan.textContent = ap + '\uD83D\uDD27 ' + _t('chat.toolCallsDetected', { count: count });
@@ -7808,6 +7951,10 @@ function refreshProgressAndTimelineI18n() {
         if (item.classList.contains('tool-detail-collapsible') && typeof updateToolDetailToggleLabel === 'function') {
             updateToolDetailToggleLabel(item);
         }
+    });
+
+    document.querySelectorAll('.report-delivery-label').forEach(function (label) {
+        label.textContent = reportDeliveryLabel(label.dataset.deliveryKind);
     });
 
     document.querySelectorAll('.timeline-live-pruned-marker').forEach(function (marker) {

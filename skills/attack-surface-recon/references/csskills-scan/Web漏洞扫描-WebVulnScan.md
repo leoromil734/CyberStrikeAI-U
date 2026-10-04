@@ -39,22 +39,17 @@ wpscan --url https://example.com --enumerate u,vp,vt --api-token YOUR_API_TOKEN
 
 ### 2. 目录/文件枚举
 
+目录、文件和扩展名枚举优先 `dirsearch`；参数、虚拟主机和自定义请求模糊测试优先 `ffuf`。爬取/JS 外的未链接路径尚未覆盖或发现需要继续枚举的目录时才补缺；同范围已有充分有效证据可复用，不叠加多个扫描器凑次数。先建随机路径 catch-all 基线，以实测大小/正文/不存在页面过滤，不一概排除 401/403/405/500。缺依赖留 blocked，超时未完成留 gap/blocked；记录规范见上级 `comprehensive-recon.md` §3.1。
+
 ```bash
-# Dirb - 基础目录扫描
-dirb http://example.com /usr/share/wordlists/dirb/common.txt
+# 首选目录/文件枚举：按技术栈调整扩展名，默认不递归
+# -e 默认仅替换字典 %EXT%，小字典确需逐条追加时才开启 --force-extensions
+dirsearch -u https://example.test/ -e php,html,txt -t 20 \
+  --max-rate 50 --timeout 10 --max-time 300
 
-# Dirsearch - 现代目录扫描
-dirsearch -u https://example.com -e php,asp,aspx,jsp,html,txt -t 50
-
-# Gobuster - 高速目录/文件扫描
-gobuster dir -u https://example.com -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -t 100
-
-# ffuf - 模糊测试框架（最快）
-ffuf -u https://example.com/FUZZ -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -fc 403,404
-
-# 备份文件扫描
-ffuf -u https://example.com/FUZZ -w backup_extensions.txt -fc 403,404
-# backup_extensions.txt: .bak, .old, .swp, .save, .backup, ~, .1
+# dirsearch 不可用或需要自定义请求时的等价替代；先确认字典存在
+ffuf -u https://example.test/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt \
+  -mc all -ac -t 20 -rate 50 -timeout 10 -maxtime 300
 ```
 
 ### 3. 参数发现与模糊测试

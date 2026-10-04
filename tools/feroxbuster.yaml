@@ -5,7 +5,7 @@ short_description: "递归内容发现工具"
 description: |
   Feroxbuster是一个快速、简单的递归内容发现工具。
 
-  **安装：** `install-tools-ubuntu24.sh`（core/full）从 GitHub release 安装。目录爆破主用仍是 `ffuf`，本工具为递归补强。
+  **安装：** `install-tools-ubuntu24.sh`（core/full）从 GitHub release 安装。目录、文件和扩展名枚举优先 `dirsearch`，本工具仅在有明确递归覆盖缺口时补强；相同范围已有充分证据时不重复扫描。
 
   **主要功能：**
   - 递归目录发现

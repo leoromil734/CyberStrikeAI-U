@@ -60,11 +60,14 @@ REST/GraphQL、BOLA 优先 `api-security-testing`。组件情报用 `component-v
 | 基线 HTTP | `http-framework-test` / `httpx` | `exec`+curl |
 | SQLi | `sqlmap` | 手工 |
 | XSS | `dalfox` | `xsser` |
-| 参数 | `arjun` / `x8` | `ffuf` |
-| 路径/上传 | `ffuf` / `gobuster` / `dirsearch` | `dotdotpwn` |
+| 隐藏参数发现 | `arjun` / `x8` | `ffuf` |
+| 目录/文件/扩展名枚举 | `dirsearch` | `ffuf` 等价有界扫描 |
+| 参数/虚拟主机/自定义请求模糊测试 | `ffuf` | 专项脚本 |
 | OOB | `interactsh-client` / `dnslog` | — |
 | JWT | `jwt-analyzer` | — |
 | 线索 | `nuclei` / `metasploit` | `jaeles` |
 | 落库 | `list_vulnerabilities` → `record_vulnerability` | `upsert_project_fact` |
 
 尚无资产清单 → `recon-osint-playbook` / `attack-surface-recon`。纯 API 授权 → `api-security-testing`。
+
+任务包含 Web 攻击面发现且未链接路径尚未覆盖，或发现需继续枚举的目录时，执行有界目录发现或记录具体 blocked/N/A 理由；同范围、认证态和候选集已有充分有效证据可引用复用。仅爬取/JS 提取不算目录覆盖，超时未完成留 gap/blocked；先处理就绪验证候选，不为工具调用次数重复扫描。覆盖记录按 `attack-surface-recon` 的 `comprehensive-recon.md` §3.1 执行。

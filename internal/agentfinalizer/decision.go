@@ -5,7 +5,7 @@
 // 就不允许把候选文本提升为最终回复。本包是唯一的判定契约。
 //
 // 核心规则：
-//  1. Finalizable=false 时禁止发送 response 终态事件，也不得写入 messages.content。
+//  1. Finalizable=false 时不得交付成功结论；运行真正停止后可另行生成明确标注未完成的阶段报告。
 //  2. 存在 queued/running 的工具执行时判定 in_progress。
 //  3. 显式要求执行证据（RequireExecutionEvidence）时，必须有 completed 的工具执行记录。
 //  4. 空输出、等待 HITL、非成功 status 一律阻断。
@@ -38,6 +38,7 @@ const (
 	ReasonCancelled          = "cancelled"
 	ReasonMissingEvidence    = "missing_execution_evidence"
 	ReasonCoverageIncomplete = "coverage_incomplete"
+	ReasonReportNotSubmitted = "report_not_submitted_via_exit"
 	// ReasonIncompleteCandidate 候选文本是「没说完」的半截话（下一步叙述或缺少句末标点）。
 	// 与空回复不同：文本非空但明显不是结论，转自动续跑而不是直接交付。
 	ReasonIncompleteCandidate = "incomplete_candidate_response"
@@ -50,11 +51,18 @@ const (
 // user-facing answer. Natural-language assistant text is only a candidate until
 // this object says Finalizable.
 type Decision struct {
-	Status               string   `json:"status"`
-	Finalizable          bool     `json:"finalizable"`
-	Finalized            bool     `json:"finalized"`
-	CompletionReason     string   `json:"completionReason"`
-	FinalText            string   `json:"finalText,omitempty"`
+	Status           string `json:"status"`
+	Finalizable      bool   `json:"finalizable"`
+	Finalized        bool   `json:"finalized"`
+	CompletionReason string `json:"completionReason"`
+	FinalText        string `json:"finalText,omitempty"`
+	// Delivery fields describe a stopped run's readable partial report, never
+	// evidence that the assessment is complete. FinalText retains the candidate.
+	DeliveryAvailable    bool     `json:"deliveryAvailable"`
+	DeliveryKind         string   `json:"deliveryKind,omitempty"`
+	RunTerminated        bool     `json:"runTerminated"`
+	DeliveryText         string   `json:"deliveryText,omitempty"`
+	ReportSubmitted      bool     `json:"reportSubmitted"`
 	EvidenceVerified     bool     `json:"evidenceVerified"`
 	EvidenceRefs         []string `json:"evidenceRefs,omitempty"`
 	PendingExecutionIDs  []string `json:"pendingExecutionIds,omitempty"`
@@ -89,12 +97,18 @@ type Input struct {
 	AwaitingHITL             bool
 	RequireExecutionEvidence bool
 	RequireCoverageEvidence  bool
+	ReportSubmitted          bool
+	RequireReportSubmission  bool
 }
 
 // FromRunResult 依据 RunResult 做判定，并把终态字段回填到 result，便于统一读写。
 func FromRunResult(db *database.DB, result *multiagent.RunResult, in Input) Decision {
 	if result != nil {
-		if strings.TrimSpace(in.Response) == "" {
+		in.ReportSubmitted = result.ReportSubmitted
+		in.RequireReportSubmission = in.RequireReportSubmission || result.ReportSubmissionRequired
+		if result.ReportSubmitted {
+			in.Response = result.SubmittedReport
+		} else if strings.TrimSpace(in.Response) == "" {
 			in.Response = result.Response
 		}
 		if len(in.MCPExecutionIDs) == 0 {
@@ -112,7 +126,7 @@ func FromRunResult(db *database.DB, result *multiagent.RunResult, in Input) Deci
 	// with a short bookkeeping notice. Recover only after all current execution
 	// and coverage checks have passed; a report can never bypass those gates.
 	if result != nil && d.Finalizable {
-		if delivered, repairOnly := multiagent.FinalReportAfterCoverageRepair(d.FinalText, result.LastAgentTraceInput); delivered != d.FinalText {
+		if delivered, repairOnly := multiagent.FinalReportAfterCoverageRepair(d.FinalText, result.LastAgentTraceInput); !result.ReportSubmitted && delivered != d.FinalText {
 			d.FinalText = delivered
 			d.CandidateResponseLen = len([]rune(delivered))
 			result.Response = delivered
@@ -160,6 +174,7 @@ func Decide(db *database.DB, in Input) Decision {
 		Status:               status,
 		CompletionReason:     reason,
 		FinalText:            text,
+		ReportSubmitted:      in.ReportSubmitted,
 		EvidenceVerified:     true,
 		EvidenceRefs:         evidenceRefs(in.MCPExecutionIDs),
 		AgentMode:            strings.TrimSpace(in.AgentMode),
@@ -183,7 +198,7 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 	switch status {
-	case StatusInProgress, StatusBlocked, StatusFailed, StatusCancelled, StatusAwaitingHITL:
+	case StatusInProgress, StatusBlocked, StatusFailed, StatusCancelled, StatusAwaitingHITL, "timeout":
 		d.Status = status
 		d.EvidenceVerified = false
 		if d.CompletionReason == ReasonVerified {
@@ -263,6 +278,16 @@ func Decide(db *database.DB, in Input) Decision {
 	d.EvidenceRefs = append(d.EvidenceRefs, coverage.EvidenceRefs...)
 	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)
 
+	// Deep/Supervisor assessment reports must be submitted by the current
+	// root's executed exit tool. Ordinary prose remains a candidate even when
+	// its content happens to pass the coverage checks.
+	if (in.RequireReportSubmission || in.AgentMode == "eino_deep" || in.AgentMode == "eino_supervisor") &&
+		!in.ReportSubmitted && (in.RequireCoverageEvidence || multiagent.IsAssessmentReportCandidate(text)) {
+		d.Status, d.CompletionReason = StatusBlocked, ReasonReportNotSubmitted
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, "assessment report was not submitted through the current root agent's successful exit")
+		return d
+	}
 	d.Finalizable = true
 	d.Finalized = true
 	d.Status = StatusCompleted
@@ -281,6 +306,11 @@ func ResponsePayload(d Decision, extra map[string]interface{}) map[string]interf
 	out := map[string]interface{}{
 		"finalized":                  d.Finalized,
 		"finalizable":                d.Finalizable,
+		"deliveryAvailable":          d.DeliveryAvailable,
+		"deliveryKind":               d.DeliveryKind,
+		"runTerminated":              d.RunTerminated,
+		"deliveryText":               d.DeliveryText,
+		"reportSubmitted":            d.ReportSubmitted,
 		"status":                     d.Status,
 		"completionReason":           d.CompletionReason,
 		"evidenceVerified":           d.EvidenceVerified,

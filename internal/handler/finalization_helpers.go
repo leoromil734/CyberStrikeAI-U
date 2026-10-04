@@ -3,7 +3,6 @@ package handler
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/mcp"
@@ -42,8 +41,7 @@ func (h *AgentHandler) finalizeAgentRunForDeliveryWithPolicy(
 		RequireExecutionEvidence: requireExecutionEvidence,
 		RequireCoverageEvidence:  firstPolicyFlag(requireCoverageEvidence),
 	})
-	h.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, mcpExecutionIDs, reasoningContent, decision)
-	return decision
+	return h.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, mcpExecutionIDs, reasoningContent, decision)
 }
 
 // decideAgentRunForDeliveryWithPolicy 只做判定与 RunResult 回填，不写库（供需要自己组织 SSE 的调用点使用）。
@@ -82,7 +80,9 @@ func (h *AgentHandler) decideAgentRunForDelivery(
 	})
 }
 
-// persistFinalizationDecision 写入 finalization_check 过程详情，并且只在 Finalizable 时更新最终助手消息。
+// persistFinalizationDecision preserves the candidate/checks in process details
+// and persists either a verified answer or an explicitly incomplete report.
+// Callers must use the returned decision for the same SSE/JSON delivery metadata.
 func (h *AgentHandler) persistFinalizationDecision(
 	conversationID string,
 	assistantMessageID string,
@@ -90,23 +90,27 @@ func (h *AgentHandler) persistFinalizationDecision(
 	mcpExecutionIDs []string,
 	reasoningContent string,
 	decision agentfinalizer.Decision,
-) {
+) agentfinalizer.Decision {
+	decision.ConversationID, decision.AssistantMessageID, decision.AgentMode = conversationID, assistantMessageID, agentMode
+	decision = finalizationStoppedDecision(decision, nil)
+	decision = agentfinalizer.PrepareStoppedDelivery(h.db, decision)
 	if assistantMessageID == "" || h.db == nil {
-		return
+		return decision
 	}
 	_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
-	if decision.Finalizable {
-		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil {
-			if h.logger != nil {
-				h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
-			}
-			return
-		}
-		h.saveGovernedRunDecision(conversationID, decision)
-		return
+	text := decision.FinalText
+	if !decision.Finalizable {
+		text = finalizationBlockedMessage(decision)
 	}
-	_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", finalizationBlockedMessage(decision), time.Now(), assistantMessageID)
+	// This method updates text/trace metadata only; it does not mark the
+	// assessment as completed. Its true status is saved independently below.
+	if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, text, mcpExecutionIDs, reasoningContent); err != nil {
+		if h.logger != nil {
+			h.logger.Warn("更新交付助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
+		}
+	}
 	h.saveGovernedRunDecision(conversationID, decision)
+	return decision
 }
 
 // finalizeCandidateForDelivery 面向只有候选文本（无 RunResult）的收尾路径，如工作流集成、机器人。
@@ -143,34 +147,24 @@ func (h *AgentHandler) finalizeCandidateForDeliveryWithPolicy(
 		RequireExecutionEvidence: requireExecutionEvidence,
 		RequireCoverageEvidence:  firstPolicyFlag(requireCoverageEvidence),
 	})
-	if assistantMessageID == "" || h.db == nil {
-		return decision
-	}
-	_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
-	if decision.Finalizable {
-		if err := h.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil {
-			if h.logger != nil {
-				h.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
-			}
-			return decision
-		}
-		h.saveGovernedRunDecision(conversationID, decision)
-		return decision
-	}
-	_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", finalizationBlockedMessage(decision), time.Now(), assistantMessageID)
-	h.saveGovernedRunDecision(conversationID, decision)
-	return decision
+	return h.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, mcpExecutionIDs, reasoningContent, decision)
 }
 
 func finalizationCheckMessage(d agentfinalizer.Decision) string {
 	if d.Finalizable {
 		return "最终回复检查通过。"
 	}
+	if d.DeliveryAvailable && d.RunTerminated && d.DeliveryKind == agentfinalizer.DeliveryKindPartialReport {
+		return "本次运行已停止，已交付阶段报告；完整评估未通过。候选原文与完整诊断保留在记录数据中。"
+	}
 	return finalizationBlockedMessage(d)
 }
 
 // finalizationBlockedMessage 生成用户可见的阻断文案（不暴露敏感细节，只说明未达最终化条件）。
 func finalizationBlockedMessage(d agentfinalizer.Decision) string {
+	if d.DeliveryAvailable && d.RunTerminated && d.DeliveryKind == agentfinalizer.DeliveryKindPartialReport && strings.TrimSpace(d.DeliveryText) != "" {
+		return d.DeliveryText
+	}
 	parts := []string{"任务尚未达到最终回复条件，暂不生成成功结论。"}
 	if d.CompletionReason != "" {
 		parts = append(parts, "原因: "+d.CompletionReason)
@@ -196,6 +190,24 @@ func finalizationBlockedMessage(d agentfinalizer.Decision) string {
 		parts = append(parts, "缺失检查: "+strings.Join(checks, "; "))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// persistRunStopAndSendDelivery keeps failed/cancelled/timeout runs readable
+// without promoting their candidate text or treating pending tools as finished.
+func (h *AgentHandler) persistRunStopAndSendDelivery(conversationID, messageID, agentMode, status string, result *multiagent.RunResult, ids []string, sendEvent func(string, string, interface{})) {
+	d := agentfinalizer.Decision{Status: status, CompletionReason: status}
+	reasoning := ""
+	if result != nil {
+		d.FinalText, d.ReportSubmitted = result.Response, result.ReportSubmitted
+		d.MissingChecks = append([]string(nil), result.MissingChecks...)
+		d.PendingExecutionIDs = append([]string(nil), result.PendingExecutionIDs...)
+		reasoning = multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput)
+	}
+	d = h.persistFinalizationDecision(conversationID, messageID, agentMode, ids, reasoning, d)
+	if d.DeliveryAvailable {
+		sendEvent("response", d.DeliveryText, finalizationResponsePayload(d, nil))
+	}
+	sendEvent("done", "", finalizationResponsePayload(d, nil))
 }
 
 func finalizationResponsePayload(d agentfinalizer.Decision, extra map[string]interface{}) map[string]interface{} {

@@ -61,8 +61,9 @@ func cloneADKMessagesForTrace(msgs []adk.Message) []adk.Message {
 }
 
 // appendTerminalToolPairsForTrace merges only complete tool pairs synthesized by
-// terminal handling after the last model call. These are either bridge completion
-// results or explicit failure markers; the full event accumulation remains excluded.
+// terminal handling after the last model call. These are bridge completion
+// results, explicit failure markers or successful root exit reports; unrelated
+// event accumulation remains excluded.
 func appendTerminalToolPairsForTrace(
 	modelFacing []adk.Message,
 	accumulated []adk.Message,

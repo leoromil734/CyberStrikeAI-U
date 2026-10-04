@@ -140,6 +140,8 @@ func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddl
 		RootDir:           root,
 		ReadFileToolName:  "read_file",
 		ClearExcludeTools: excl,
+		// exit is the actual user report, not reducible diagnostic/tool output.
+		TruncExcludeTools: []string{adk.ToolInfoExit.Name},
 		MaxLengthForTrunc: mw.ReductionMaxLengthForTruncEffective(),
 		MaxTokensForClear: int64(mw.ReductionMaxTokensForClearEffective()),
 	})

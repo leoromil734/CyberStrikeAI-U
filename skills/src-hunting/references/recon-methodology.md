@@ -138,18 +138,23 @@ curl -sI https://target.com | grep -i "server\|x-powered-by\|x-generator\|cf-ray
 
 ## 5. ENDPOINT DISCOVERY
 
-### Directory Brute Force
+### Directory and File Discovery
+
+目录、文件和扩展名枚举优先 `dirsearch`；参数、虚拟主机和自定义请求模糊测试优先 `ffuf`。任务包含 Web 攻击面发现且未链接路径尚未覆盖，或发现需继续枚举的目录时，执行有界目录发现，或记录具体 blocked/N/A 理由及证据。仅爬取/JS 提取不算目录覆盖；同 origin/路径范围/认证态/候选集已有充分有效证据可引用复用，不为工具调用次数重复扫描。
+
+先用同认证态的 2–3 个随机不存在路径建立 catch-all 基线，按实测长度、正文特征或不存在页面路径配置过滤；不一概排除 401/403/405/500，不批量否定真实 JS/API。字典路径先验存在，扩展名按技术栈缩小；`-e` 默认仅替换 `%EXT%`，小字典无占位符且需要追加时才显式 `--force-extensions`。示例预算服从用户更严限制；递归仅对已确认需补枚举目录开启并设深度。
+
 ```bash
-# ffuf (fastest):
-ffuf -u https://target.com/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt \
-  -mc 200,301,302,403 -t 50 -o dirs.txt
+# 首选：目录/文件发现；省略 -w 使用自带字典，按技术栈调整 -e
+dirsearch -u https://example.test/ -e html,js,txt,json -t 20 \
+  --max-rate 50 --timeout 10 --max-time 300
 
-# Gobuster:
-gobuster dir -u https://target.com -w wordlist.txt -x php,html,js,json
-
-# feroxbuster (recursive):
-feroxbuster -u https://target.com -w wordlist.txt -x php,html,txt -r
+# 替代：需要自定义请求或 dirsearch 不可用时；先确认字典存在
+ffuf -u https://example.test/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt \
+  -mc all -ac -t 20 -rate 50 -timeout 10 -maxtime 300
 ```
+
+保存范围、认证态、字典/hash/候选数、扩展名、基线/过滤、预算、实际进度、停止原因和执行/原件引用。完成所选候选集且零新增才是该范围负结果；超时/限流/中断未完成留 gap/blocked，不以成功退出宣称全覆盖。先验证就绪候选，再补独立缺口；续跑只处理剩余候选。记录规范见根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §3.1。
 
 ### Parameter Discovery
 ```bash
@@ -178,8 +183,9 @@ waybackurls target.com | sort -u > wayback_urls.txt
 
 ### API Endpoint Discovery
 ```bash
-# Common API paths:
-ffuf -u https://target.com/FUZZ -w /SecLists/Discovery/Web-Content/api/api-endpoints.txt
+# Common API paths（路径枚举，不替代逐接口验证；先确认字典存在）:
+dirsearch -u https://example.test/ -w /SecLists/Discovery/Web-Content/api/api-endpoints.txt \
+  -t 20 --max-rate 50 --timeout 10 --max-time 300
 
 # Swagger/OpenAPI:
 test: /swagger.json /api-docs /openapi.json /v2/api-docs /.well-known/ /docs/
@@ -326,10 +332,11 @@ cat subdomains.txt | nuclei -t exposures/ -t misconfiguration/ -o exposed.txt
 | Subdomain enum | subfinder, amass, massdns |
 | Port scan | nmap, masscan |
 | HTTP probe | httpx |
-| Dir brute | ffuf, feroxbuster, gobuster |
+| Dir/file/extension enum | dirsearch; ffuf for equivalent fallback |
+| Parameter/vhost/custom request fuzz | ffuf |
 | JS mining | LinkFinder, gau, waybackurls |
 | Secret scan | trufflehog, gitleaks |
-| Parameter fuzz | arjun, x8 |
+| Hidden parameter discovery | arjun, x8 |
 | Vuln scan | nuclei |
 | Proxy/intercept | Burp Suite Pro |
 | JWT attacks | jwt_tool |

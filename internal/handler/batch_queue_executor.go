@@ -423,6 +423,25 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 
 	if runErr != nil {
 		h.handleBatchSubTaskRunError(queueID, task, conversationID, assistantMessageID, baseCtx, taskCtx, resultMA, runErr, &finishStatus)
+		if finishStatus != BatchTaskStatusPaused {
+			stopped := agentfinalizer.Decision{Status: finishStatus, CompletionReason: finishStatus}
+			var ids []string
+			reasoning := ""
+			if resultMA != nil {
+				stopped.FinalText, stopped.ReportSubmitted = resultMA.Response, resultMA.ReportSubmitted
+				stopped.PendingExecutionIDs = append([]string(nil), resultMA.PendingExecutionIDs...)
+				ids = resultMA.MCPExecutionIDs
+				reasoning = multiagent.AggregatedReasoningFromTraceJSON(resultMA.LastAgentTraceInput)
+			}
+			decision = h.persistFinalizationDecision(conversationID, assistantMessageID, "batch", ids, reasoning, stopped)
+			if decision.DeliveryAvailable {
+				batchStatus := finishStatus
+				if batchStatus == "timeout" {
+					batchStatus = BatchTaskStatusFailed
+				}
+				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, decision.DeliveryText, decision.DeliveryText, conversationID)
+			}
+		}
 		return
 	}
 
@@ -437,6 +456,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 
 	decision = finalizationStoppedDecision(decision, &finalizationAutoContinueAttempt)
 	decision = batchSubTaskDeliveryDecision(resultMA, decision)
+	decision = agentfinalizer.PrepareStoppedDelivery(h.db, decision)
 	finishStatus = decision.Status
 	errorMsg := ""
 	if !decision.Finalizable {

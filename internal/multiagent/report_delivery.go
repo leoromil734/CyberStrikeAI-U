@@ -5,8 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"cyberstrike-ai/internal/einomcp"
-
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -27,7 +25,9 @@ var assessmentHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+\S`)
 // successful internal coverage repair returned only a bookkeeping notice. The
 // caller must validate the latest runtime/coverage state before using this text.
 // Real user messages are a hard boundary; reports from older requests and
-// arbitrary tool output are never promoted (only the explicit exit report).
+// arbitrary tool output are never promoted (exit results need recorded root
+// provenance; tool-call arguments are not execution evidence). This function
+// recovers text only, never ReportSubmitted or a successful completion state.
 // Keep the repair notice as an explicit addendum so the original report and the
 // latest inventory corrections both remain visible. The returned flag identifies
 // a repair-only response even if no report can be
@@ -66,13 +66,9 @@ func FinalReportAfterCoverageRepair(response, traceJSON string) (text string, re
 		case schema.Assistant:
 			if len(m.ToolCalls) == 0 {
 				candidate = m.Content
-			} else {
-				candidate = einoExtractExitFinalFromAssistantToolCalls(m)
 			}
 		case schema.Tool:
-			if strings.EqualFold(strings.TrimSpace(m.ToolName), "exit") && !strings.HasPrefix(strings.TrimSpace(m.Content), einomcp.ToolErrorPrefix) {
-				candidate = m.Content
-			}
+			candidate = historicalRootExitReport(m)
 		}
 		if !isAssessmentReport(candidate) {
 			continue
@@ -104,6 +100,14 @@ func isCoverageRepairNotice(text string) bool {
 		strings.Contains(lower, "aligned") || strings.Contains(lower, "corrected") ||
 		strings.Contains(lower, "updated") || strings.Contains(lower, "fixed")
 	return coverage && repaired
+}
+
+// IsAssessmentReportCandidate identifies a reasonably complete report-shaped
+// candidate (including a draft or a partial assessment). It does not verify
+// evidence, coverage, submission or finalization. Callers must retain missing
+// checks and must not translate this predicate into a successful assessment.
+func IsAssessmentReportCandidate(text string) bool {
+	return isAssessmentReport(text)
 }
 
 func isAssessmentReport(text string) bool {

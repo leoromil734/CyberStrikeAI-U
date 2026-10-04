@@ -361,7 +361,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 			segmentCancel()
 			return
 		}
@@ -379,7 +379,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				"messageId":      assistantMessageID,
 				"errorType":      "timeout",
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 			segmentCancel()
 			return
 		}
@@ -396,7 +396,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			"conversationId": conversationID,
 			"messageId":      assistantMessageID,
 		})
-		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 		segmentCancel()
 		return
 	}
@@ -413,7 +413,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	taskStatus = finalizationDecision.Status
 	h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
-	h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_"+effectiveOrch, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
+	finalizationDecision = h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_"+effectiveOrch, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
@@ -540,7 +540,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 	decision = finalizationStoppedDecision(decision, &finalizationAutoContinueAttempt)
 	applyFinalizationDecisionToResult(result, decision)
 	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
-	h.persistFinalizationDecision(
+	decision = h.persistFinalizationDecision(
 		prep.ConversationID,
 		prep.AssistantMessageID,
 		"eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)),
@@ -564,6 +564,10 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		ConversationID:      prep.ConversationID,
 		Time:                time.Now(),
 		Finalized:           decision.Finalized,
+		DeliveryAvailable:   decision.DeliveryAvailable,
+		DeliveryKind:        decision.DeliveryKind,
+		RunTerminated:       decision.RunTerminated,
+		DeliveryText:        decision.DeliveryText,
 		Finalizable:         decision.Finalizable,
 		Status:              decision.Status,
 		CompletionReason:    decision.CompletionReason,

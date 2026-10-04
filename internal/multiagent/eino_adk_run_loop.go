@@ -172,6 +172,9 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 
 	var lastAssistant string
 	var lastPlanExecuteExecutor string
+	// This state is never initialized from baseMsgs, model-facing history or
+	// checkpoint payloads. Only a live successful root exit can submit a report.
+	submission := newEinoReportSubmission(da.Name(ctx), orchMode)
 	msgs := append([]adk.Message(nil), baseMsgs...)
 	runAccumulatedMsgs := append([]adk.Message(nil), msgs...)
 	baseAccumulatedCount := len(runAccumulatedMsgs)
@@ -729,9 +732,9 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			terminalToolResultIDs,
 			args.ToolMaxBytes,
 		)
-		return buildEinoRunResultFromAccumulated(
-			orchMode, runAccumulatedMsgs, persistMsgs,
-			lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, true,
+		return buildEinoRunResult(
+			orchMode, persistMsgs,
+			lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, true, submission,
 		), runErr
 	}
 
@@ -881,10 +884,18 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			toolName := strings.TrimSpace(mv.ToolName)
 			content, streamToolCallID, toolStreamRecvErr := recvSchemaMessageStream(ctx, mv.MessageStream)
 			isErr := einoToolResultIsError(toolName, content)
+			toolMsg := schema.ToolMessage(content, streamToolCallID, schema.WithToolName(toolName))
+			toolMsg = submission.observe(ev, toolMsg, toolStreamRecvErr)
 			content = einoToolResultBody(content)
 			if streamToolCallID != "" {
-				opts := []schema.ToolMessageOption{schema.WithToolName(toolName)}
-				runAccumulatedMsgs = append(runAccumulatedMsgs, schema.ToolMessage(content, streamToolCallID, opts...))
+				// Keep the original exit result and provenance; do not convert a
+				// failed or partially received exit into a submitted report.
+				if toolMsg.Extra[rootExitReportExtraKey] == true {
+					terminalToolResultIDs[streamToolCallID] = struct{}{}
+				} else {
+					toolMsg.Content = content
+				}
+				runAccumulatedMsgs = append(runAccumulatedMsgs, toolMsg)
 			}
 			tryEmitToolResultProgress(toolName, content, streamToolCallID, isErr, ev.AgentName)
 			if toolStreamRecvErr != nil && logger != nil {
@@ -986,10 +997,10 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 						}
 					}
 					if chunk.Content != "" {
-						if progress != nil && streamsMainAssistant(ev.AgentName) {
+						if streamsMainAssistant(ev.AgentName) {
 							var contentDelta string
 							mainAssistantBuf, contentDelta = normalizeStreamingDelta(mainAssistantBuf, chunk.Content)
-							if contentDelta != "" {
+							if contentDelta != "" && progress != nil {
 								if mainAssistDupTarget == "" {
 									executeStdoutDupMu.Lock()
 									if pendingExecuteStdoutDup != "" {
@@ -1202,6 +1213,15 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		if gerr != nil || msg == nil {
 			continue
 		}
+		if msg.Role == schema.Tool && msg.ToolName == "" && mv.ToolName != "" {
+			copyMsg := *msg
+			copyMsg.ToolName = mv.ToolName
+			msg = &copyMsg
+		}
+		msg = submission.observe(ev, msg, nil)
+		if msg.Extra[rootExitReportExtraKey] == true && msg.Role == schema.Tool {
+			terminalToolResultIDs[msg.ToolCallID] = struct{}{}
+		}
 		runAccumulatedMsgs = append(runAccumulatedMsgs, msg)
 		if progress != nil {
 			for _, tc := range msg.ToolCalls {
@@ -1310,9 +1330,9 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 		terminalToolResultIDs,
 		args.ToolMaxBytes,
 	)
-	out := buildEinoRunResultFromAccumulated(
-		orchMode, runAccumulatedMsgs, persistMsgs,
-		lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, false,
+	out := buildEinoRunResult(
+		orchMode, persistMsgs,
+		lastAssistant, lastPlanExecuteExecutor, emptyHint, ids, false, submission,
 	)
 	return out, nil
 }
@@ -1481,15 +1501,17 @@ func recvSchemaMessageStream(ctx context.Context, stream *schema.StreamReader[*s
 	}
 }
 
-func buildEinoRunResultFromAccumulated(
+// buildEinoRunResult deliberately never recovers a submission from history.
+// Historical recovery is a separate draft-only operation in report_delivery.go.
+func buildEinoRunResult(
 	orchMode string,
-	runAccumulatedMsgs []adk.Message,
 	persistMsgs []adk.Message,
 	lastAssistant string,
 	lastPlanExecuteExecutor string,
 	emptyHint string,
 	mcpIDs []string,
 	partial bool,
+	submission *einoReportSubmission,
 ) *RunResult {
 	traceForJSON := persistMsgs
 	traceJSON := ""
@@ -1507,15 +1529,14 @@ func buildEinoRunResultFromAccumulated(
 			cleaned = UnwrapPlanExecuteUserText(cleaned)
 		}
 	}
-	// exit 报告回填：监督者常把过程性文字（planning/进度/思考）作为助手正文流出，真正的正式
-	// 报告只写在 exit.final_result 里。若仅当正文为空才回填，一段几十字的过程片段就会顶掉报告，
-	// 用户在网页上只能点开 exit 工具卡片才能看到交付物（且数据库里也没有报告消息）。
-	// 因此这里同时覆盖「正文为空」和「正文只是短片段、而 exit 报告明显更完整」两种情况。
-	if fb := strings.TrimSpace(einoExtractFallbackAssistantFromMsgs(runAccumulatedMsgs)); fb != "" && shouldPreferExitReport(cleaned, fb) {
-		cleaned = fb
+	if submission != nil && submission.submitted {
+		// A newly executed root exit wins regardless of draft/report length.
+		// Even an empty successful exit must not resurrect an earlier report.
+		cleaned = strings.TrimSpace(submission.report)
+	} else {
+		cleaned = dedupeRepeatedParagraphs(cleaned, 80)
+		cleaned = dedupeParagraphsByLineFingerprint(cleaned, 100)
 	}
-	cleaned = dedupeRepeatedParagraphs(cleaned, 80)
-	cleaned = dedupeParagraphsByLineFingerprint(cleaned, 100)
 	// 防止超长响应导致 JSON 序列化慢或 OOM（多代理拼接大量工具输出时可能触发）。
 	const maxResponseRunes = 100000
 	if rs := []rune(cleaned); len(rs) > maxResponseRunes {
@@ -1528,10 +1549,15 @@ func buildEinoRunResultFromAccumulated(
 		resp = emptyHint
 	}
 	out := &RunResult{
-		Response:             resp,
-		MCPExecutionIDs:      mcpIDs,
-		LastAgentTraceInput:  traceJSON,
-		LastAgentTraceOutput: lastOut,
+		Response:                 resp,
+		MCPExecutionIDs:          mcpIDs,
+		LastAgentTraceInput:      traceJSON,
+		LastAgentTraceOutput:     lastOut,
+		ReportSubmissionRequired: orchMode == "deep" || orchMode == "supervisor",
+	}
+	if submission != nil && submission.submitted {
+		out.ReportSubmitted = true
+		out.SubmittedReport = submission.report
 	}
 	if !partial && out.Response == "" {
 		out.Response = emptyHint
@@ -1552,125 +1578,31 @@ func markModelFacingTraceForPersistence(msgs []adk.Message) []adk.Message {
 	return out
 }
 
-// einoExitReportPreferMaxCurrentRunes 正文短于该长度时视为「过程性片段」而非正式交付，
-// 此时若 exit 报告明显更完整，就用 exit 报告作为用户可见回复。
-const einoExitReportPreferMaxCurrentRunes = 600
-
-// einoExitReportPreferMinGrowthRunes exit 报告相对正文至少要多的字符数，避免用简报覆盖正文。
-const einoExitReportPreferMinGrowthRunes = 200
-
-// shouldPreferExitReport 判断是否改用 exit 报告作为用户可见正文。
-//
-// 采用条件（任一）：
-//   - 当前正文为空：沿用原有兜底语义。
-//   - 当前正文只是短片段（<= einoExitReportPreferMaxCurrentRunes 字符），
-//     且 exit 报告明显更完整（至少 2 倍且多出 einoExitReportPreferMinGrowthRunes 字符）。
-//
-// 正文已经足够长时一律保留，避免模型已经自行输出完整交付物反而被 exit 摘要覆盖。
-func shouldPreferExitReport(current, exitReport string) bool {
-	cur := strings.TrimSpace(current)
-	rep := strings.TrimSpace(exitReport)
-	if rep == "" {
-		return false
-	}
-	if cur == "" {
-		return true
-	}
-	curRunes := len([]rune(cur))
-	repRunes := len([]rune(rep))
-	if curRunes > einoExitReportPreferMaxCurrentRunes {
-		return false
-	}
-	return repRunes >= curRunes*2 && repRunes-curRunes >= einoExitReportPreferMinGrowthRunes
-}
-
-// einoExtractFallbackAssistantFromMsgs 在「主通道未产出可用交付正文」时，从 Eino ADK 轨迹中回填用户可见回复。
-// 可用交付正文的判定见 shouldPreferExitReport（正文为空，或只是过程性短片段）。
-// 典型场景：监督者仅调用 exit（final_result 落在 Tool 消息中），或工具结果已写入历史但 lastAssistant 未更新。
-//
-// 优先级：最后一次 exit 工具输出 → 最后一条含 exit 的助手 tool_calls 参数中的 final_result。
+// einoExtractFallbackAssistantFromMsgs recovers only a historical draft within
+// the current user request. Internal repair instructions do not start a request.
+// It cannot submit a report, trusts no unexecuted tool-call arguments and requires
+// live-root provenance before using an exit result (legacy unscoped exits are
+// ambiguous). Runtime result construction intentionally does not call it.
 func einoExtractFallbackAssistantFromMsgs(msgs []adk.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		if m == nil || m.Role != schema.Tool {
+		if m == nil {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(m.ToolName), adk.ToolInfoExit.Name) {
-			continue
+		if m.Role == schema.User {
+			if isReportRecoveryInstruction(m.Content) {
+				continue
+			}
+			break
 		}
-		content := strings.TrimSpace(m.Content)
-		if content == "" || strings.HasPrefix(content, einomcp.ToolErrorPrefix) {
-			continue
+		if report := historicalRootExitReport(m); report != "" {
+			return report
 		}
-		return content
-	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m == nil || m.Role != schema.Assistant {
-			continue
-		}
-		if s := einoExtractExitFinalFromAssistantToolCalls(m); s != "" {
-			return s
+		if m.Role == schema.Assistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) != "" {
+			return strings.TrimSpace(m.Content)
 		}
 	}
 	return ""
-}
-
-func einoExtractExitFinalFromAssistantToolCalls(msg *schema.Message) string {
-	if msg == nil || len(msg.ToolCalls) == 0 {
-		return ""
-	}
-	for i := len(msg.ToolCalls) - 1; i >= 0; i-- {
-		tc := msg.ToolCalls[i]
-		if !strings.EqualFold(strings.TrimSpace(tc.Function.Name), adk.ToolInfoExit.Name) {
-			continue
-		}
-		if s := einoParseExitFinalResultArguments(tc.Function.Arguments); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-func einoParseExitFinalResultArguments(arguments string) string {
-	arguments = strings.TrimSpace(arguments)
-	if arguments == "" {
-		return ""
-	}
-	var wrap struct {
-		FinalResult json.RawMessage `json:"final_result"`
-	}
-	if err := json.Unmarshal([]byte(arguments), &wrap); err != nil || len(wrap.FinalResult) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(wrap.FinalResult, &s); err == nil {
-		return strings.TrimSpace(s)
-	}
-	// 修复：如果 final_result 是对象或其他类型，尝试序列化为格式化的 JSON 字符串
-	var anyVal interface{}
-	if err := json.Unmarshal(wrap.FinalResult, &anyVal); err != nil {
-		return ""
-	}
-	// 如果是字符串类型，直接返回
-	if strVal, ok := anyVal.(string); ok {
-		return strings.TrimSpace(strVal)
-	}
-	// 否则格式化为可读的 JSON（缩进2空格）
-	b, err := json.MarshalIndent(anyVal, "", "  ")
-	if err != nil {
-		// 降级：尝试不缩进的 JSON
-		b, err = json.Marshal(anyVal)
-		if err != nil {
-			return ""
-		}
-	}
-	result := strings.TrimSpace(string(b))
-	// 确保返回的内容不为空 JSON 对象/数组
-	if result == "{}" || result == "[]" || result == "null" {
-		return ""
-	}
-	return result
 }
 
 func buildEinoCheckpointID(orchMode string) string {

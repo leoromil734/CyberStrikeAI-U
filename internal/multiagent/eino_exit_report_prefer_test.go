@@ -8,7 +8,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// einoTestReport 生成一份「不同行内容互不重复」的类报告文本，避免触发去重逻辑。
+// einoTestReport avoids repeated lines so draft de-duplication is not involved.
 func einoTestReport(n int) string {
 	var b strings.Builder
 	b.WriteString("## 结论\n\n")
@@ -18,69 +18,53 @@ func einoTestReport(n int) string {
 	return b.String()
 }
 
-func TestShouldPreferExitReport(t *testing.T) {
-	report := einoTestReport(60)
-	cases := []struct {
-		name    string
-		current string
-		report  string
-		want    bool
-	}{
-		{"正文为空则采用报告", "", report, true},
-		{"正文只是过程性短片段则采用报告", "作者页只暴露了 admin 这个登录名，用户列表接口是 403。我再补匿名基线。", report, true},
-		{"正文已足够长则保留正文", einoTestReport(40), report, false},
-		{"报告过短不覆盖正文", "一段简短的过程文字", "简报", false},
-		{"没有报告则保留正文", "一段简短的过程文字", "", false},
-		{"长度接近则保留正文", strings.Repeat("y", 500), strings.Repeat("x", 600), false},
-		{"增幅不足阈值则保留正文", strings.Repeat("y", 600), strings.Repeat("x", 700), false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldPreferExitReport(tc.current, tc.report); got != tc.want {
-				t.Fatalf("shouldPreferExitReport() = %v, want %v", got, tc.want)
-			}
-		})
+func TestBuildEinoRunResultSubmittedReportWinsRegardlessOfLength(t *testing.T) {
+	for _, draft := range []string{"", "本轮正在核对证据。", einoTestReport(80)} {
+		report := "\n" + einoTestReport(5) + "\n"
+		trace := []*schema.Message{schema.UserMessage("current request"), schema.AssistantMessage(draft, nil)}
+		out := buildEinoRunResult("deep", trace, draft, "", "empty", nil, false,
+			&einoReportSubmission{submitted: true, report: report})
+		if !out.ReportSubmitted || out.SubmittedReport != report || out.Response != strings.TrimSpace(report) {
+			t.Fatalf("submitted report lost to draft: %#v", out)
+		}
+		if out.LastAgentTraceOutput != out.Response || out.LastAgentTraceInput == "" {
+			t.Fatal("report preference must retain the trace")
+		}
+		if out.Finalized || out.EvidenceVerified || out.Status == "completed" {
+			t.Fatal("submission is not coverage verification or finalization")
+		}
 	}
 }
 
-// 复现线上问题：监督者把过程性文字流成助手正文，正式报告只在 exit.final_result 里。
-// 修复前该报告不会成为用户可见回复（网页上看不到、数据库里也没有这条消息）。
-func TestBuildEinoRunResult_surfacesExitReportOverProgressFragment(t *testing.T) {
-	report := einoTestReport(60)
-	progress := "作者页只暴露了 admin 这个登录名，用户列表接口是 403。我再对文档和配置类接口做匿名基线。"
-	msgs := []*schema.Message{
-		schema.UserMessage("对 example.com 做全面、完整、深度测试"),
-		toolExitMsg(report, "call-exit-1"),
+func TestBuildEinoRunResultHistoryCannotSubmit(t *testing.T) {
+	report := einoTestReport(30)
+	trace := []*schema.Message{schema.UserMessage("current request"), historicalExitMsg(report, "old-exit")}
+	out := buildEinoRunResult("deep", trace, "current draft", "", "empty", nil, false, nil)
+	if out.ReportSubmitted || out.SubmittedReport != "" || out.Response != "current draft" {
+		t.Fatalf("history was promoted into a submission: %#v", out)
 	}
-	out := buildEinoRunResultFromAccumulated("deep", msgs, msgs, progress, "", "empty hint", nil, false)
-	if strings.TrimSpace(out.Response) != strings.TrimSpace(report) {
-		t.Fatalf("期望回填 exit 报告，实际得到 %q", out.Response)
+	out = buildEinoRunResult("deep", trace, "", "", "empty", nil, false, nil)
+	if out.Response != "empty" || out.ReportSubmitted {
+		t.Fatalf("empty live output resurrected an old exit: %#v", out)
 	}
 }
 
-// 模型已经自行输出了完整正文时，不能被 exit 摘要覆盖。
-func TestBuildEinoRunResult_keepsLongAssistantText(t *testing.T) {
-	report := einoTestReport(5)
-	long := einoTestReport(40)
-	msgs := []*schema.Message{
-		schema.UserMessage("hi"),
-		toolExitMsg(report, "call-exit-1"),
+func TestBuildEinoRunResultSubmittedOriginalIsNotDeduplicatedOrTruncated(t *testing.T) {
+	report := strings.Repeat("原始提交内容不能被去重或丢失。\n\n", 9000)
+	out := buildEinoRunResult("deep", nil, einoTestReport(40), "", "empty", nil, false,
+		&einoReportSubmission{submitted: true, report: report})
+	if !out.ReportSubmitted || out.SubmittedReport != report {
+		t.Fatal("submitted original was modified")
 	}
-	out := buildEinoRunResultFromAccumulated("deep", msgs, msgs, long, "", "empty hint", nil, false)
-	if strings.TrimSpace(out.Response) != strings.TrimSpace(long) {
-		t.Fatalf("长正文应被保留，实际得到 %q", out.Response)
+	if !strings.Contains(out.Response, "响应已截断") || !strings.HasPrefix(report, strings.Split(out.Response, "\n\n... (response truncated")[0]) {
+		t.Fatal("display may be bounded, but must use the actual submitted report")
 	}
 }
 
-// 正文为空且存在 exit 报告时，保持既有兜底行为。
-func TestBuildEinoRunResult_emptyAssistantStillUsesExitReport(t *testing.T) {
-	report := einoTestReport(60)
-	msgs := []*schema.Message{
-		schema.UserMessage("hi"),
-		toolExitMsg(report, "call-exit-1"),
-	}
-	out := buildEinoRunResultFromAccumulated("deep", msgs, msgs, "", "", "empty hint", nil, false)
-	if strings.TrimSpace(out.Response) != strings.TrimSpace(report) {
-		t.Fatalf("期望回填 exit 报告，实际得到 %q", out.Response)
+func TestBuildEinoRunResultEmptySubmissionDoesNotResurrectDraft(t *testing.T) {
+	out := buildEinoRunResult("deep", nil, einoTestReport(30), "", "empty", nil, false,
+		&einoReportSubmission{submitted: true})
+	if !out.ReportSubmitted || out.SubmittedReport != "" || out.Response != "empty" {
+		t.Fatalf("empty exit incorrectly reused a draft: %#v", out)
 	}
 }

@@ -37,7 +37,7 @@ subfinder example.com: raw=120 unique=98 incremental=98 status=covered
 
 规则：
 
-- 工具成功但增量为 0 → `status=covered`，`incremental=0`（不是 gap）。
+- 工具成功且完成所选候选集、增量为 0 → `status=covered`，`incremental=0`（不是 gap）；目录扫描超时/限流/中断而未完成时，即使进程成功退出也留 `gap/blocked`，附实际进度与剩余范围。
 - 工具失败/未装 → `status=blocked`，`error` 非空，且 `alt_tried` 至少一项或说明无可用替代。
 - 尚未执行 → 不得写 covered；保持 gap 或不写该 key。
 
@@ -77,7 +77,7 @@ blockers: <原始错误与替代路径；无则 none>
 - `recon/source/oneforall/*` 或等价异构子域来源的 blocked 记录
 - `recon/source/dnsx/*`（covered 或 blocked+alt）
 
-且 `frontend_api` 标 `passed` 前：资源队列无 `queued/fetched` 未处理项，端点均有 `runtime_status`。
+且 `frontend_api` 标 `passed` 前：资源队列无 `queued/fetched` 未处理项，端点均有 `runtime_status`。适用 Web 范围的目录/文件发现还须有完成所选候选集、同范围有效证据复用，或具体 `blocked`/`not-applicable` 证据；仅爬取/JS 提取不算目录覆盖，超时/限流/中断未完成保持 `gap/blocked`。沿用 `recon/source/*` 记录实际使用工具与执行引用，不把必须调用某个工具当覆盖证明；字段与复用边界见 `comprehensive-recon.md` §3.1。
 
 ## 5. 信息收集角色退出门禁
 

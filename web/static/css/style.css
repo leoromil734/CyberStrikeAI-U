@@ -43966,7 +43966,19 @@ html[data-theme="dark"] #project-panel-assets .projects-panel-pagination.paginat
 }
 
 /* ===== 最终回复治理（Finalization Contract）===== */
-/* 未通过 finalizer 的助手消息弱化为「候选中」视觉，避免被误认为最终结论。 */
+.report-delivery-label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.report-delivery-label[data-delivery-kind="partial_report"] {
+    color: #b45309;
+}
+html[data-theme="dark"] .report-delivery-label[data-delivery-kind="partial_report"] {
+    color: #fbbf24;
+}
+/* 覆盖未通过的消息使用提示色；阶段报告仍是未完成评估，不使用成功态。 */
 .message.assistant.assistant-not-finalized .message-bubble {
     border-color: rgba(245, 124, 0, 0.30);
     background: linear-gradient(90deg, rgba(245, 124, 0, 0.07), rgba(245, 124, 0, 0.03));

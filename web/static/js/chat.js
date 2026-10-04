@@ -3159,6 +3159,26 @@ window.bindProcessDetailsLazyHint = bindProcessDetailsLazyHint;
 
 // 渲染过程详情
 // options.append=true 时分页追加；options.markLoaded=false 时保留 lazy 标记（分页加载中）
+function historicalAssistantContent(message) {
+    const content = message && message.content != null ? message.content : '';
+    // 已保存正文是权威来源。过程中的 draft、检查摘要和错误不能替换阶段报告。
+    if (content !== '处理中...') return content;
+    const details = Array.isArray(message.processDetails) ? message.processDetails : [];
+    for (let i = details.length - 1; i >= 0; i--) {
+        if (details[i].eventType === 'error' || details[i].eventType === 'cancelled') return details[i].message || content;
+    }
+    return content;
+}
+
+function restoreHistoricalAssistantMessage(element, message) {
+    if (!element) return;
+    const content = message && typeof message.content === 'string' ? message.content.trim() : '';
+    element.dataset.persistedAssistantBody = content && content !== '处理中...' && content !== '…' ? 'true' : 'false';
+    if (typeof window.restoreAssistantDeliveryState === 'function') {
+        window.restoreAssistantDeliveryState(element, message && message.processDetails);
+    }
+}
+
 function renderProcessDetails(messageId, processDetails, options) {
     const renderOpts = options || {};
     const appendMode = !!renderOpts.append;
@@ -3174,6 +3194,10 @@ function renderProcessDetails(messageId, processDetails, options) {
     const messageElement = document.getElementById(messageId);
     if (!messageElement) {
         return;
+    }
+    if (Array.isArray(processDetails) && typeof window.restoreAssistantDeliveryState === 'function'
+        && (!prependMode || !messageElement.dataset.deliveryKind)) {
+        window.restoreAssistantDeliveryState(messageElement, processDetails);
     }
     const isLazyRequest = (processDetails === null);
     const reasoningFromMessage = getMessageReasoningContent(messageElement);
@@ -3444,12 +3468,15 @@ function renderProcessDetails(messageId, processDetails, options) {
             itemTitle = agPx + '🤔 ' + (typeof window.t === 'function' ? window.t('chat.aiThinking') : 'AI思考');
         } else if (eventType === 'reasoning_chain') {
             itemTitle = agPx + '🔗 ' + (typeof window.t === 'function' ? window.t('chat.reasoningChain') : '推理过程');
-        } else if (eventType === 'planning') {
+        } else if (eventType === 'planning' || eventType === 'response') {
             if (typeof window.einoMainStreamPlanningTitle === 'function') {
                 itemTitle = window.einoMainStreamPlanningTitle(data);
             } else {
-                itemTitle = agPx + '📝 ' + (typeof window.t === 'function' ? window.t('chat.planning') : '规划中');
+                itemTitle = agPx + '📝 候选输出（尚未交付）';
             }
+        } else if (eventType === 'finalization_check') {
+            itemTitle = typeof window.finalizationCheckTitle === 'function'
+                ? window.finalizationCheckTitle(data) : '最终回复检查';
         } else if (eventType === 'tool_calls_detected') {
             itemTitle = agPx + '🔧 ' + (typeof window.t === 'function' ? window.t('chat.toolCallsDetected', { count: data.count || 0 }) : '检测到 ' + (data.count || 0) + ' 个工具调用');
         } else if (eventType === 'tool_call') {
@@ -5271,16 +5298,7 @@ async function loadConversation(conversationId) {
                 if (msg.role === 'user' && isInterruptContinueInjectChatMessage(msg.content)) {
                     return;
                 }
-                let displayContent = msg.content;
-                if (msg.role === 'assistant' && msg.content === '处理中...' && msg.processDetails && msg.processDetails.length > 0) {
-                    for (let i = msg.processDetails.length - 1; i >= 0; i--) {
-                        const detail = msg.processDetails[i];
-                        if (detail.eventType === 'error' || detail.eventType === 'cancelled') {
-                            displayContent = detail.message || msg.content;
-                            break;
-                        }
-                    }
-                }
+                const displayContent = msg.role === 'assistant' ? historicalAssistantContent(msg) : msg.content;
 
                 // 消息时间口径：
                 // - user: createdAt 即可（发送后不会再更新）
@@ -5295,6 +5313,7 @@ async function loadConversation(conversationId) {
                     attachDeleteTurnButton(messageEl);
                 }
                 if (msg.role === 'assistant') {
+                    restoreHistoricalAssistantMessage(messageEl, msg);
                     if (messageEl && msg.reasoningContent) {
                         setMessageReasoningContent(messageEl, msg.reasoningContent);
                     }

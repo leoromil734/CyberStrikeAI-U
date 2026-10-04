@@ -3,7 +3,7 @@ name: attack-surface-recon
 description: >-
   攻击面测绘 / 信息收集 / 侦察 / recon / OSINT / 子域名枚举 / DNS / 端口存活 / httpx /
   资产发现 / JS API 提取 / 目录参数 / 证书透明度 / FOFA Shodan ZoomEye Quake /
-  wayback / katana / jsapiscan / arjun / x8 / ffuf / 覆盖账本 / recon fact /
+  wayback / katana / jsapiscan / dirsearch / arjun / x8 / ffuf / 覆盖账本 / recon fact /
   退出门禁 / Deep 硬闸门。用于 Surface、摸底、打点前资产清单、阶段 ledger；
   用户说「信息收集」「收集信息」「侦察」「找资产」「扫子域」「全面侦察」
   「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
@@ -31,7 +31,7 @@ metadata:
 2. `dnsx` 清洗与通配基线；逐 IP 记录 CDN/范围证据，已证实 CDN 边缘不扩裸 IP；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，共享 IP 不推定归属。细节见 comprehensive-recon.md §2.1。
 3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。`shodan_search`/`zoomeye_search`/`quake_search` 按可用性补缺，不替代首步 FOFA。
 4. Web：`katana`/`gau`/`waybackurls` + JS/`jsapiscan` + 实际 `grep/rg` 检索全部原源码 → 合并 `recon/endpoint/*`；命令与两路证据见 comprehensive-recon.md §4。
-5. 参数/路径：`arjun`/`x8`/`ffuf`（可补 `gobuster`/`dirsearch`/`feroxbuster`），先建 SPA catch-all 基线。
+5. 目录、文件和扩展名枚举优先 `dirsearch`；参数、虚拟主机和自定义请求模糊测试优先 `ffuf`，隐藏参数用 `arjun`/`x8`。未链接路径尚未覆盖或发现需继续枚举的目录时做有界目录发现；先建 SPA catch-all 基线，同范围、认证态和候选集已有充分有效证据可引用复用，否则执行或留具体 blocked/N/A 理由（见 comprehensive-recon.md §3.1）。
 6. `nuclei` 仅 tentative，禁止直接 `record_vulnerability`。
 
 ### 系统工具补全速查
@@ -43,7 +43,8 @@ metadata:
 | DNS | `dnsx` | `dnsenum`/`fierce` |
 | HTTP/端口 | `httpx`、`naabu` | `nmap`/`masscan`/`fscan` |
 | 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsapiscan` | — |
-| 参数 | `arjun`、`x8`、`ffuf` | 目录爆破工具 |
+| 目录/文件/扩展名 | `dirsearch` | `ffuf` 等价有界扫描 |
+| 参数/虚拟主机/自定义请求模糊测试 | `ffuf` | `arjun`/`x8` 仅补隐藏参数 |
 | 落库 | `upsert_project_fact` | `list_project_facts`/`search_project_facts` |
 
 ### 触发衔接
@@ -76,5 +77,7 @@ host_list   → 去重 → DNS/HTTP 批处理
 ## 交付与退出门禁
 
 输出 Source Coverage、Assets、Live Services、Entry Points、Top-N、增量、Do-Not-Repeat、Gaps。
+
+完成状态以证据与所选候选集为准：目录发现仅爬取/JS 提取不算覆盖，超时未完成留 gap/blocked；同范围有效证据可以复用，不要求凑齐扫描器调用次数。
 
 **全面/Deep 侦察只有在以下账本**满足 `recon-fact-schema` 硬闸门时才可结案；高价值 gap 存在时不得结案。

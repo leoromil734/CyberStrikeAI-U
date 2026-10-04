@@ -46,6 +46,17 @@ value = business_criticality + auth_or_admin + data_sensitivity
 - 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 密码入口交接 `credential-stuffing` 做一轮简单弱口令，不能仅以“不爆破”跳过。每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒；命中/验证码/MFA/锁定/429/异常即停。产品默认对和简单口令共用预算；协议无密码能力须证据 N/A，缺身份或策略阻断记 blocked。逐项保存实际次数、字典/hash、停止原因；未测不能记 covered。字典与详细方法见根路径 `skills/credential-stuffing/references/lite-wordlists.md`。
 
 
+### 3.1 目录、文件与扩展名覆盖
+
+本节适用于任务范围内的 Web 攻击面发现，不把离线审阅、非 HTTP 目标或单接口验证扩展成全站扫描。
+
+- **分工与触发**：目录、文件和扩展名枚举优先 `dirsearch`；参数、虚拟主机和自定义请求模糊测试优先 `ffuf`。爬取/JS 之外的未链接路径尚未覆盖，或发现需继续枚举的目录时，必须执行有界目录发现，或记录具体 `blocked`/`not-applicable` 理由及证据。仅爬取/JS 提取不能证明未链接目录和文件已覆盖。
+- **证据复用**：同一 origin（协议/主机/端口）、路径范围、认证态、字典/扩展名及过滤条件已有充分且仍有效的扫描证据时，引用原 `execution_id`/工件并说明适用范围，可复用 `ffuf` 等价目录扫描，不为调用次数重复运行 `dirsearch`。不同部署、认证态、新目录或未完成候选集不能继承覆盖，只补实际缺口。
+- **基线与过滤**：先以同一认证态请求 2–3 个随机不存在路径，保存状态、长度、正文特征/hash 与重定向。确认统一页后按实测 `exclude_sizes`、`exclude_text`、`exclude_regex` 或 `exclude_response` 过滤；后者是已验证不存在页面的站内路径，不是本地文件。不猜过滤值，不一概排除 401/403/405/500，不能用 SPA shell 批量否定 JS 真实接口。
+- **有界执行**：选定小字典与技术栈相关扩展名，明确并发、速率、单请求超时、总时限和递归深度。`dirsearch` 默认 20 线程、50 请求/秒、单请求 10 秒、总时限 300 秒、不递归；需要递归时深度默认 2。用户更严预算优先；429、持续挑战或健康异常停止该轮。`extensions` 默认仅替换 `%EXT%`，没有占位符的小字典确需补扩展名时才显式 `force_extensions`。首选工具不可用时，在角色工具范围内用等价工具并记录原因。
+- **覆盖记录**：使用 `recon/source/{assessment_id}/{tool}/{target_id}`（未绑定项目时在交付中列出同等记录），保留目标/路径/认证态、实际字典路径及 hash/候选数、扩展名、基线、过滤、预算、实际进度、停止原因、原始结果和执行引用。`covered` 只表示完成所选候选集，不表示所有目录存在性已穷尽；完整跑完且零新增可以是该范围负结果。
+- **未完成与交接**：超时、限流、中断或缺依赖导致候选集未完成时留 `gap/blocked` 和剩余范围，即使进程返回成功也不能写全覆盖。`not-applicable` 必须有任务范围或协议/能力证据，已有很多接口、单次 404、统一页面不构成理由。先验证已有就绪候选，再补独立目录缺口；续跑只补剩余候选，不重复相同批次。缺口复核前，每个适用 Web 范围均须有执行、复用或具体阻断/不适用证据。
+
 ## 4. JS 与 API 清单
 
 1. 从入口 HTML、manifest、preload/prefetch、动态 import、worker/service worker 收集所有脚本，维护 `queued → fetched → analyzed → references-expanded` 状态；递归跟进新增 chunk，直到队列为空或每个失败项有原始 blocked 证据。
@@ -105,7 +116,7 @@ phase.status ∈ pending | active | passed | blocked
 | --- | --- |
 | recon_sources | 强制工具与异构来源的状态、raw/unique/incremental 计数、DNS 通配基线 |
 | asset_ranking | 所有确认范围内存活资产均有维度分与价值理由；每个解析 IP 有 CDN 分类/范围证据，范围内非 CDN IP 已独立扩测或具体 blocked |
-| frontend_api | 资源队列无未处理项；全部已下载源码有工具 + grep/rg 两路证据与增量统计，动态项已闭合或 blocked；端点保留来源 JS |
+| frontend_api | 资源队列无未处理项；全部已下载源码有工具 + grep/rg 两路证据与增量统计，动态项已闭合或 blocked；端点保留来源 JS；适用目录/文件覆盖有完成、复用或具体 blocked/N/A 证据（§3.1） |
 | auth_workflows | 注册/登录入口均分类；允许时完成匿名/账号 A/可行账号 B；Web/SSH/数据库/邮件密码入口均有简单弱口令次数、停止原因与终态，或逐项证据阻断 |
 | risk_matrix | 每个高价值端点有适用风险族，候选进入 confirmed/negated/blocked 终态 |
 | gap_review | 无当前授权和工具能力内可执行的高价值 `gap/tentative` |

@@ -345,7 +345,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 			segmentCancel()
 			return
 		}
@@ -363,7 +363,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"messageId":      assistantMessageID,
 				"errorType":      "timeout",
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 			segmentCancel()
 			return
 		}
@@ -380,7 +380,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			"conversationId": conversationID,
 			"messageId":      assistantMessageID,
 		})
-		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
 		segmentCancel()
 		return
 	}
@@ -392,7 +392,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	taskStatus = finalizationDecision.Status
 	h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 	// 最终回复治理：decision 已在主循环内判定，此处只负责落库与交付。
-	h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_single", cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
+	finalizationDecision = h.persistFinalizationDecision(conversationID, assistantMessageID, "eino_single", cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), finalizationDecision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
@@ -516,7 +516,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 
 	decision = finalizationStoppedDecision(decision, &finalizationAutoContinueAttempt)
 	applyFinalizationDecisionToResult(result, decision)
-	h.persistFinalizationDecision(prep.ConversationID, prep.AssistantMessageID, "eino_single", result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
+	decision = h.persistFinalizationDecision(prep.ConversationID, prep.AssistantMessageID, "eino_single", result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
 		_ = h.db.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput)
 	}
@@ -529,6 +529,10 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		"response":            responseText,
 		"finalized":           decision.Finalized,
 		"finalizable":         decision.Finalizable,
+		"deliveryAvailable":   decision.DeliveryAvailable,
+		"deliveryKind":        decision.DeliveryKind,
+		"runTerminated":       decision.RunTerminated,
+		"deliveryText":        decision.DeliveryText,
 		"status":              decision.Status,
 		"completionReason":    decision.CompletionReason,
 		"missingChecks":       decision.MissingChecks,

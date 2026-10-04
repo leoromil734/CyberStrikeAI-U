@@ -11,18 +11,13 @@ import (
 )
 
 func TestBuildEinoRunResultNeverPersistsRawAccumulationWithoutModelFacingTrace(t *testing.T) {
-	raw := []schema.Message{*schema.ToolMessage(strings.Repeat("raw-tool-output", 1000), "call-1")}
-	rawMsgs := make([]*schema.Message, len(raw))
-	for i := range raw {
-		rawMsgs[i] = &raw[i]
-	}
-	result := buildEinoRunResultFromAccumulated("deep", rawMsgs, nil, "", "", "empty", nil, true)
+	result := buildEinoRunResult("deep", nil, "", "", "empty", nil, true, nil)
 	if result.LastAgentTraceInput != "" {
 		t.Fatalf("pre-model raw accumulation must not be persisted: %d bytes", len(result.LastAgentTraceInput))
 	}
 
 	modelFacing := []*schema.Message{schema.UserMessage("bounded-model-view")}
-	result = buildEinoRunResultFromAccumulated("deep", rawMsgs, modelFacing, "ok", "", "empty", nil, false)
+	result = buildEinoRunResult("deep", modelFacing, "ok", "", "empty", nil, false, nil)
 	if !strings.Contains(result.LastAgentTraceInput, "bounded-model-view") {
 		t.Fatalf("model-facing trace missing: %s", result.LastAgentTraceInput)
 	}

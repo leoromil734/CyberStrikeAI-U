@@ -45,6 +45,12 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	preferFinalReport bool,
 	progressCallback func(eventType, message string, data interface{}),
 ) bool {
+	if result != nil && result.ReportSubmitted {
+		// A successful root exit closes this run even when its submitted text
+		// is empty or incomplete. The finalizer will deliver a partial report,
+		// not reopen the model under the empty-response retry policy.
+		return false
+	}
 	inject, continueKind := multiagent.EinoResponseContinueInstruction(result, preferFinalReport)
 	if agentRunContextError(taskCtx) != nil {
 		return false

@@ -712,7 +712,14 @@ type ChatResponse struct {
 	ConversationID  string    `json:"conversationId"`            // 对话ID
 	Time            time.Time `json:"time"`
 
-	// 最终回复治理终态字段：response 只是当 finalized=true 时才是可交付结论。
+	// A partial report is deliverable only with explicit stopped-run metadata;
+	// it never implies successful/complete assessment.
+	DeliveryAvailable bool   `json:"deliveryAvailable"`
+	DeliveryKind      string `json:"deliveryKind,omitempty"`
+	RunTerminated     bool   `json:"runTerminated"`
+	DeliveryText      string `json:"deliveryText,omitempty"`
+
+	// 最终回复治理终态字段：只有 finalized=true 才是通过门禁的完整交付。
 	Finalized           bool     `json:"finalized"`
 	Finalizable         bool     `json:"finalizable,omitempty"`
 	Status              string   `json:"status,omitempty"`

@@ -1,66 +1,126 @@
 name: "dirsearch"
 command: "dirsearch"
 enabled: true
-short_description: "高级目录和文件发现工具"
+short_description: "目录、文件和扩展名枚举首选；有界补齐爬取/JS 未覆盖的路径，支持 catch-all 过滤"
 description: |
-  Dirsearch是一个高级Web内容扫描器，用于发现目录和文件。
+  Dirsearch 用于 Web 目录、文件和扩展名枚举；参数、虚拟主机和自定义请求模糊测试优先使用 ffuf。
 
-  **主要功能：**
-  - 快速目录和文件发现
-  - 多线程支持
-  - 递归扫描
-  - 扩展名过滤
+  **触发与复用：**
+  - 在任务包含 Web 攻击面发现时，爬取/JS 之外的未链接路径尚未覆盖，或发现需要继续枚举的目录，就执行有界目录发现；仅爬取/JS 提取不能替代这项覆盖
+  - 相同 origin（协议/主机/端口）、路径范围、认证态和字典/扩展名已有充分且仍有效的扫描证据时可复用，包括 ffuf 的等价目录扫描；引用执行记录，不为调用次数重复扫描
+  - 缺工具、网络或策略限制记录 blocked 与原始原因；不适用必须有范围或能力证据，不能只说已有很多接口
 
-  **使用场景：**
-  - Web应用安全测试
-  - 目录枚举
-  - 文件发现
-  - 渗透测试
+  **执行纪律：**
+  - 先对同一认证态的 2–3 个随机不存在路径建立 catch-all（不存在路径也返回统一页面）基线，比较状态、长度、正文特征与重定向
+  - 默认 20 线程、最多 50 请求/秒、单请求超时 10 秒、单次扫描最多 300 秒；用户更严预算优先。429、持续挑战或健康异常时停止该轮，记录剩余范围
+  - 优先经确认存在的小字典和技术栈相关扩展名；省略 wordlist 使用 dirsearch 自带字典，仍受时间/速率预算约束。extensions 默认只替换字典中的 %EXT%；小字典无占位符且确需补扩展名时才开启 force_extensions
+  - 默认不递归；已确认目录需要补枚举时才开启 recursive，并设置 max_recursion_depth（默认 2）；不无界递归
+  - 稳定统一页按实测 exclude_sizes、exclude_text、exclude_regex 或 exclude_response 过滤；exclude_response 填已验证随机不存在页面的站内路径，不是本地文件。不要猜过滤值，不一概排除 401/403/405/500，不用统一页面批量否定真实 JS/API
+  - 保存实际字典/扩展名、基线、过滤条件、预算、停止原因、结果与执行引用。完成所选候选集且零新增才是该范围负结果；超时/限流/中断未完成必须保留 gap/blocked，不能写全覆盖
 parameters:
   - name: "url"
     type: "string"
-    description: "目标URL"
+    description: "范围内目标 URL 或已确认需要继续枚举的目录 URL；不使用 FUZZ 占位符"
     required: true
     flag: "-u"
     format: "flag"
   - name: "extensions"
     type: "string"
-    description: "文件扩展名（逗号分隔）"
+    description: "文件扩展名（逗号分隔），优先按技术栈缩小；默认仅替换字典中的 %EXT%，不是自动给每个条目追加扩展名"
     required: false
     flag: "-e"
     format: "flag"
     default: "php,html,js,txt,xml,json"
+  - name: "force_extensions"
+    type: "bool"
+    description: "给每个字典条目追加 extensions；仅在小字典无 %EXT% 且确需扩展名枚举时开启，会扩大候选集"
+    required: false
+    flag: "--force-extensions"
+    format: "flag"
+    default: false
   - name: "wordlist"
     type: "string"
-    description: "字典文件路径"
+    description: "单个真实存在的字典文件路径，优先小字典；省略时使用 dirsearch 自带字典，不猜安装路径"
     required: false
+    existing_file: true
     flag: "-w"
     format: "flag"
   - name: "threads"
     type: "int"
-    description: "线程数"
+    description: "并发线程数；默认 20，目标限流或用户预算更严时降低"
     required: false
+    minimum: 1
     flag: "-t"
     format: "flag"
-    default: 30
+    default: 20
+  - name: "rate_limit"
+    type: "int"
+    description: "每秒最大请求数；默认 50，必须为正数，用户更严预算优先"
+    required: false
+    minimum: 1
+    flag: "--max-rate"
+    format: "flag"
+    default: 50
+  - name: "timeout"
+    type: "int"
+    description: "单请求超时（秒）；默认 10，不等于整轮扫描时限"
+    required: false
+    minimum: 1
+    flag: "--timeout"
+    format: "flag"
+    default: 10
+  - name: "max_time"
+    type: "int"
+    description: "单次扫描总时限（秒）；默认 300，必须为正数；到时未完成的候选集保留 gap/blocked"
+    required: false
+    minimum: 1
+    flag: "--max-time"
+    format: "flag"
+    default: 300
   - name: "recursive"
     type: "bool"
-    description: "启用递归扫描"
+    description: "对已确认需要补枚举的目录启用递归；配合 max_recursion_depth 与 max_time 限制范围"
     required: false
     flag: "-r"
     format: "flag"
     default: false
+  - name: "max_recursion_depth"
+    type: "int"
+    description: "启用递归时的最大深度；默认 2，必须为正数，不能传 0 开启无限深度"
+    required: false
+    minimum: 1
+    flag: "--max-recursion-depth"
+    format: "flag"
+    default: 2
+  - name: "exclude_sizes"
+    type: "string"
+    description: "过滤实测统一页响应大小，逗号分隔，例如 1234B,4KB；未建立稳定基线时省略"
+    required: false
+    flag: "--exclude-sizes"
+    format: "flag"
+  - name: "exclude_text"
+    type: "string"
+    description: "过滤包含实测统一页特征文本的响应；避免使用正常业务页也含有的通用文本"
+    required: false
+    flag: "--exclude-text"
+    format: "flag"
+  - name: "exclude_regex"
+    type: "string"
+    description: "过滤匹配实测统一页正文特征正则的响应；表达式须由基线得出，不猜过滤规则"
+    required: false
+    flag: "--exclude-regex"
+    format: "flag"
+  - name: "exclude_response"
+    type: "string"
+    description: "过滤与基准页面相似的响应；填已验证随机不存在页面的站内路径（如 __baseline_missing_7e3a），不是本地文件或任意外部 URL"
+    required: false
+    flag: "--exclude-response"
+    format: "flag"
   - name: "additional_args"
     type: "string"
     description: |
-      额外的dirsearch参数。用于传递未在参数列表中定义的dirsearch选项。
-
-      **示例值：**
-      - 根据工具特性添加常用参数示例
-
-      **注意事项：**
-      - 多个参数用空格分隔
-      - 确保参数格式正确，避免命令注入
-      - 此参数会直接追加到命令末尾
+      额外 dirsearch 选项，例如 --no-color；带空格的值需加引号。
+      优先使用已定义参数；不要重复覆盖 threads/rate_limit/timeout/max_time/max_recursion_depth，或用 --deep-recursive/--force-recursive 扩大本轮范围。
+      保留旧调用兼容，此字段不是预算强制隔离；具体选项先核对执行环境 dirsearch --help，不混用 ffuf 的 -mc/-ac/-fs。
     required: false
     format: "positional"
