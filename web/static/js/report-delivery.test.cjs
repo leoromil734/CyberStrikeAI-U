@@ -88,7 +88,7 @@ function domFixture() {
 const helpers = [
     'isFinalizedResponseData', 'isStoppedReportStatus', 'hasPendingReportWork', 'isPartialReportResponseData',
     'reportDeliveryLabel', 'getResponseDeliveryState', 'hasDeliveredAssistantContent', 'shouldPreserveAssistantBody',
-    'markAssistantDeliveryState', 'markAssistantFinalizationState', 'restoreAssistantDeliveryState',
+    'markAssistantDeliveryState', 'renderAssistantCandidateReport', 'markAssistantFinalizationState', 'restoreAssistantDeliveryState',
     'hasFinalizationContract', 'finalizationCheckTitle', 'finalizationReasonLabel', 'finalizationMissingCheckLabel',
     'compactStringList', 'finalizationNoticeMarkdown', 'einoMainStreamPlanningTitle', 'timelineAgentBracketPrefix',
     'isEinoEmptyResponsePlaceholder', 'resolveFinalAssistantResponseText'
@@ -133,13 +133,12 @@ for (const [name, overrides] of Object.entries({
     '无 kind': { deliveryKind: undefined }, '无 terminated': { runTerminated: undefined },
     '仍在运行': { runTerminated: false, status: 'running' }, '伪 terminated': { runTerminated: 'true' },
     '错误停止状态': { status: 'completed' }, '空报告': { deliveryText: '  ' }, '缺正文': { deliveryText: undefined },
-    '待完成工具': { pendingExecutionIds: ['tool-1'] }, '畸形 pending': { pendingExecutionIds: 'tool-1' },
+    '畸形 pending': { pendingExecutionIds: 'tool-1' },
     '待完成工具运行': { pendingToolRuns: [{ id: 'tool-run-1' }] },
     '字符串工具运行': { pendingToolRuns: 'tool-run-1' }, '对象工具运行': { pendingToolRuns: {} },
     '布尔工具运行': { pendingToolRuns: false }, '数字工具运行': { pendingToolRuns: 0 },
-    'pending 原因': { completionReason: 'pending_tool_executions' }, 'HITL 原因': { completionReason: 'awaiting_hitl' },
+    'HITL 原因': { completionReason: 'awaiting_hitl' },
     '工作流待审批': { workflowStatus: 'awaiting_hitl' }, 'HITL 标记': { awaitingHitl: true },
-    '检查仍有工具': { missingChecks: ['tool execution still queued or running'] },
     '检查待审批': { missingChecks: ['workflow is awaiting HITL approval'] }
 })) {
     test('拒绝伪阶段报告：' + name, () => {
@@ -245,8 +244,8 @@ test('真实分发器：partial 之后的 start/delta/planning/response/error/ca
     assert.ok(h.timelineItems.filter(item => item.type === 'planning' || item.type === 'thinking')
         .every(item => item.title.includes('候选输出（尚未交付）')));
 });
-test('真实分发器：运行中或有 pending 的伪 partial 不隐藏进度、不关闭工具、不显示报告', () => {
-    for (const data of [partial({ status: 'running', runTerminated: false }), partial({ pendingExecutionIds: ['pending'] }), {}]) {
+test('真实分发器：运行中或缺合约不隐藏进度、不关闭工具、不显示报告', () => {
+    for (const data of [partial({ status: 'running', runTerminated: false }), {}]) {
         const h = monitorHarness(); h.send('response', data, draft);
         assert.equal(h.assistant.dataset.deliveryAvailable, 'false');
         assert.ok(!h.assistant.dataset.originalContent.includes(report));
@@ -374,8 +373,7 @@ test('主聊天 done-only 更新已有候选正文，并保留未完成状态', 
 });
 test('主聊天裸 done、无交付的 check/done 和伪 partial 均不显示成功', () => {
     for (const data of [{}, { status: 'completed' }, partial({ deliveryAvailable: false }),
-        partial({ pendingToolRuns: ['pending'] }), partial({ pendingToolRuns: {} }),
-        partial({ pendingExecutionIds: ['pending'] }), partial({ awaitingHitl: true }),
+        partial({ pendingToolRuns: {} }), partial({ awaitingHitl: true }),
         partial({ workflowStatus: 'awaiting_hitl' })]) {
         const h = monitorHarness();
         h.send('done', data, draft);
@@ -431,9 +429,8 @@ test('WebShell 真实 SSE done-only 创建报告，也可替换候选提示且�
         assert.equal(h.assistant.querySelector('.report-delivery-label').textContent, '阶段报告 / 评估未完成');
     }
 });
-test('WebShell 真实 SSE done 拒绝 pendingToolRuns、HITL 和缺合约', async () => {
-    for (const data of [{}, partial({ pendingToolRuns: ['pending'] }), partial({ pendingToolRuns: {} }),
-        partial({ pendingExecutionIds: ['pending'] }), partial({ workflowStatus: 'awaiting_hitl' })]) {
+test('WebShell 真实 SSE done 拒绝畸形工具状态、HITL 和缺合约', async () => {
+    for (const data of [{}, partial({ pendingToolRuns: {} }), partial({ workflowStatus: 'awaiting_hitl' })]) {
         const h = await webshellStream([{ type: 'done', data, message: draft }]);
         assert.notEqual(h.assistant.dataset.deliveryAvailable, 'true');
         assert.notEqual(h.assistant.dataset.finalized, 'true');
@@ -441,6 +438,37 @@ test('WebShell 真实 SSE done 拒绝 pendingToolRuns、HITL 和缺合约', asyn
         assert.ok(!h.assistant.textContent.includes(draft));
     }
 });
+test('已停止且仍有未结束工具时交付明确未完成报告，不标工具失败或评估成功', async () => {
+    const data = partial({ completionReason: 'pending_tool_executions', pendingExecutionIds: ['tool-1'],
+        pendingToolRuns: ['tool-1'], missingChecks: ['tool execution still queued or running'] });
+    const h = monitorHarness();
+    h.send('response', data, draft);
+    assert.equal(h.assistant.dataset.originalContent, report);
+    assert.equal(h.assistant.dataset.finalized, 'false');
+    assert.equal(h.closedTools(), 0);
+    h.send('done', data);
+    assert.doesNotMatch(h.title.textContent, /✅/);
+    const ws = await webshellStream([{ type: 'done', data }]);
+    assert.equal(ws.assistant.dataset.originalContent, report);
+    assert.equal(ws.assistant.dataset.finalized, 'false');
+});
+
+test('模型候选原文单独折叠展示且通过 textContent 防止执行 HTML', () => {
+    const h = monitorHarness();
+    const candidate = '# 未核验候选\n<script>alert(1)</script>\n所有测试完成。';
+    h.send('response', partial({ candidateReport: candidate }), draft);
+    const details = h.assistant.querySelector('.assistant-candidate-report');
+    assert.ok(details);
+    const body = details.querySelector('.assistant-candidate-report-body');
+    assert.equal(body.textContent, candidate);
+    assert.equal(body.innerHTML, '');
+    assert.equal(h.assistant.dataset.originalContent, report);
+    assert.equal(h.assistant.dataset.finalized, 'false');
+    assert.equal(h.assistant.querySelectorAll('.assistant-candidate-report').length, 1);
+    h.send('done', partial({ candidateReport: candidate }));
+    assert.equal(h.assistant.querySelectorAll('.assistant-candidate-report').length, 1);
+});
+
 test('未通过 exit 提交报告的原因在主聊天和 WebShell 都有中文标签', () => {
     const { ctx } = context();
     assert.equal(ctx.finalizationReasonLabel('report_not_submitted_via_exit'), '报告未通过 exit 提交');

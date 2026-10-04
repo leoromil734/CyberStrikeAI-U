@@ -238,6 +238,20 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		h.batchTaskManager.SetTaskCancel(queueID, task.ID, nil)
 		timeoutCancel()
 		if registered {
+			if finishStatus != BatchTaskStatusPaused && decision.CompletionReason != agentfinalizer.ReasonAwaitingHITL && !decision.Finalizable && !decision.DeliveryAvailable {
+				// Every started terminal run must publish a report, including
+				// early setup failures and unsuccessful background-tool cleanup.
+				decision.Status = finishStatus
+				if decision.CompletionReason == "" {
+					decision.CompletionReason = finishStatus
+				}
+				decision = h.persistFinalizationDecision(conversationID, assistantMessageID, "batch", nil, "", decision)
+				batchStatus := finishStatus
+				if batchStatus == "timeout" {
+					batchStatus = BatchTaskStatusFailed
+				}
+				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, finalizationBlockedMessage(decision), finalizationBlockedMessage(decision), conversationID)
+			}
 			h.finishBatchSubTask(conversationID, finishStatus, decision)
 		}
 		cancelWithCause(nil)
@@ -424,7 +438,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	if runErr != nil {
 		h.handleBatchSubTaskRunError(queueID, task, conversationID, assistantMessageID, baseCtx, taskCtx, resultMA, runErr, &finishStatus)
 		if finishStatus != BatchTaskStatusPaused {
-			stopped := agentfinalizer.Decision{Status: finishStatus, CompletionReason: finishStatus}
+			stopped := agentfinalizer.Decision{Status: finishStatus, CompletionReason: finishStatus, CandidateReport: finalizationAutoContinueAttempt.LastReportCandidate}
 			var ids []string
 			reasoning := ""
 			if resultMA != nil {
@@ -450,7 +464,11 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 			zap.String("queueId", queueID),
 			zap.String("taskId", task.ID),
 			zap.String("conversationId", conversationID))
-		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "内部错误：无执行结果")
+		finishStatus = BatchTaskStatusFailed
+		decision = h.persistFinalizationDecision(conversationID, assistantMessageID, "batch", cumulativeMCPExecutionIDs, "", agentfinalizer.Decision{
+			Status: finishStatus, CompletionReason: agentfinalizer.ReasonFailed, MissingChecks: []string{"内部错误：执行未返回结果对象，已有工具记录仍保留"},
+		})
+		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, finishStatus, finalizationBlockedMessage(decision), "内部错误：无执行结果")
 		return
 	}
 

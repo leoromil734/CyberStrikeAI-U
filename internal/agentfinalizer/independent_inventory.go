@@ -166,7 +166,7 @@ func coverageRepairBlockedFeedback(progress CoverageProgress) string {
 	if !progress.Known {
 		detail = "independent inventory/source progress is unknown or incomplete; zero remaining work must not be inferred"
 	}
-	return "automatic coverage repair blocked: " + detail + "; return currently verified results and explicit untested/pending-classification limitations. First perform auditable screening by authorized scope, freshness and business templates while retaining original inventory totals and provenance. Do not generate per-URL N/A, negated or safe facts, truncate the inventory, lower totals, or skip validation to claim completion. 当前仅返回已验证成果及未测/待分类限制；先按授权范围、当前性和业务模板进行可审计筛选，禁止逐URL生成N/A、否定或安全结论。"
+	return "automatic coverage repair blocked: " + detail + "; mechanical bookkeeping is paused, not substantive investigation. Continue auditable classification by authorized scope, freshness and business templates, then perform feasible independent verification while retaining original inventory totals and provenance. Pending/failed ingestion is an evidence-pipeline gap, never target safety evidence; eventual delivery must retain verified results and explicit untested/pending-classification limitations. Do not generate per-URL N/A, negated or safe facts, truncate the inventory, lower totals, or skip validation to claim completion. 停止机械补写不等于停止实际测试；先分类去重、核实范围，再执行可行验证。保留未测/待入库限制，最终必须交付包含真实成果与证据的报告。"
 }
 
 func fieldText(fields map[string]any, key string) string {

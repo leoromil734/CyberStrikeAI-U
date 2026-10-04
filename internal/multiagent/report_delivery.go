@@ -19,6 +19,14 @@ const CoverageContinuationHeader = coverageRepairInstructionPrefix + "只补本�
 
 const coverageRepairInstructionPrefix = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。"
 
+// CoverageWorkContinuationHeader requests substantive work rather than merely
+// filling a ledger. Keep the prefix so historical report provenance survives.
+const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明；在本次范围与预算内继续实际工作，最后必须交付有成果和证据的报告。\n" +
+	"先读取本轮完整检查缺口和真实执行结果，优先验证已有就绪候选。原始候选多时按授权范围、当前性与业务功能分类去重，保留原件、原始总量及分类映射；只处理范围内可执行工作，不扩大范围，不逐URL机械抄写 fact，不统一写 N/A、negated 或安全。\n" +
+	"库存查询用 recon/source/* 中真实 execution_id 调用 query_recon_inventory(execution_id, grouped=true, offset=0) 分页，原件用 list_result_artifacts/read_result_artifact。入库待处理/失败不是目标安全证据，也不妨碍独立验证；不得通过删除记录、降低计数或修改状态来消除缺口。\n" +
+	"用 upsert_project_fact.body_fields 仅记录已发生的工作，get_project_fact/list_project_facts 回读；未测不得 passed。保留用户排除项，使用现有授权身份，不能用报告或台账代替验证。\n" +
+	"完成或确实触及范围/预算/阻断后给出完整报告：实际成果、执行/原件引用、发现原状态、负结果、具体未完成范围与原因；Deep/Supervisor 根角色经 exit.final_result 提交。\n"
+
 var assessmentHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+\S`)
 
 // FinalReportAfterCoverageRepair preserves the report from this request when a
@@ -110,8 +118,13 @@ func IsAssessmentReportCandidate(text string) bool {
 	return isAssessmentReport(text)
 }
 
+// HasAssessmentReportBody checks delivery shape only, never evidence or safety.
+func HasAssessmentReportBody(text string) bool {
+	return len([]rune(strings.TrimSpace(text))) >= 250 && len(assessmentHeadingPattern.FindAllStringIndex(text, -1)) >= 2
+}
+
 func isAssessmentReport(text string) bool {
-	if len([]rune(strings.TrimSpace(text))) < 250 || len(assessmentHeadingPattern.FindAllStringIndex(text, -1)) < 2 {
+	if !HasAssessmentReportBody(text) {
 		return false
 	}
 	lower := strings.ToLower(text)

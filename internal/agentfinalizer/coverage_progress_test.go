@@ -292,7 +292,7 @@ func TestCoverageProgressNilAndLegacyCompatibility(t *testing.T) {
 	}
 	db, project, conversation, message := coverageTestDB(t)
 	persistCoverage(t, db, project, conversation, "passed")
-	d = Decide(db, Input{Response: "旧版评估报告已整理。", ConversationID: conversation, AssistantMessageID: message})
+	d = Decide(db, Input{Response: coverageReportFixture("旧版评估报告已整理。"), ConversationID: conversation, AssistantMessageID: message})
 	if !d.Finalizable || d.CoverageProgressKnown || d.CoverageRepairBlocked {
 		t.Fatalf("legacy ledger gate changed: %+v", d)
 	}
@@ -352,7 +352,7 @@ func TestCoverageGovernedKnownEmptyInventoryRetainsExistingClosure(t *testing.T)
 	if err := db.SaveToolExecution(&mcp.ToolExecution{ID: "baseline", ToolName: "httpx", ConversationID: conversation, Status: "completed", StartTime: now, EndTime: &now}); err != nil {
 		t.Fatal(err)
 	}
-	d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: "未发现可用端点，当前来源已完成核验。", MCPExecutionIDs: []string{"baseline"}})
+	d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: coverageReportFixture("未发现可用端点，当前来源已完成核验。"), MCPExecutionIDs: []string{"baseline"}})
 	if !d.Finalizable || !d.CoverageProgressKnown || d.CoverageRepairBlocked || d.CoverageInventoryGroups != 0 || d.CoverageUnresolvedGroups != 0 || d.CoverageEvidenceExecutions != 2 {
 		t.Fatalf("known empty inventory regressed: %+v", d)
 	}

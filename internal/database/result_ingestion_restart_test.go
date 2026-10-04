@@ -10,7 +10,7 @@ func TestReconcileResultIngestionPostgresDoesNotSplitDiagnostic(t *testing.T) {
 	if len(parts) != 1 {
 		t.Fatalf("restart reconciliation was split into invalid SQL: %v", parts)
 	}
-	if strings.Contains(reconcileResultIngestionSQL, "ingestion interrupted") || strings.Count(reconcileResultIngestionSQL, "?") != 2 {
-		t.Fatal("reason and timestamp must both be bound parameters")
+	if strings.Contains(reconcileResultIngestionSQL, "ingestion interrupted") || strings.Count(reconcileResultIngestionSQL, "?") != 3 {
+		t.Fatal("diagnostic, update time and expiry cutoff must be bound parameters")
 	}
 }

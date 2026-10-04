@@ -6,6 +6,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/evidence"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/security"
 	"encoding/json"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -21,7 +22,14 @@ func TestResultPipelinePendingOriginalInventoryAndInactiveAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("pipeline-user", "Pipeline", "hash", true, nil)
+	if err = db.BootstrapRBAC("test-only-hash", security.PermissionCatalog); err != nil {
+		t.Fatal(err)
+	}
+	role, err := db.UpsertRBACRole("", "pipeline-writer", "", database.RBACScopeOwn, []string{"project:write", "asset:write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := db.CreateRBACUser("pipeline-user", "Pipeline", "hash", true, []string{role.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,13 +61,19 @@ func TestResultPipelinePendingOriginalInventoryAndInactiveAssets(t *testing.T) {
 	if err = db.SaveToolExecution(original); err != nil {
 		t.Fatal(err)
 	}
-	p := &resultPipeline{db: db, root: filepath.Join(t.TempDir(), "reduction"), logger: zap.NewNop(), jobs: make(chan resultJob, 2)}
+	p := &resultPipeline{db: db, root: filepath.Join(t.TempDir(), "reduction"), logger: zap.NewNop(), wake: make(chan struct{}, 1)}
 	p.observe(ctx, original)
 	states, err := db.ResultIngestionStates(project.ID, conv.ID, "run-test")
 	if err != nil || len(states) != 1 || states[0].State != "pending" {
 		t.Fatalf("pending marker not synchronous: %+v %v", states, err)
 	}
-	p.process(<-p.jobs)
+	claim, err := db.ClaimResultIngestion(ctx, original.ID, resultIngestionLease)
+	if err != nil || claim == nil {
+		t.Fatalf("claim: %v %v", claim, err)
+	}
+	if err = p.runClaim(ctx, *claim); err != nil {
+		t.Fatal(err)
+	}
 	states, err = db.ResultIngestionStates(project.ID, conv.ID, "run-test")
 	if err != nil || len(states) != 1 || states[0].State != "complete" {
 		t.Fatalf("processing failed: %+v %v", states, err)
@@ -93,6 +107,26 @@ func TestResultPipelinePendingOriginalInventoryAndInactiveAssets(t *testing.T) {
 	other := authctx.WithPrincipal(ctx, authctx.NewPrincipal("other", "other", database.RBACScopeAll, map[string]bool{"monitor:read": true}))
 	if _, _, err := p.authorizedExecution(other, original.ID); err == nil {
 		t.Fatal("strict artifact ownership bypassed by global scope")
+	}
+	var observationsBefore, observationsAfter int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM asset_observations WHERE execution_id=?`, original.ID).Scan(&observationsBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SetResultIngestionState(accessCtx, execution, "failed", "simulate crash after asset commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.RequeueResultIngestion(accessCtx, execution); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = db.ClaimResultIngestion(ctx, original.ID, resultIngestionLease)
+	if err != nil || claim == nil {
+		t.Fatalf("retry claim: %+v %v", claim, err)
+	}
+	if err = p.runClaim(ctx, *claim); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT COUNT(*) FROM asset_observations WHERE execution_id=?`, original.ID).Scan(&observationsAfter); err != nil || observationsBefore == 0 || observationsAfter != observationsBefore {
+		t.Fatalf("retry duplicated asset observations: %d -> %d (%v)", observationsBefore, observationsAfter, err)
 	}
 }
 

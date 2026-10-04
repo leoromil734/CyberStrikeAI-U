@@ -345,7 +345,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
 			})
-			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 			segmentCancel()
 			return
 		}
@@ -363,7 +363,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 				"messageId":      assistantMessageID,
 				"errorType":      "timeout",
 			})
-			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 			segmentCancel()
 			return
 		}
@@ -380,7 +380,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			"conversationId": conversationID,
 			"messageId":      assistantMessageID,
 		})
-		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_single", taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 		segmentCancel()
 		return
 	}
@@ -496,7 +496,8 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 			if shouldPersistEinoAgentTraceAfterRunError(baseCtx) {
 				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": runErr.Error()})
+			d := h.persistRuntimeFailureForDelivery(baseCtx, prep.ConversationID, prep.AssistantMessageID, "eino_single", result, cumulativeMCPExecutionIDs, runErr, finalizationAutoContinueAttempt.LastReportCandidate)
+			c.JSON(http.StatusInternalServerError, finalizationResponsePayload(d, map[string]interface{}{"error": runExecutionErrorMessage(runErr), "response": finalizationBlockedMessage(d)}))
 			return
 		}
 		if result == nil {

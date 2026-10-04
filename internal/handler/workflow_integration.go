@@ -132,7 +132,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "workflow", taskStatus, nil, nil, sendEvent)
 			return true
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded) {
@@ -148,7 +148,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 				"messageId":      assistantMessageID,
 				"errorType":      "timeout",
 			})
-			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "workflow", taskStatus, nil, nil, sendEvent)
 			return true
 		}
 		errMsg := "执行角色绑定流程失败: " + err.Error()
@@ -159,7 +159,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
 		}
 		sendEvent("error", errMsg, map[string]interface{}{"conversationId": conversationID})
-		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
+		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "workflow", taskStatus, nil, nil, sendEvent)
 		return true
 	}
 	// 最终回复治理：workflow 等待 HITL 时不允许 final；候选文本通过 finalizer 才交付。
@@ -185,8 +185,10 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	if !decision.Finalizable {
 		responseText = finalizationBlockedMessage(decision)
 	}
+	taskStatus = decision.Status
+	h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 	sendEvent("response", responseText, finalizationResponsePayload(decision, payload))
-	sendEvent("done", "", map[string]interface{}{"conversationId": prep.ConversationID})
+	sendEvent("done", "", finalizationResponsePayload(decision, payload))
 	return true
 }
 
@@ -256,27 +258,14 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		Progress:           progress,
 	})
 	if err != nil {
-		cause := context.Cause(baseCtx)
-		if errors.Is(cause, ErrTaskCancelled) {
-			taskStatus = "cancelled"
-			cancelMsg := "任务已被用户取消，后续操作已停止。"
-			if assistantMessageID != "" {
-				_ = h.appendAssistantMessageNotice(assistantMessageID, cancelMsg)
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
-			}
-			c.JSON(http.StatusOK, gin.H{
-				"status":         "cancelled",
-				"message":        cancelMsg,
-				"conversationId": conversationID,
-			})
-			return true
+		d := h.persistRuntimeFailureForDelivery(taskCtx, conversationID, assistantMessageID, "workflow", nil, nil, err)
+		taskStatus = d.Status
+		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
+		statusCode := http.StatusInternalServerError
+		if taskStatus == "cancelled" {
+			statusCode = http.StatusOK
 		}
-		errMsg := "执行角色绑定流程失败: " + err.Error()
-		taskStatus = "failed"
-		if assistantMessageID != "" {
-			_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), assistantMessageID)
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg, "conversationId": conversationID})
+		c.JSON(statusCode, finalizationResponsePayload(d, map[string]interface{}{"error": "执行角色绑定流程失败: " + err.Error(), "response": finalizationBlockedMessage(d)}))
 		return true
 	}
 	// 最终回复治理：workflow 等待 HITL 时不允许 final。
@@ -295,6 +284,8 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 	if !decision.Finalizable {
 		responseText = finalizationBlockedMessage(decision)
 	}
+	taskStatus = decision.Status
+	h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 	c.JSON(http.StatusOK, gin.H{
 		"response":            responseText,
 		"finalized":           decision.Finalized,

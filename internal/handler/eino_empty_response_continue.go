@@ -46,9 +46,8 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	progressCallback func(eventType, message string, data interface{}),
 ) bool {
 	if result != nil && result.ReportSubmitted {
-		// A successful root exit closes this run even when its submitted text
-		// is empty or incomplete. The finalizer will deliver a partial report,
-		// not reopen the model under the empty-response retry policy.
+		// Submitted (including empty) exit is handled by the finalizer's report
+		// and pending-tool checks, not a second competing retry policy.
 		return false
 	}
 	inject, continueKind := multiagent.EinoResponseContinueInstruction(result, preferFinalReport)
@@ -56,6 +55,11 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 		return false
 	}
 	if result == nil || inject == "" || !multiagent.HasEinoResumeTrace(result) {
+		return false
+	}
+	if pending, err := h.pendingFinalizationTools(taskCtx, conversationID, result.MCPExecutionIDs); err != nil || len(pending) > 0 {
+		// Rebinding this segment would cancel tools before their results are
+		// read. Let the finalizer wait and resume through the governed path.
 		return false
 	}
 	maxAttempts := multiagent.EmptyResponseContinueMaxAttemptsFromConfig(mw)

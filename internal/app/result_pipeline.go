@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net"
 	"os"
@@ -23,31 +25,19 @@ import (
 	"go.uber.org/zap"
 )
 
-type resultJob struct {
-	ctx       context.Context
-	execution evidence.Execution
-	original  *mcp.ToolExecution
-}
 type resultPipeline struct {
 	db     *database.DB
 	root   string
 	logger *zap.Logger
-	jobs   chan resultJob
+	wake   chan struct{}
 }
 
-// No network requests or proof execution take place here. The bounded queue is
-// deliberately separate from task scheduling and external-tool concurrency.
+// Only wakeups are buffered. Raw results and pending/retry jobs live in the DB;
+// the two workers load one claimed snapshot each, never an in-memory backlog.
 func newResultPipeline(db *database.DB, cfg *config.Config, logger *zap.Logger) *resultPipeline {
-	p := &resultPipeline{db: db, root: cfg.MultiAgent.EinoMiddleware.ReductionRootDir, logger: logger, jobs: make(chan resultJob, 64)}
-	if err := db.ReconcileResultIngestionJobs(); err != nil {
-		logger.Warn("恢复原件入库队列失败", zap.Error(err))
-	}
+	p := offlineResultPipeline(db, cfg, logger)
 	for i := 0; i < 2; i++ {
-		go func() {
-			for job := range p.jobs {
-				p.process(job)
-			}
-		}()
+		go p.worker(context.Background())
 	}
 	return p
 }
@@ -64,14 +54,26 @@ func (p *resultPipeline) observe(ctx context.Context, original *mcp.ToolExecutio
 	if original == nil || original.ID == "" || original.OwnerUserID == "" || original.ConversationID == "" {
 		return
 	}
-	projectID, err := p.db.GetConversationProjectID(original.ConversationID)
-	if err != nil {
-		p.logger.Warn("无法绑定执行原件项目", zap.String("executionId", original.ID))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if principal, ok := authctx.PrincipalFromContext(ctx); ok && principal.UserID != original.OwnerUserID {
+		p.logger.Warn("执行身份与原件所有者不一致", zap.String("executionId", original.ID))
 		return
 	}
-	scopeID, assessmentID := "", ""
+	projectID, scopeID, assessmentID := "", "", ""
 	bindingErr := p.db.QueryRow(`SELECT project_id,scope_id,assessment_id FROM result_execution_metadata WHERE execution_id=? AND owner=? AND conversation_id=?`, original.ID, original.OwnerUserID, original.ConversationID).Scan(&projectID, &scopeID, &assessmentID)
 	if bindingErr != nil {
+		if !errors.Is(bindingErr, sql.ErrNoRows) {
+			p.logger.Warn("读取执行原件绑定失败", zap.String("executionId", original.ID), zap.Error(bindingErr))
+			return
+		}
+		var err error
+		projectID, err = p.db.GetConversationProjectID(original.ConversationID)
+		if err != nil {
+			p.logger.Warn("无法绑定执行原件项目", zap.String("executionId", original.ID), zap.Error(err))
+			return
+		}
 		if bound := mcp.MCPProjectIDFromContext(ctx); bound != "" {
 			projectID = bound
 		}
@@ -105,25 +107,22 @@ func (p *resultPipeline) observe(ctx context.Context, original *mcp.ToolExecutio
 			e.ScopeID = "scope-" + hex.EncodeToString(sum[:16])
 		}
 	}
-	if err = p.db.RecordExecution(ctx, e); err != nil {
-		p.logger.Warn("保存原件执行元数据失败", zap.String("executionId", e.ID), zap.Error(err))
+	if original.EndTime == nil || builtin.IsBuiltinTool(e.Tool) {
+		if err := p.db.RecordExecution(ctx, e); err != nil {
+			p.logger.Warn("保存原件执行元数据失败", zap.String("executionId", e.ID), zap.Error(err))
+		}
 		return
 	}
-	if original.EndTime == nil {
-		return
-	}
-	// Builtins already persist their compact result; no duplicate fact body files.
-	if builtin.IsBuiltinTool(e.Tool) {
-		return
-	}
-	if err = p.db.SetResultIngestionState(ctx, e, "pending", ""); err != nil {
-		p.logger.Warn("登记原件处理状态失败", zap.String("executionId", e.ID), zap.Error(err))
+	// The observer runs before ordinary monitor persistence. Persist the result,
+	// binding, snapshot and job atomically before signalling either worker.
+	if err := p.db.PersistResultIngestion(ctx, e, original, p.ingestionProjection(ctx, e)); err != nil {
+		p.logger.Error("持久化原件处理任务失败", zap.String("executionId", e.ID), zap.Error(err))
 		return
 	}
 	select {
-	case p.jobs <- resultJob{ctx: ctx, execution: e, original: original}:
+	case p.wake <- struct{}{}:
 	default:
-		_ = p.db.SetResultIngestionState(ctx, e, "failed", "bounded ingestion queue full; original retained, reimport required")
+		// Signals may coalesce. The database, not this channel, owns every job.
 	}
 }
 
@@ -151,56 +150,6 @@ func (p *resultPipeline) roots(e evidence.Execution) ([]evidence.ManagedRoot, er
 		}
 	}
 	return roots, nil
-}
-
-// Each path component is checked before an exclusive file create. Registry
-// rechecks confinement and links before any file is ingested or returned.
-func makeManagedDirectory(path string) error {
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return evidence.ErrUnsafePath
-	}
-	parent := filepath.Dir(path)
-	if parent != path {
-		if err := makeManagedDirectory(parent); err != nil {
-			return err
-		}
-	}
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		if err = os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
-			return err
-		}
-		info, err = os.Lstat(path)
-	}
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return evidence.ErrUnsafePath
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || !strings.EqualFold(filepath.Clean(resolved), path) {
-		return evidence.ErrUnsafePath
-	}
-	return nil
-}
-func writeManagedOriginal(dir, name string, data []byte) error {
-	if err := makeManagedDirectory(dir); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.Write(data)
-	closeErr := file.Close()
-	if writeErr != nil {
-		return writeErr
-	}
-	return closeErr
 }
 
 func resultFormat(tool string, args map[string]interface{}) string {
@@ -236,27 +185,38 @@ func resultFormat(tool string, args map[string]interface{}) string {
 	return "text"
 }
 
-func (p *resultPipeline) process(job resultJob) {
-	ctx, cancel := context.WithTimeout(job.ctx, 2*time.Minute)
-	defer cancel()
-	e := job.execution
-	state, reason := "failed", "original processing failed; metadata retained"
-	defer func() {
-		if recover() != nil {
-			state, reason = "failed", "offline ingestion panic; original retained"
-		}
-		_ = p.db.SetResultIngestionState(context.WithoutCancel(job.ctx), e, state, reason)
-	}()
+func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, original *mcp.ToolExecution) (state, reason string, err error) {
+	state, reason = "failed", "original processing failed; metadata retained"
+	if err = checkIngestionClaim(ctx, p.db); err != nil {
+		return
+	}
 	reduction, err := evidence.ReductionRoot(p.root, e)
 	if err != nil {
 		reason = "unsafe execution binding"
 		return
 	}
 	dir := filepath.Join(filepath.Dir(reduction.Path), "executions", e.ID)
-	args, err := json.Marshal(job.original.Arguments)
-	if err != nil || len(args) > 4<<20 {
-		reason = "input metadata exceeds 4MiB"
-		return
+	// Include the full immutable binding, not only the path components. A file
+	// from another owner, assessment or scope must never be silently reused.
+	binding, marshalErr := json.Marshal(struct {
+		ID string `json:"execution_id"`
+		evidence.Access
+		AssessmentID string `json:"assessment_id"`
+		ScopeID      string `json:"scope_id"`
+		Tool         string `json:"tool"`
+	}{e.ID, e.Access, e.AssessmentID, e.ScopeID, e.Tool})
+	if marshalErr != nil {
+		return "failed", "execution binding serialization failed", marshalErr
+	}
+	if err = writeManagedOriginal(dir, "binding.json", binding); err != nil {
+		return "failed", "managed original binding conflicts or is unsafe", err
+	}
+	args, err := json.Marshal(original.Arguments)
+	if err != nil {
+		return "failed", "input metadata serialization failed", err
+	}
+	if len(args) > 4<<20 {
+		return "failed", "input metadata exceeds 4MiB", evidence.ErrLimit
 	}
 	if err = writeManagedOriginal(dir, "input.json", args); err != nil {
 		reason = "input original could not be safely created"
@@ -264,20 +224,35 @@ func (p *resultPipeline) process(job resultJob) {
 	}
 	candidates := []evidence.Candidate{{Path: filepath.Join(dir, "input.json"), Kind: "input", Format: "json", Completion: e.Completion}}
 	output := filepath.Join(reduction.Path, e.ID)
-	if info, err := os.Lstat(output); err == nil && info.Mode().IsRegular() {
+	missingPersistedOutput := false
+	info, statErr := os.Lstat(output)
+	if statErr == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "failed", "saved output path is not a regular original", evidence.ErrUnsafePath
+		}
 		e.OutputBytes = info.Size()
-		if info.Size() > int64(len(mcp.ToolResultPlainText(job.original.Result))) {
+		if info.Size() > int64(len(mcp.ToolResultPlainText(original.Result))) {
 			e.Capped = true
 		}
-		candidates = append(candidates, evidence.Candidate{Path: output, Kind: "output", Format: resultFormat(e.OutputTool(), job.original.Arguments), Completion: e.Completion})
+		candidates = append(candidates, evidence.Candidate{Path: output, Kind: "output", Format: resultFormat(e.OutputTool(), original.Arguments), Completion: e.Completion})
 	} else {
-		text := mcp.ToolResultPlainText(job.original.Result)
-		if text != "" && !strings.Contains(text, "<persisted-output>") {
+		if !os.IsNotExist(statErr) {
+			return "failed", "saved output path unavailable", statErr
+		}
+		text := mcp.ToolResultPlainText(original.Result)
+		missingPersistedOutput = strings.Contains(text, "<persisted-output>")
+		if missingPersistedOutput {
+			// A reduced preview is not the original. Retain the input, but
+			// never report complete merely because its registration succeeds.
+			e.Completion = evidence.Partial
+			e.Capped = true
+		}
+		if text != "" && !missingPersistedOutput {
 			if err = writeManagedOriginal(dir, "output.txt", []byte(text)); err != nil {
 				reason = "output original could not be safely created"
 				return
 			}
-			candidates = append(candidates, evidence.Candidate{Path: filepath.Join(dir, "output.txt"), Kind: "output", Format: resultFormat(e.OutputTool(), job.original.Arguments), Completion: e.Completion})
+			candidates = append(candidates, evidence.Candidate{Path: filepath.Join(dir, "output.txt"), Kind: "output", Format: resultFormat(e.OutputTool(), original.Arguments), Completion: e.Completion})
 		}
 	}
 	roots, err := p.roots(e)
@@ -314,7 +289,24 @@ func (p *resultPipeline) process(job resultJob) {
 			})
 		}
 	}
-	registry, err := evidence.NewRegistry(p.db, roots, evidence.DefaultMaxArtifactBytes)
+	// A retry may reuse a saved spill/CSV only at the previously registered
+	// hash. A different body at the same path must not create a second source.
+	registered, err := p.db.ResultArtifacts(ctx, e.ID, 1000, 0)
+	if err != nil {
+		return "failed", "registered original metadata unavailable", err
+	}
+	for i := range candidates {
+		for _, a := range registered {
+			if filepath.Clean(a.Path) == filepath.Clean(candidates[i].Path) {
+				if candidates[i].ExpectedSHA256 != "" && candidates[i].ExpectedSHA256 != a.SHA256 {
+					return "failed", "multiple hashes recorded for original path", evidence.ErrChanged
+				}
+				candidates[i].ExpectedSHA256 = a.SHA256
+			}
+		}
+	}
+	store := ingestionStore{DB: p.db}
+	registry, err := evidence.NewRegistry(store, roots, evidence.DefaultMaxArtifactBytes)
 	if err != nil {
 		reason = "unsafe or missing managed artifact root"
 		return
@@ -322,13 +314,13 @@ func (p *resultPipeline) process(job resultJob) {
 	defer registry.Close()
 	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
 		e = p.jsExecutionCompleteness(ctx, e, registry, roots)
-		for i := range candidates {
-			candidates[i].Completion = e.Completion
-		}
+	}
+	for i := range candidates {
+		candidates[i].Completion = e.Completion
 	}
 	// Unknown task scope stays candidate-only. Neither a project name nor a
 	// target in a tool argument is a grant to expand the original task scope.
-	processor := recon.Processor{Store: p.db, Artifacts: registry, MaxReturnedRecords: 1000, Limits: recon.Limits{MaxRecords: 100000}}
+	processor := recon.Processor{Store: store, Artifacts: registry, MaxReturnedRecords: 1000, Limits: recon.Limits{MaxRecords: 100000}}
 	logs := []evidence.Candidate{}
 	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
 		machine := []evidence.Candidate{}
@@ -350,12 +342,32 @@ func (p *resultPipeline) process(job resultJob) {
 	}
 	state, reason = "complete", ""
 	for _, candidate := range logs {
-		if artifact, logErr := registry.Register(ctx, e, candidate); logErr == nil {
-			report.Artifacts = append(report.Artifacts, artifact)
+		artifact, logErr := registry.Register(ctx, e, candidate)
+		if logErr != nil {
+			return "failed", "log original registration failed", logErr
 		}
+		report.Artifacts = append(report.Artifacts, artifact)
 	}
 	if len(report.ArtifactErrors) > 0 {
 		state, reason = "partial", "one or more originals were rejected or exceeded limits"
+		for _, rejected := range report.ArtifactErrors {
+			switch rejected.Code {
+			case "original_changed":
+				return "failed", "registered original hash changed", evidence.ErrChanged
+			case "access_denied":
+				return "failed", "original registration binding denied", evidence.ErrDenied
+			case "original_unavailable":
+				return "failed", "original registration unavailable", errors.New("original registration unavailable")
+			}
+		}
+	}
+	if e.Completion != evidence.Complete {
+		state, reason = "partial", "execution result is partial or timed out; original retained"
+	}
+	for _, source := range report.Sources {
+		if source.State == recon.MissingOriginal || source.State == evidence.Error || source.State == evidence.Invalid {
+			state, reason = "partial", "source is missing or invalid; saved evidence retained"
+		}
 	}
 	if reconTool(e.OutputTool()) {
 		parsed := false
@@ -371,10 +383,14 @@ func (p *resultPipeline) process(job resultJob) {
 			state, reason = "partial", "no supported machine-readable original; use explicit artifact registration"
 		}
 	}
-	if err := p.importRecon(ctx, e, report); err != nil {
-		state, reason = "partial", "inventory saved but asset/candidate projection incomplete"
+	if missingPersistedOutput {
+		state, reason = "partial", "persisted-output preview has no retained output original; input and available evidence retained"
+	}
+	if err = p.importRecon(ctx, e, report); err != nil {
+		state, reason = "failed", "inventory saved but asset/candidate projection incomplete"
 		p.logger.Warn(reason, zap.String("executionId", e.ID), zap.Error(err))
 	}
+	return
 }
 
 func (p *resultPipeline) importRecon(ctx context.Context, e evidence.Execution, report recon.Report) error {
@@ -382,10 +398,21 @@ func (p *resultPipeline) importRecon(ctx context.Context, e evidence.Execution, 
 		return nil
 	}
 	principal, authenticated := authctx.PrincipalFromContext(ctx)
+	authenticated = authenticated && principal.UserID == e.Owner
 	canProject := authenticated && principal.HasPermission("project:write") && p.db.UserCanAccessResource(principal.UserID, principal.ScopeFor("project:write"), "project", e.ProjectID)
 	canAsset := authenticated && principal.HasPermission("asset:write") && p.db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "project", e.ProjectID)
+	if !canProject && !canAsset {
+		return nil
+	}
+	var claim *database.ResultIngestionJob
+	if job, ok := ctx.Value(ingestionClaimContextKey{}).(database.ResultIngestionJob); ok {
+		claim = &job
+	}
 	// Page the stored source records, not the bounded model-facing report.
 	for _, source := range report.Sources {
+		if err := checkIngestionClaim(ctx, p.db); err != nil {
+			return err
+		}
 		if canProject && e.AssessmentID != "" && reconTool(e.OutputTool()) {
 			if err := p.saveReconSourceFact(e, source); err != nil {
 				return err
@@ -418,13 +445,13 @@ func (p *resultPipeline) importRecon(ctx context.Context, e evidence.Execution, 
 					if c.Title == "" {
 						c.Title = "scanner match"
 					}
-					if err := p.db.UpsertFindingCandidate(c); err != nil {
+					if err := p.db.ImportResultIngestionCandidate(ctx, e, c, claim); err != nil {
 						return err
 					}
 				}
 			}
 			if len(assets) > 0 {
-				if _, err := p.db.UpsertAssets(assets, e.Owner); err != nil {
+				if err := p.db.ImportResultIngestionAssets(ctx, e, assets, claim); err != nil {
 					return err
 				}
 			}

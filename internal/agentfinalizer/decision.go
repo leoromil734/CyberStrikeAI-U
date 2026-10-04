@@ -56,6 +56,9 @@ type Decision struct {
 	Finalized        bool   `json:"finalized"`
 	CompletionReason string `json:"completionReason"`
 	FinalText        string `json:"finalText,omitempty"`
+	// CandidateReport keeps the latest report-shaped draft across continuations;
+	// it is displayed separately and never substitutes for verified delivery.
+	CandidateReport string `json:"candidateReport,omitempty"`
 	// Delivery fields describe a stopped run's readable partial report, never
 	// evidence that the assessment is complete. FinalText retains the candidate.
 	DeliveryAvailable    bool     `json:"deliveryAvailable"`
@@ -121,16 +124,21 @@ func FromRunResult(db *database.DB, result *multiagent.RunResult, in Input) Deci
 			in.CompletionReason = result.CompletionReason
 		}
 	}
+	// Recover a same-request report as a candidate BEFORE checking report shape.
+	// Every execution/coverage/submission gate still runs on that candidate; it
+	// changes the user-visible result only after those gates actually pass.
+	recoveredReport, repairOnly := false, false
+	if result != nil {
+		var candidate string
+		candidate, repairOnly = multiagent.FinalReportAfterCoverageRepair(in.Response, result.LastAgentTraceInput)
+		if !result.ReportSubmitted && candidate != in.Response {
+			in.Response, recoveredReport = candidate, true
+		}
+	}
 	d := Decide(db, in)
-	// Coverage-repair segments must not replace an already generated report
-	// with a short bookkeeping notice. Recover only after all current execution
-	// and coverage checks have passed; a report can never bypass those gates.
 	if result != nil && d.Finalizable {
-		if delivered, repairOnly := multiagent.FinalReportAfterCoverageRepair(d.FinalText, result.LastAgentTraceInput); !result.ReportSubmitted && delivered != d.FinalText {
-			d.FinalText = delivered
-			d.CandidateResponseLen = len([]rune(delivered))
-			result.Response = delivered
-			result.LastAgentTraceOutput = delivered
+		if recoveredReport {
+			result.Response, result.LastAgentTraceOutput = d.FinalText, d.FinalText
 		} else if repairOnly {
 			d.Finalizable, d.Finalized = false, false
 			d.Status, d.CompletionReason = StatusInProgress, ReasonIncompleteCandidate
@@ -190,13 +198,6 @@ func Decide(db *database.DB, in Input) Decision {
 		d.MissingChecks = append(d.MissingChecks, "workflow is awaiting HITL approval")
 		return d
 	}
-	if isEmptyCandidate(text) {
-		d.Status = StatusBlocked
-		d.CompletionReason = ReasonEmptyResponse
-		d.EvidenceVerified = false
-		d.MissingChecks = append(d.MissingChecks, "assistant final text is empty or only an empty-response placeholder")
-		return d
-	}
 	switch status {
 	case StatusInProgress, StatusBlocked, StatusFailed, StatusCancelled, StatusAwaitingHITL, "timeout":
 		d.Status = status
@@ -208,14 +209,26 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 
-	pending := pendingExecutions(db, in.MCPExecutionIDs)
-	if len(pending) > 0 {
+	pending, pendingErr := pendingConversationExecutions(db, in.ConversationID, in.MCPExecutionIDs)
+	if pendingErr != nil || len(pending) > 0 {
 		d.Status = StatusInProgress
 		d.CompletionReason = ReasonPendingTools
 		d.EvidenceVerified = false
 		d.PendingExecutionIDs = pending
 		d.PendingToolRuns = append([]string(nil), pending...)
-		d.MissingChecks = append(d.MissingChecks, "tool execution still queued or running")
+		if pendingErr != nil {
+			d.MissingChecks = append(d.MissingChecks, "cannot verify current conversation tool execution state")
+		} else {
+			d.MissingChecks = append(d.MissingChecks, "tool execution still queued or running")
+		}
+		return d
+	}
+
+	if isEmptyCandidate(text) {
+		d.Status = StatusBlocked
+		d.CompletionReason = ReasonEmptyResponse
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, "assistant final text is empty or only an empty-response placeholder")
 		return d
 	}
 
@@ -277,6 +290,12 @@ func Decide(db *database.DB, in Input) Decision {
 	}
 	d.EvidenceRefs = append(d.EvidenceRefs, coverage.EvidenceRefs...)
 	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)
+	if (in.RequireCoverageEvidence || coverage.Active) && !multiagent.HasAssessmentReportBody(text) {
+		d.Status, d.CompletionReason = StatusInProgress, ReasonIncompleteCandidate
+		d.EvidenceVerified = false
+		d.MissingChecks = append(d.MissingChecks, "assessment requires a substantive report with actual results, evidence and limitations, not a short completion notice")
+		return d
+	}
 
 	// Deep/Supervisor assessment reports must be submitted by the current
 	// root's executed exit tool. Ordinary prose remains a candidate even when
@@ -326,6 +345,14 @@ func ResponsePayload(d Decision, extra map[string]interface{}) map[string]interf
 		"coverageMappedGroups":       d.CoverageMappedGroups,
 		"coverageEvidenceExecutions": d.CoverageEvidenceExecutions,
 		"coverageRepairBlocked":      d.CoverageRepairBlocked,
+	}
+	if !d.Finalizable {
+		// Separate unverified model prose from the evidence-based delivered body.
+		if d.CandidateReport != "" {
+			out["candidateReport"] = d.CandidateReport
+		} else if d.ReportSubmitted || multiagent.IsAssessmentReportCandidate(d.FinalText) {
+			out["candidateReport"] = d.FinalText
+		}
 	}
 	if d.ConversationID != "" {
 		out["conversationId"] = d.ConversationID

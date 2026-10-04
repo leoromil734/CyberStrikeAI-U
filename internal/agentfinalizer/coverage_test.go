@@ -55,10 +55,15 @@ func persistCoverage(t *testing.T, db *database.DB, project, conversation, phase
 	}
 }
 
+func coverageReportFixture(summary string) string {
+	return "# 评估报告\n\n## 风险概览与测试范围\n" + summary + "\n\n## 已保存证据与范围限制\n" +
+		strings.Repeat("此为离线覆盖夹具：来源 execution:baseline 与 execution:fofa-empty-result 已留存，覆盖结论仅针对本轮登记范围，不外推到未测试目标或其他身份。\n", 5)
+}
+
 func TestDecideCoverageBlocksReportUntilLedgerCloses(t *testing.T) {
 	db, project, conversation, message := coverageTestDB(t)
 	persistCoverage(t, db, project, conversation, "active")
-	in := Input{ConversationID: conversation, AssistantMessageID: message, Response: "测试报告已经整理完成。"}
+	in := Input{ConversationID: conversation, AssistantMessageID: message, Response: coverageReportFixture("测试报告已经整理完成。")}
 	d := Decide(db, in)
 	if d.Finalizable || d.CompletionReason != ReasonCoverageIncomplete || len(d.MissingChecks) == 0 {
 		t.Fatalf("open ledger finalized: %+v", d)
@@ -102,7 +107,7 @@ func TestDecideCoverageBlocksMissingFOFAEvenWithOtherSources(t *testing.T) {
 	if _, err := db.Exec("DELETE FROM project_facts WHERE project_id = ? AND fact_key = ?", project, "recon/source/run-a/fofa_search/example"); err != nil {
 		t.Fatal(err)
 	}
-	in := Input{ConversationID: conversation, AssistantMessageID: message, Response: "信息收集与覆盖已完成。"}
+	in := Input{ConversationID: conversation, AssistantMessageID: message, Response: coverageReportFixture("信息收集与覆盖已完成。")}
 	d := Decide(db, in)
 	if d.Finalizable || d.CompletionReason != ReasonCoverageIncomplete || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "fofa_search") {
 		t.Fatalf("missing FOFA source did not block finalization: %+v", d)
@@ -110,6 +115,17 @@ func TestDecideCoverageBlocksMissingFOFAEvenWithOtherSources(t *testing.T) {
 	persistCoverage(t, db, project, conversation, "passed")
 	if d := Decide(db, in); !d.Finalizable {
 		t.Fatalf("FOFA evidence repair did not unblock finalization: %+v", d)
+	}
+}
+
+func TestClosedCoverageStillRequiresReportBody(t *testing.T) {
+	db, project, conversation, message := coverageTestDB(t)
+	persistCoverage(t, db, project, conversation, "passed")
+	for _, submitted := range []bool{false, true} {
+		d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: "已完成。", ReportSubmitted: submitted})
+		if d.Finalizable || d.CompletionReason != ReasonIncompleteCandidate {
+			t.Fatalf("short notice bypassed report requirement: %+v", d)
+		}
 	}
 }
 

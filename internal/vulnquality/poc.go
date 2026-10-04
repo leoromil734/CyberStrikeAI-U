@@ -19,7 +19,9 @@ var (
 	evidenceFileRe   = regexp.MustCompile(`(?i)\b[\w.-]+(?:_out|_poc|_evidence)\.(?:txt|log|sql|py|sh|out|js)\b|\b(?:poc|exploit|r\d+_[a-z0-9_]+)\.(?:py|sh|sql|txt|js|rb|php)\b`)
 	omissionPhraseRe = regexp.MustCompile(`详见[^\n]{0,80}(?:\.txt|\.log|\.py|\.sql)|完整输出见|见附件|此处省略|关键部分省略|输出已省略|命令已省略`)
 
-	outputHeadingRe   = regexp.MustCompile(`(?im)^[ \t#]*(?:原始输出|实际输出|执行输出|输出|Output|stdout|stderr|响应|Response|Console|控制台)[ \t]*[:：]?[ \t]*$`)
+	// Common transcript headings may include numbering, Markdown emphasis or
+	// an annotation. Match the whole heading, never prose claiming success.
+	outputHeadingRe   = regexp.MustCompile(`(?im)^[ \t#]*(?:\*\*)?(?:(?:该|本|此)脚本的)?(?:本次)?(?:原始(?:执行)?输出|实际(?:执行)?输出|执行输出|输出|Output|stdout|stderr|响应|Response|Console|控制台)(?:[ \t]*[0-9]+)?(?:[ \t]*[（(][^\n()（）]{1,100}[）)])?(?:\*\*)?[ \t]*[:：]?[ \t]*(?:\*\*)?[ \t]*$`)
 	curlFileInputRe   = regexp.MustCompile(`(?i)(?:--data(?:-raw|-binary|-ascii|-urlencode)?|--header|-d|-H)(?:[= \t]+)['"]?@[^ \t\n]+|(?:--upload-file|--config|-T|-K)[= \t]+[^ \t\n]+`)
 	httpHeaderLineRe  = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9a-zA-Z-]+:[ \t]*[^\n]*$`)
 	fenceLineRe       = regexp.MustCompile("^[ \\t]*(`{3,}|~{3,})([^\\n]*)$")
@@ -67,7 +69,7 @@ func ValidateEvidencePOC(evidence string) error {
 		if evidenceFileRe.MatchString(trimmed) {
 			return fmt.Errorf("evidence 只引用了证据/POC 文件名，或缺少文件内的完整脚本/请求与原始结果；请直接粘贴文件内容，不能以文件名代替")
 		}
-		return fmt.Errorf("evidence 缺少完整可复核的输入与原始结果。须粘贴完整脚本/curl + 实际输出、完整 HTTP 请求/响应、带目标的协议收发原文，或触发请求 + 含时间戳和关联域名的 DNSLog/OOB 原始记录；纯摘要、空/假代码围栏、仅脚本无输出或仅结果均无效")
+		return fmt.Errorf("evidence 缺少完整可复核的输入与原始结果。须粘贴完整脚本/curl + 实际输出、完整 HTTP 请求/响应、带目标的协议收发原文，或触发请求 + 含时间戳和关联域名的 DNSLog/OOB 原始记录；脚本与结果请用独立闭合围栏或明确的“实际输出：”标题分开。纯摘要、空/假代码围栏、仅脚本无输出或仅结果均无效；只需补录已取得的原文，不要为录入重新执行测试")
 	}
 	return nil
 }
@@ -234,5 +236,5 @@ func omittedCriticalEvidence(evidence string) string {
 
 // EvidencePOCFieldDescription 供 record_vulnerability.evidence 的工具 schema 复用。
 func EvidencePOCFieldDescription() string {
-	return "证据 / POC（必需）：必须让未参与对话的人只靠本记录复核。能脚本化时贴完整可运行 POC 脚本（语言不限，Python/curl 均可），含目标、入口、参数、payload、认证头和关键 SQL/body；紧贴本次已取得的实际执行输出原文。浏览器、协议或 OOB 场景也可用完整原始请求/响应、带目标的协议收发记录、触发输入 + 含时间戳和关联域名的 DNSLog/OOB 原始记录，不强制 Python。受控写入必须贴完整 INSERT/UPDATE、inserted_rows/new_id 和回查结果。禁止纯摘要、仅脚本无输出、仅结果、空/假/未闭合代码围栏、文件名引用及 ... 占位。利用链的前置权限、执行顺序、每步输入与输出依赖写入 preconditions/reproduction_steps；已保存证据不足时应补录现有原文，不得编造输出或为录入自动执行脚本。"
+	return "证据 / POC（必需）：必须让未参与对话的人只靠本记录复核。能脚本化时贴完整可运行 POC 脚本（语言不限，Python/curl 均可），含目标、入口、参数、payload、认证头和关键 SQL/body；紧贴本次已取得的实际执行输出原文；脚本与输出分段，输出可用“实际输出：”“响应 1（原文）：”或“该脚本的实际执行输出（终端逐字原文）：”等标题标识，也可使用独立闭合代码围栏。浏览器、协议或 OOB 场景也可用完整原始请求/响应、带目标的协议收发记录、触发输入 + 含时间戳和关联域名的 DNSLog/OOB 原始记录，不强制 Python。受控写入必须贴完整 INSERT/UPDATE、inserted_rows/new_id 和回查结果。禁止纯摘要、仅脚本无输出、仅结果、空/假/未闭合代码围栏、文件名引用及 ... 占位。利用链的前置权限、执行顺序、每步输入与输出依赖写入 preconditions/reproduction_steps；已保存证据不足时应补录现有原文，不得编造输出或为录入自动执行脚本。"
 }

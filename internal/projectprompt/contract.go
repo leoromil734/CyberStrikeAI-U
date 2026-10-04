@@ -174,7 +174,7 @@ func reportSubmissionSection(mode PromptMode) string {
 	case PromptModeDeep, PromptModeSupervisor:
 		return `## 报告提交
 
-过程、草稿与报告提交必须区分：仅 Deep/Supervisor 根角色提交正式报告时，必须实际调用 exit，把报告全文写入 exit.final_result；不能只在普通助手正文自称“正式最终报告”，也不能仅提交摘要或文件路径。exit 只是请求结束当前模型执行，不是覆盖证明；提交不等于覆盖完整、验证通过或任务成功，平台仍独立判定。普通对话可用自然语言回答。
+过程、草稿与报告提交必须区分：仅 Deep/Supervisor 根角色提交正式报告时，必须实际调用 exit，把报告全文写入 exit.final_result；不能只在普通助手正文自称“正式最终报告”，也不能仅提交摘要或文件路径。exit 只是请求结束当前模型执行，不是覆盖证明；提交不等于覆盖完整、验证通过或任务成功，平台仍独立判定。后台工具及原件入库先等到终态，仍有可执行缺口则继续分类/验证；真正结束前必须交付报告，未完成时明确阶段成果与限制。普通对话可用自然语言回答。
 子角色只返回所分配子目标及证据，不提交父任务最终报告；子角色的 exit 只结束自身执行，不得提前终止父任务。`
 	case PromptModePlanExecute:
 		return `## 报告提交

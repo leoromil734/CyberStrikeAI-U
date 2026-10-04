@@ -194,8 +194,11 @@ func finalizationBlockedMessage(d agentfinalizer.Decision) string {
 
 // persistRunStopAndSendDelivery keeps failed/cancelled/timeout runs readable
 // without promoting their candidate text or treating pending tools as finished.
-func (h *AgentHandler) persistRunStopAndSendDelivery(conversationID, messageID, agentMode, status string, result *multiagent.RunResult, ids []string, sendEvent func(string, string, interface{})) {
+func (h *AgentHandler) persistRunStopAndSendDelivery(conversationID, messageID, agentMode, status string, result *multiagent.RunResult, ids []string, sendEvent func(string, string, interface{}), candidateReports ...string) {
 	d := agentfinalizer.Decision{Status: status, CompletionReason: status}
+	if len(candidateReports) > 0 {
+		d.CandidateReport = candidateReports[0]
+	}
 	reasoning := ""
 	if result != nil {
 		d.FinalText, d.ReportSubmitted = result.Response, result.ReportSubmitted

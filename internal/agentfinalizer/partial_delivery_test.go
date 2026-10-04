@@ -59,44 +59,63 @@ func TestPartialDeliveryRetainsOriginalAndDoesNotUpgradeAssessment(t *testing.T)
 	}
 }
 
-func TestPartialDeliveryRequiresStoppedRunAndNoPendingTools(t *testing.T) {
+func TestPartialDeliveryRequiresStoppedRun(t *testing.T) {
 	db, cid := partialDeliveryFixture(t)
 	base := Decision{ConversationID: cid, Status: StatusBlocked, CompletionReason: ReasonCoverageIncomplete}
-	for _, status := range []string{"", StatusInProgress, StatusAwaitingHITL, StatusCompleted, "paused"} {
+	for _, status := range []string{"", StatusInProgress, StatusAwaitingHITL, StatusCompleted, "paused", "unknown"} {
 		d := base
 		d.Status = status
-		if got := PrepareStoppedDelivery(db, d); got.DeliveryAvailable || got.RunTerminated {
-			t.Fatalf("accepted live/unknown state %s", status)
+		d.DeliveryAvailable, d.RunTerminated = true, true
+		d.DeliveryKind, d.DeliveryText = DeliveryKindPartialReport, "stale partial report"
+		if got := PrepareStoppedDelivery(db, d); got.DeliveryAvailable || got.RunTerminated || got.DeliveryText != "" || got.DeliveryKind != "" {
+			t.Fatalf("accepted live/unknown state %s: %+v", status, got)
 		}
 	}
-	for _, kind := range []string{"pending", "toolruns", "approval"} {
+	approval := base
+	approval.CompletionReason = ReasonAwaitingHITL
+	if got := PrepareStoppedDelivery(db, approval); got.DeliveryAvailable || got.RunTerminated {
+		t.Fatal("approval handoff was turned into termination")
+	}
+	approval.Status, approval.Finalizable, approval.Finalized = StatusAwaitingHITL, true, true
+	if got := PrepareStoppedDelivery(db, approval); got.DeliveryAvailable || got.RunTerminated {
+		t.Fatal("stale finalization flags overrode an approval state")
+	}
+}
+
+func TestPartialDeliveryRetainsPendingSnapshotsWithoutCompletingTools(t *testing.T) {
+	db, cid := partialDeliveryFixture(t)
+	base := Decision{ConversationID: cid, Status: StatusBlocked, CompletionReason: ReasonCoverageIncomplete}
+	for _, kind := range []string{"pending", "toolruns", "reason", "diagnostic"} {
 		d := base
 		switch kind {
 		case "pending":
 			d.PendingExecutionIDs = []string{"not-yet-finished"}
 		case "toolruns":
 			d.PendingToolRuns = []string{"not-yet-finished"}
-		case "approval":
-			d.CompletionReason = ReasonAwaitingHITL
+		case "reason":
+			d.CompletionReason = ReasonPendingTools
+		case "diagnostic":
+			d.MissingChecks = []string{"tool execution still queued or running"}
 		}
-		if got := PrepareStoppedDelivery(db, d); got.DeliveryAvailable {
-			t.Fatalf("ignored %s", kind)
+		got := PrepareStoppedDelivery(db, d)
+		assertStoppedDeliveryPreservesDecision(t, d, got)
+		if !strings.Contains(got.DeliveryText, "执行循环停止不代表所有工具完成") {
+			t.Fatalf("missing incomplete-tool boundary for %s", kind)
 		}
 	}
 	for _, status := range []string{mcp.ToolExecutionStatusQueued, mcp.ToolExecutionStatusRunning} {
 		if err := db.SaveToolExecution(&mcp.ToolExecution{ID: "pending", ConversationID: cid, ToolName: "offline", Status: status, StartTime: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		if got := PrepareStoppedDelivery(db, base); got.DeliveryAvailable || got.RunTerminated {
-			t.Fatal("unlisted conversation tool was ignored")
+		got := PrepareStoppedDelivery(db, base)
+		assertStoppedDeliveryPreservesDecision(t, base, got)
+		if !strings.Contains(got.DeliveryText, "均为未完成") || !strings.Contains(got.DeliveryText, "执行 ID：pending") || !strings.Contains(got.DeliveryText, "原状态："+status) {
+			t.Fatalf("unlisted pending tool was hidden: %s", got.DeliveryText)
 		}
-	}
-	if got := PrepareStoppedDelivery(nil, base); got.DeliveryAvailable {
-		t.Fatal("nil database must fail closed")
-	}
-	db.Close()
-	if got := PrepareStoppedDelivery(db, base); got.DeliveryAvailable {
-		t.Fatal("read failure must fail closed")
+		execution, err := db.GetToolExecution("pending")
+		if err != nil || execution.Status != status {
+			t.Fatalf("partial report mutated tool state: %+v, %v", execution, err)
+		}
 	}
 }
 

@@ -195,7 +195,7 @@ function resolveFinalAssistantResponseText(finalMessage, streamState) {
 
 /** 覆盖校验和报告交付是两个独立状态，阶段报告绝不能将 finalized 提升为 true。 */
 function isFinalizedResponseData(data) {
-    return !!(data && data.finalized === true && data.deliveryKind !== 'partial_report');
+    return !!(data && data.finalized === true && data.deliveryKind !== 'partial_report' && !hasPendingReportWork(data));
 }
 
 function isStoppedReportStatus(status) {
@@ -214,10 +214,17 @@ function hasPendingReportWork(data) {
 }
 
 function isPartialReportResponseData(data) {
-    return !!(data && data.deliveryAvailable === true && data.deliveryKind === 'partial_report'
-        && data.runTerminated === true && isStoppedReportStatus(data.status)
-        && typeof data.deliveryText === 'string' && data.deliveryText.trim() !== ''
-        && !hasPendingReportWork(data));
+    if (!data || data.deliveryAvailable !== true || data.deliveryKind !== 'partial_report'
+        || data.runTerminated !== true || !isStoppedReportStatus(data.status)
+        || typeof data.deliveryText !== 'string' || data.deliveryText.trim() === '') return false;
+    // A stopped run must retain a readable report even when some tools could
+    // not settle. That is not a successful assessment or a completed tool.
+    if (data.completionReason === 'awaiting_hitl' || data.workflowStatus === 'awaiting_hitl'
+        || data.awaitingHitl === true) return false;
+    const checks = Array.isArray(data.missingChecks) ? data.missingChecks : [data.missingChecks || ''];
+    if (checks.some(check => /workflow is awaiting HITL approval/i.test(String(check)))) return false;
+    return [data.pendingExecutionIds, data.pendingToolRuns].every(ids => ids == null
+        || (Array.isArray(ids) && ids.every(id => typeof id === 'string' && id.trim() !== '')));
 }
 
 function reportDeliveryLabel(kind) {
@@ -275,6 +282,33 @@ function markAssistantDeliveryState(element, data) {
     }
     label.dataset.deliveryKind = state.kind;
     label.textContent = reportDeliveryLabel(state.kind);
+    renderAssistantCandidateReport(element, data);
+}
+
+/** Raw candidate prose is separate and escaped by textContent, never delivered Markdown. */
+function renderAssistantCandidateReport(element, data) {
+    if (!element || !data || !isPartialReportResponseData(data)) return;
+    const candidate = typeof data.candidateReport === 'string' ? data.candidateReport
+        : (typeof data.finalText === 'string' ? data.finalText : '');
+    if (!candidate.trim() || candidate === data.deliveryText) return;
+    const host = element.querySelector('.message-content') || element;
+    let details = host.querySelector('.assistant-candidate-report');
+    if (!details) {
+        details = document.createElement('details');
+        details.className = 'assistant-candidate-report';
+        const summary = document.createElement('summary');
+        summary.textContent = '模型候选原文（未经完整检查，不代表已完成）';
+        details.appendChild(summary);
+        const body = document.createElement('pre');
+        body.className = 'assistant-candidate-report-body';
+        body.style.whiteSpace = 'pre-wrap';
+        body.style.maxHeight = '28rem';
+        body.style.overflow = 'auto';
+        details.appendChild(body);
+        host.appendChild(details);
+    }
+    const body = details.querySelector('.assistant-candidate-report-body');
+    if (body) body.textContent = candidate;
 }
 
 /** 只恢复明确的 response/check 合约或 done 阶段报告；planning 不能升级交付状态。 */
@@ -3325,9 +3359,9 @@ function handleStreamEvent(event, progressElement, progressId,
             }
             hideProgressMessageForFinalReply(progressId);
 
-            // Before integrating/removing the progress DOM, close any outstanding running tool calls
-            // so the copied timeline HTML reflects the final status.
-            finalizeOutstandingToolCallsForProgress(progressId, 'failed');
+            // A terminal partial report may still list unsettled tools. Preserve
+            // their actual state instead of visually marking them all failed.
+            if (!hasPendingReportWork(responseData)) finalizeOutstandingToolCallsForProgress(progressId, 'failed');
 
             const respMid = responseData.messageId;
             if (respMid) {

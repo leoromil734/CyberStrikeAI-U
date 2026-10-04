@@ -361,7 +361,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				"conversationId": conversationID,
 				"messageId":      assistantMessageID,
 			})
-			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 			segmentCancel()
 			return
 		}
@@ -379,7 +379,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				"messageId":      assistantMessageID,
 				"errorType":      "timeout",
 			})
-			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+			h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 			segmentCancel()
 			return
 		}
@@ -396,7 +396,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			"conversationId": conversationID,
 			"messageId":      assistantMessageID,
 		})
-		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent)
+		h.persistRunStopAndSendDelivery(conversationID, assistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(orch), taskStatus, result, cumulativeMCPExecutionIDs, sendEvent, finalizationAutoContinueAttempt.LastReportCandidate)
 		segmentCancel()
 		return
 	}
@@ -515,11 +515,8 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 				h.persistEinoAgentTraceForResume(prep.ConversationID, result)
 			}
 			h.logger.Error("Eino DeepAgent 执行失败", zap.Error(runErr))
-			errMsg := runExecutionErrorMessage(runErr)
-			if prep.AssistantMessageID != "" {
-				_, _ = h.db.Exec("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", errMsg, time.Now(), prep.AssistantMessageID)
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+			d := h.persistRuntimeFailureForDelivery(baseCtx, prep.ConversationID, prep.AssistantMessageID, "eino_"+config.NormalizeMultiAgentOrchestration(strings.TrimSpace(req.Orchestration)), result, cumulativeMCPExecutionIDs, runErr, finalizationAutoContinueAttempt.LastReportCandidate)
+			c.JSON(http.StatusInternalServerError, finalizationResponsePayload(d, map[string]interface{}{"error": runExecutionErrorMessage(runErr), "response": finalizationBlockedMessage(d)}))
 			return
 		}
 		if result == nil {

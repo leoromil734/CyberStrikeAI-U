@@ -22,7 +22,6 @@ const (
 	finalizationAutoContinueMaxAttempts = 2
 	finalizationCoverageMaxAttempts     = 8
 	finalizationCoverageNoProgressLimit = 2
-	finalizationCoverageRepairTimeout   = 15 * time.Minute
 	finalizationPendingWaitTimeout      = 20 * time.Minute
 	finalizationPendingPollInterval     = 5 * time.Second
 )
@@ -36,8 +35,11 @@ type finalizationContinuationState struct {
 	CoverageValidFactsHighWater int
 	CoverageEvidenceHighWater   int
 	CoverageNoProgress          int
-	StopReason                  string
-	StopStatus                  string
+	// WorkMode changes the next action, never the coverage proof or task scope.
+	WorkMode            string
+	LastReportCandidate string
+	StopReason          string
+	StopStatus          string
 }
 
 func finalizationContinuationLimit(d agentfinalizer.Decision) int {
@@ -56,7 +58,8 @@ func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int)
 	}
 	switch d.CompletionReason {
 	case agentfinalizer.ReasonMissingEvidence, agentfinalizer.ReasonCoverageIncomplete,
-		agentfinalizer.ReasonPendingTools, agentfinalizer.ReasonIncompleteCandidate:
+		agentfinalizer.ReasonPendingTools, agentfinalizer.ReasonIncompleteCandidate,
+		agentfinalizer.ReasonReportNotSubmitted, agentfinalizer.ReasonEmptyResponse:
 		return true
 	default:
 		return false
@@ -76,13 +79,11 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 		return false
 	}
 	if d.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+		state.WorkMode = "coverage_work"
 		if d.CoverageRepairBlocked {
-			if !d.CoverageProgressKnown {
-				state.StopReason = "独立库存或执行证据状态无法完整核实，已停止自动补写；保留原始缺口，不把读取失败或候选清单当作已覆盖"
-			} else {
-				state.StopReason = fmt.Sprintf("独立库存仍有 %d 组未处置候选，已停止自动逐条补写；保留全部原件，先按范围、当前性与业务功能分类，未测项不能写成 N/A 或安全", d.CoverageUnresolvedGroups)
-			}
-			return false
+			// Large/unknown raw inventory forbids mechanical fact inflation,
+			// not investigation. Reclassify within scope and verify real work.
+			state.WorkMode = "classify_and_verify"
 		}
 		if state.CoverageObserved {
 			if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
@@ -99,9 +100,10 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			state.CoverageValidFactsHighWater = d.CoverageValidFacts
 		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
-			state.StopReason = fmt.Sprintf("连续 %d 段续跑未增加独立执行证据，已停止自动补写；新增或改写 fact 不视为测试进展，原件与未完成范围已保留", finalizationCoverageNoProgressLimit)
-			return false
+			state.WorkMode = "classify_and_verify"
 		}
+	} else {
+		state.WorkMode = "deliver_report"
 	}
 	return true
 }
@@ -117,6 +119,9 @@ func finalizationStoppedDecision(d agentfinalizer.Decision, state *finalizationC
 		d.Status = agentfinalizer.StatusBlocked
 	}
 	if state != nil {
+		if state.LastReportCandidate != "" {
+			d.CandidateReport = state.LastReportCandidate
+		}
 		if state.StopStatus != "" && d.Status == agentfinalizer.StatusBlocked {
 			d.Status = state.StopStatus
 		}
@@ -138,42 +143,67 @@ func applyFinalizationDecisionToResult(result *multiagent.RunResult, d agentfina
 	result.PendingExecutionIDs = append([]string(nil), d.PendingExecutionIDs...)
 }
 
-func (h *AgentHandler) hasPendingToolExecution(ids []string) bool {
+func (h *AgentHandler) pendingFinalizationTools(ctx context.Context, conversationID string, ids []string) ([]string, error) {
 	if h == nil || h.db == nil {
-		return false
+		return nil, errors.New("无法核实后台工具状态：数据库不可用")
 	}
+	if conversationID != "" {
+		rows, err := h.db.QueryContext(ctx, `SELECT id FROM tool_executions WHERE conversation_id = ? AND status IN ('queued', 'running') ORDER BY id`, conversationID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var pending []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			pending = append(pending, id)
+		}
+		return pending, rows.Err()
+	}
+	var pending []string
 	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
+		execution, err := h.db.GetToolExecution(id)
+		if err != nil || execution == nil {
+			return nil, fmt.Errorf("无法核实后台工具 %s 的状态", id)
 		}
-		exec, err := h.db.GetToolExecution(id)
-		if err != nil || exec == nil {
-			continue
-		}
-		switch strings.TrimSpace(exec.Status) {
-		case mcp.ToolExecutionStatusQueued, mcp.ToolExecutionStatusRunning:
-			return true
+		if execution.Status == mcp.ToolExecutionStatusQueued || execution.Status == mcp.ToolExecutionStatusRunning {
+			pending = append(pending, id)
 		}
 	}
-	return false
+	return pending, nil
 }
 
-func (h *AgentHandler) waitFinalizationPendingExecutions(ctx context.Context, ids []string) bool {
-	if !h.hasPendingToolExecution(ids) {
-		return true
+func finalizationToolWaitDeadline(ctx context.Context) time.Time {
+	// Real requests already have an absolute deadline and each tool its own
+	// timeout. Do not terminate a legitimate long tool after an arbitrary 20m.
+	if deadline, ok := ctx.Deadline(); ok {
+		return deadline
 	}
-	deadline := time.Now().Add(finalizationPendingWaitTimeout)
+	return time.Now().Add(finalizationPendingWaitTimeout)
+}
+
+func (h *AgentHandler) waitFinalizationPendingExecutions(ctx context.Context, conversationID string, ids []string) error {
+	deadline := finalizationToolWaitDeadline(ctx)
 	for {
-		if !h.hasPendingToolExecution(ids) {
-			return true
+		if err := agentRunContextError(ctx); err != nil {
+			return err
 		}
-		if time.Now().After(deadline) {
-			return false
+		pending, err := h.pendingFinalizationTools(ctx, conversationID, ids)
+		if err != nil {
+			return err // an unreadable state never means completed
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return context.DeadlineExceeded
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return ctx.Err()
 		case <-time.After(finalizationPendingPollInterval):
 		}
 	}
@@ -205,14 +235,34 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	if state == nil || decision.Finalizable || decision.Finalized {
 		return false
 	}
+	if result != nil && (result.ReportSubmitted || multiagent.IsAssessmentReportCandidate(decision.FinalText)) && strings.TrimSpace(decision.FinalText) != "" {
+		state.LastReportCandidate = decision.FinalText
+	}
 	if stopFinalizationForContext(taskCtx, state) {
 		return false
 	}
-	// A submitted root exit ends the model run. A complete ordinary report
-	// candidate also must not trigger a new coverage bookkeeping loop. Neither
-	// signal waives coverage/evidence, pending tools, errors or approval gates.
-	if reportEndsFinalizationContinuation(result, decision) {
-		state.StopReason = "报告已提交或已产生完整候选，本次运行停止；检查未通过的部分保留为缺口，不再自动补写覆盖台账"
+	// exit submits a candidate, never permission to discard running tools or
+	// executable gaps. Wait first, even when the continuation count is spent.
+	if decision.Status == agentfinalizer.StatusAwaitingHITL || decision.Status == agentfinalizer.StatusCancelled || decision.Status == agentfinalizer.StatusFailed {
+		return false
+	}
+	if decision.CompletionReason == agentfinalizer.ReasonPendingTools || len(decision.PendingExecutionIDs) > 0 {
+		if progressCallback != nil {
+			progressCallback("finalization_waiting_tools", fmt.Sprintf("仍有 %d 个工具执行在运行，等待其结束后核对证据与报告…", len(decision.PendingExecutionIDs)), map[string]interface{}{
+				"conversationId": conversationID, "source": "finalizer", "status": decision.Status,
+				"completionReason": decision.CompletionReason, "pendingExecutionIds": decision.PendingExecutionIDs,
+				"waitTimeoutSeconds": int(time.Until(finalizationToolWaitDeadline(taskCtx)).Seconds()),
+			})
+		}
+		if err := h.waitFinalizationPendingExecutions(taskCtx, conversationID, decision.PendingExecutionIDs); err != nil {
+			state.StopReason = "无法等到后台工具完成：" + err.Error() + "；保留未完成执行记录并交付阶段报告"
+			stopFinalizationForContext(taskCtx, state)
+			return false
+		}
+	}
+	if err := h.waitFinalizationIngestion(taskCtx, conversationID, progressCallback); err != nil {
+		state.StopReason = "原件入库未能完成：" + err.Error() + "；保留真实缺口并交付阶段报告"
+		stopFinalizationForContext(taskCtx, state)
 		return false
 	}
 	if !observeFinalizationContinuation(decision, state) {
@@ -221,20 +271,6 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	if result == nil || !multiagent.HasEinoResumeTrace(result) {
 		state.StopReason = "缺少可恢复的代理轨迹，已阻断而非登记成功"
 		return false
-	}
-	if decision.CompletionReason == agentfinalizer.ReasonPendingTools {
-		if progressCallback != nil {
-			progressCallback("finalization_waiting_tools", fmt.Sprintf("仍有 %d 个工具执行在运行，等待其结束后继续…", len(decision.PendingExecutionIDs)), map[string]interface{}{
-				"conversationId": conversationID, "source": "finalizer", "status": decision.Status,
-				"completionReason": decision.CompletionReason, "pendingExecutionIds": decision.PendingExecutionIDs,
-				"waitTimeoutSeconds": int(finalizationPendingWaitTimeout / time.Second),
-			})
-		}
-		if !h.waitFinalizationPendingExecutions(taskCtx, decision.PendingExecutionIDs) {
-			state.StopReason = "等待后台工具结束已超时，已阻断并保留待完成执行 ID"
-			stopFinalizationForContext(taskCtx, state)
-			return false
-		}
 	}
 	// Check the save result: otherwise a failed write can restore stale history
 	// and falsely consume another repair attempt.
@@ -261,7 +297,8 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	*curFinalMessage = ""
 	var coverageChecksFile string
 	if decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
-		mcp.StartCoverageRepairBudget(taskCtx, finalizationCoverageRepairTimeout)
+		// This segment performs real classification/verification, not a timed
+		// bookkeeping loop. The request deadline and tool budgets still apply.
 		root := ""
 		if h.config != nil {
 			root = h.config.MultiAgent.EinoMiddleware.ReductionRootDir
@@ -270,9 +307,15 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			RootDir: root, ProjectID: h.conversationProjectID(conversationID), ConversationID: conversationID,
 			ExecutionID: "coverage-checks-" + uuid.NewString() + ".json",
 		})
-	} else if decision.CompletionReason == agentfinalizer.ReasonIncompleteCandidate {
-		if _, repairOnly := multiagent.FinalReportAfterCoverageRepair(result.Response, result.LastAgentTraceInput); repairOnly {
-			*curFinalMessage = multiagent.FormatFinalReportContinueUserMessage()
+		if state.WorkMode == "classify_and_verify" {
+			*curFinalMessage = coverageContinuationHeader + fmt.Sprintf("【分类与验证续跑】原始候选观察数 %d、待处置观察数 %d，计数是否完整核实=%t。停止逐条抄写事实不等于停止实际测试；先按授权范围、当前性和业务功能分类去重，保留原件及映射，再执行/委派仍可执行的高价值验证。入库失败/待入库是平台证据缺口，不能改成安全或伪造已覆盖；先处理不依赖它的工作。\n\n", decision.CoverageInventoryGroups, decision.CoverageUnresolvedGroups, decision.CoverageProgressKnown) + strings.TrimPrefix(*curFinalMessage, coverageContinuationHeader)
+		}
+	} else {
+		*curFinalMessage = finalizationResumeInstruction(decision)
+		if decision.CompletionReason == agentfinalizer.ReasonIncompleteCandidate {
+			if _, repairOnly := multiagent.FinalReportAfterCoverageRepair(result.Response, result.LastAgentTraceInput); repairOnly {
+				*curFinalMessage = multiagent.FormatFinalReportContinueUserMessage()
+			}
 		}
 	}
 	state.Attempts++
@@ -283,9 +326,10 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"completionReason": decision.CompletionReason, "missingChecks": decision.MissingChecks,
 			"coverageChecksFile": coverageChecksFile, "coverageValidFacts": decision.CoverageValidFacts,
 			"coverageNoProgress": state.CoverageNoProgress, "coverageEvidenceExecutions": decision.CoverageEvidenceExecutions,
-			"coverageUnresolvedGroups": decision.CoverageUnresolvedGroups, "repairTimeoutSeconds": int(finalizationCoverageRepairTimeout.Seconds()),
-			"pendingExecutionIds": decision.PendingExecutionIDs,
-			"contextInjection":    decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
+			"coverageUnresolvedGroups": decision.CoverageUnresolvedGroups, "workMode": state.WorkMode,
+			"bookkeepingRepairStopped": state.WorkMode == "classify_and_verify",
+			"pendingExecutionIds":      decision.PendingExecutionIDs,
+			"contextInjection":         decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
 		})
 	}
 	select {
@@ -297,22 +341,15 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	}
 }
 
-func reportEndsFinalizationContinuation(result *multiagent.RunResult, decision agentfinalizer.Decision) bool {
-	if result == nil || decision.Finalizable || decision.Finalized {
-		return false
+func finalizationResumeInstruction(d agentfinalizer.Decision) string {
+	prefix := "【系统交付修复 / Final report required】\nexit 仅表示请求收尾，当前检查尚未通过；继续基于已有轨迹完成实际工作，禁止只说接下来做什么就结束。"
+	if d.CompletionReason == agentfinalizer.ReasonPendingTools {
+		return prefix + "后台工具已结束，请先实际读取执行结果、保留失败/超时范围，重新核对覆盖与证据，然后提交包含成果、证据、未完成范围的完整报告。不要仅复述旧报告。"
 	}
-	if result.ReportSubmitted {
-		return true
-	}
-	switch decision.CompletionReason {
-	case agentfinalizer.ReasonCoverageIncomplete, agentfinalizer.ReasonMissingEvidence, agentfinalizer.ReasonReportNotSubmitted:
-		return multiagent.IsAssessmentReportCandidate(decision.FinalText)
-	default:
-		return false
-	}
+	return prefix + "已有草稿/exit 内容不代表任务完成。先处理仍可执行的缺口；报告须包含实际成果与证据、负结果及限制。Deep/Supervisor 根角色用 exit.final_result 提交完整正文，其他模式正常返回报告。\n当前检查原因：" + d.CompletionReason
 }
 
-const coverageContinuationHeader = multiagent.CoverageContinuationHeader
+const coverageContinuationHeader = multiagent.CoverageWorkContinuationHeader
 
 // With no artifact, preserve every check in full. Silent prefix-only feedback
 // previously hid the exact malformed JS/source records the model had to repair.

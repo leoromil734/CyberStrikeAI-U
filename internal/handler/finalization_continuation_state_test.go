@@ -51,15 +51,13 @@ func TestCoverageContinuationNoProgressAndBrokenManifest(t *testing.T) {
 			// treated as repair; recovering to the old high water is not new progress.
 			d := coverageDecision(count, fmt.Sprintf("gap list of size %d", 40-i*19))
 			got := observeFinalizationContinuation(d, state)
-			if got != (i < 2) {
-				t.Fatalf("counts=%v at %d: state=%+v allowed=%v", counts, i, state, got)
+			if !got {
+				t.Fatalf("counts=%v at %d: investigation stopped instead of changing strategy: %+v", counts, i, state)
 			}
-			if got {
-				state.Attempts++
-			}
+			state.Attempts++
 		}
-		if state.Attempts != 2 || state.StopReason == "" {
-			t.Fatalf("no-progress stop lost: %+v", state)
+		if state.Attempts != 3 || state.StopReason != "" || state.WorkMode != "classify_and_verify" {
+			t.Fatalf("stagnant bookkeeping did not switch to investigation: %+v", state)
 		}
 	}
 	state := &finalizationContinuationState{}
