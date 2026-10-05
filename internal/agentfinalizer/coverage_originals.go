@@ -30,7 +30,9 @@ func ConfigureCoverageOriginals(db *database.DB, trustedRoot string) error {
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(root, `\\`) || strings.HasPrefix(root, "//") || strings.Contains(strings.TrimPrefix(root, filepath.VolumeName(root)), ":") { return evidence.ErrUnsafePath }
+	if strings.HasPrefix(root, `\\`) || strings.HasPrefix(root, "//") || strings.Contains(strings.TrimPrefix(root, filepath.VolumeName(root)), ":") {
+		return evidence.ErrUnsafePath
+	}
 	coverageOriginalRoots.Store(db, root)
 	return nil
 }
