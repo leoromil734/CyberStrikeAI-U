@@ -23,8 +23,8 @@ func TestRequestFactBudgetSurvivesSiblingSegments(t *testing.T) {
 	if err := mcp.AdmitProjectFactWrite(second, 9999); !errors.Is(err, mcp.ErrFactWriteBudget) {
 		t.Fatalf("new segment reset write limit: %v", err)
 	}
-	if !errors.Is(context.Cause(run.Context), mcp.ErrFactWriteBudget) || !errors.Is(context.Cause(second), mcp.ErrFactWriteBudget) {
-		t.Fatal("budget stop did not cancel the request root")
+	if run.Context.Err() != nil || second.Err() != nil {
+		t.Fatal("fact quota must not cancel the request root or report segment")
 	}
 }
 

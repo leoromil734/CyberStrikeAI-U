@@ -22,6 +22,29 @@ import (
 
 const batchQueueWorkerIdlePoll = 200 * time.Millisecond
 
+func batchTaskErrorSummary(task *BatchTask) string {
+	if task == nil {
+		return ""
+	}
+	text := strings.TrimSpace(task.Error)
+	if text == "" {
+		return task.Status
+	}
+	// Historical rows stored the whole phase report in error. Never copy it again.
+	if strings.HasPrefix(text, "#") || len([]rune(text)) > 500 {
+		return task.Status + "：阶段报告已保存在任务结果，不能把报告正文当作错误详情"
+	}
+	return text
+}
+
+func boundedQueueError(parts []string) string {
+	joined := strings.Join(parts, "\n")
+	if len([]rune(joined)) <= 4000 {
+		return joined
+	}
+	return fmt.Sprintf("未最终化子任务 %d 个；各任务保留简短原因和完整结果，队列不再拼接报告正文。", len(parts))
+}
+
 // executeBatchQueue 使用并发 worker 池执行批量任务队列。
 func (h *AgentHandler) executeBatchQueue(queueID string) {
 	defer h.batchTaskManager.UnmarkQueueExecutor(queueID)
@@ -105,9 +128,9 @@ func (h *AgentHandler) tryFinalizeBatchQueue(queueID string) {
 			continue
 		}
 		if t.Status == BatchTaskStatusBlocked {
-			blockedReasons = append(blockedReasons, fmt.Sprintf("任务 %s: %s", t.ID, t.Error))
+			blockedReasons = append(blockedReasons, fmt.Sprintf("任务 %s: %s", t.ID, batchTaskErrorSummary(t)))
 		} else if t.Status == BatchTaskStatusFailed && t.Error != "" {
-			lastRunErr = t.Error
+			lastRunErr = batchTaskErrorSummary(t)
 		}
 	}
 	if len(blockedReasons) > 0 {
@@ -115,7 +138,7 @@ func (h *AgentHandler) tryFinalizeBatchQueue(queueID string) {
 		if lastRunErr != "" {
 			blockedReasons = append(blockedReasons, lastRunErr)
 		}
-		h.batchTaskManager.SetLastRunError(queueID, strings.Join(blockedReasons, "\n"))
+		h.batchTaskManager.SetLastRunError(queueID, boundedQueueError(blockedReasons))
 		h.batchTaskManager.UpdateQueueStatus(queueID, BatchQueueStatusPaused)
 		h.logger.Info("批量任务队列存在未最终化的子任务，已暂停等待恢复", zap.String("queueId", queueID), zap.Int("blockedCount", blockedCount))
 		return
@@ -227,7 +250,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	baseCtx, cancelWithCause := context.WithCancelCause(principalCtx)
 	baseCtx = mcp.WithAgentRunBudget(baseCtx, cancelWithCause)
 	defer mcp.CloseAgentRunBudget(baseCtx)
-	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 6*time.Hour)
+	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, defaultAgentRunTimeout)
 
 	registered := false
 	// 默认失败；只有最终化检查通过后才允许登记 completed。
@@ -250,7 +273,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 				if batchStatus == "timeout" {
 					batchStatus = BatchTaskStatusFailed
 				}
-				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, finalizationBlockedMessage(decision), finalizationBlockedMessage(decision), conversationID)
+				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, finalizationBlockedMessage(decision), finalizationStopSummary(decision), conversationID)
 			}
 			h.finishBatchSubTask(conversationID, finishStatus, decision)
 		}
@@ -453,7 +476,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 				if batchStatus == "timeout" {
 					batchStatus = BatchTaskStatusFailed
 				}
-				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, decision.DeliveryText, decision.DeliveryText, conversationID)
+				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, batchStatus, decision.DeliveryText, finalizationStopSummary(decision), conversationID)
 			}
 		}
 		return
@@ -478,7 +501,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	finishStatus = decision.Status
 	errorMsg := ""
 	if !decision.Finalizable {
-		errorMsg = finalizationBlockedMessage(decision)
+		errorMsg = finalizationStopSummary(decision)
 		h.logger.Info("批量任务执行已停止但未达到交付条件", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.String("status", finishStatus), zap.String("completionReason", decision.CompletionReason))
 	} else {
 		h.logger.Info("批量任务执行成功", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))

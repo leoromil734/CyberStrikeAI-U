@@ -73,7 +73,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	}
 	baseCtx, cancelWithCause := context.WithCancelCause(detachedAgentContext(c.Request.Context()))
 	defer cancelWithCause(nil)
-	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
+	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, defaultAgentRunTimeout)
 	defer timeoutCancel()
 	taskCtx = vision.WithSessionConfig(taskCtx, runCfg.Vision, runCfg.OpenAI)
 
@@ -97,6 +97,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "workflow")
 	taskOwned = true
+	sendEvent("task_started", "任务已启动", map[string]interface{}{"conversationId": conversationID})
 	h.recordConversationAIChannel(conversationID, req.AIChannelID, runCfg)
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
@@ -220,7 +221,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 
 	baseCtx, cancelWithCause := context.WithCancelCause(c.Request.Context())
 	defer cancelWithCause(nil)
-	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 600*time.Minute)
+	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, defaultAgentRunTimeout)
 	defer timeoutCancel()
 	taskCtx = vision.WithSessionConfig(taskCtx, runCfg.Vision, runCfg.OpenAI)
 

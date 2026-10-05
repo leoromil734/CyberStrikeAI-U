@@ -61,8 +61,8 @@ value = business_criticality + auth_or_admin + data_sensitivity
 
 1. 从入口 HTML、manifest、preload/prefetch、动态 import、worker/service worker 收集所有脚本，维护 `queued → fetched → analyzed → references-expanded` 状态；递归跟进新增 chunk，直到队列为空或每个失败项有原始 blocked 证据。
 2. 保存 URL、hash、来源页面、抓取状态；探测同名 `.map`，解析 source map/sourceRoot/sourcesContent，但不把未下载文件写成已审计。
-3. **必须双通道**：第一路用 `jsapiscan` 从范围内入口 URL/JS URL 发现并保存 JS（默认保存源码、关闭 API/外链/无头模式），不要把本地文件当 URL。读取回包的 `work_dir/stdout_file/manifest` 与完整 CSV/源码原件；候选预览不是完整端点清单。第二路实际用 `grep/rg` 检索同批原始 JS/chunk/worker 与 source map 提取出的 `sourcesContent` 文件。第二路不是工具故障时才做；工具零结果也必须执行。source map 的 `.ts/.tsx/.jsx` 原源码与 HTML 内联脚本保存为本地源码后同样检索，不能只读 JSON 外壳。
-   纯离线任务用本地解析和命令；旧 `jsluice` 配置与程序保留、默认停用，需要时显式恢复而不删除。JSAPIscan 的 `-Ineedparms` 在当前发布版实际报错，本适配不传它；参数仍由源码检索/调用上下文补齐。
+3. **必须双通道**：先用 `katana`/`gau` 发现范围内 JS URL，再按授权下载保存源码（保留 URL、抓取状态和 hash）。第一路用 `jsluice` 静态分析这些本地文件，传 `file` 与实际 `source_url`；后者仅为元数据，不发请求。读取绑定执行目录中的 `manifest.json`、`source.js`、`raw.jsonl` 和 `urls.jsonl`/`secrets.jsonl` 原件，stdout 计数不是端点清单。保留 method、relativeURL、参数名及 EXPR 占位，不按 JS 目录猜运行时 baseURL。第二路实际用 `grep/rg` 检索同批原始 JS/chunk/worker 与 source map 提取出的 `sourcesContent` 文件。第二路不是工具故障时才做；工具零结果也必须执行。source map 的 `.ts/.tsx/.jsx` 原源码与 HTML 内联脚本保存为本地源码后同样检索，不能只读 JSON 外壳。
+   `jsluice` 不执行 JS、不爬取、不验证可达性；secrets 始终 tentative，原始秘密值仅在受限原件，不直接 `record_vulnerability`。旧 `jsapiscan` 默认停用、保留显式兼容和历史 CSV 读入，不自动回退在线爬取。缺依赖/原件/受界限截断时留 gap/blocked。
 4. 命令检索覆盖绝对 HTTP/WebSocket URL、相对路径（不限 `/api/`）、fetch/axios/XHR/GraphQL、共享客户端的 `baseURL/urlPrefix` 与调用点、模板字符串/拼接/转义和环境配置。逐个展开方法/前缀/参数，未能解析的动态项保留 `gap/blocked` 与具体表达式，不把 `MainClient/*` 当完整端点。
 5. 对两路原件分别记录命令、源文件清单/hash、raw/unique/incremental 和错误；合并去重保留所有来源/调用上下文。不得对**输入源码**使用 `head` 或只抽代表 chunk 以宣称全覆盖；可以对输出做短预览，但完整命中保存工件。
 6. 解混淆只服务于恢复路由与数据流；保留变换方法和输入 hash。正则和静态工具都无法保证完全恢复动态接口；字符串只是 tentative，结合必要的运行时调用确认方法、参数与可达性。

@@ -1,0 +1,28 @@
+/* Shared text-only model probe details; no changes to task-specific layout. */
+.ai-channel-probe-details {
+    display: block;
+    min-width: 0;
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 400;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    color: var(--text-secondary, #64748b);
+}
+
+.ai-channel-probe-details[hidden] {
+    display: none;
+}
+
+.session-settings-select-option.ai-channel-probe-option {
+    display: block;
+}
+
+.session-settings-select-option.ai-channel-probe-option .session-settings-select-option-label {
+    display: block;
+}
+
+.ai-channel-probe-current {
+    margin: 6px 2px 0;
+}

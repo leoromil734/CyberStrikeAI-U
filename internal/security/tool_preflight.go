@@ -26,7 +26,7 @@ type ToolPreflight struct {
 // preflight into an arbitrary shell command or an unbounded scan.
 var safeHelpEntrypoints = map[string][]string{
 	"amass": {"enum", "-h"}, "subfinder": {"-h"}, "dnsx": {"-h"}, "httpx-pd": {"-h"},
-	"naabu": {"-h"}, "nmap": {"-h"}, "nuclei": {"-h"}, "katana": {"-h"}, "jsapiscan": {"--help"},
+	"naabu": {"-h"}, "nmap": {"-h"}, "nuclei": {"-h"}, "katana": {"-h"}, "jsapiscan": {"--help"}, "jsluice": {"--help"}, "csai-jsluice": {"--help"},
 }
 
 func PreflightTool(ctx context.Context, tool config.ToolConfig, runtimeCheck bool) ToolPreflight {
@@ -41,6 +41,13 @@ func PreflightTool(ctx context.Context, tool config.ToolConfig, runtimeCheck boo
 		return r
 	}
 	r.Available = true
+	if tool.Name == "jsluice" && strings.TrimSuffix(strings.ToLower(filepath.Base(path)), ".exe") == "csai-jsluice" {
+		if _, err := exec.LookPath("jsluice"); err != nil {
+			r.Available = false
+			r.Error = "jsluice_dependency_not_found"
+			return r
+		}
+	}
 	seen := map[string]bool{}
 	for _, p := range tool.Parameters {
 		if seen[p.Name] {

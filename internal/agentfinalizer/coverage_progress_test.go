@@ -187,8 +187,8 @@ func TestCoverageMappedGroupsNeedEvidenceAndSubstantiveDisposition(t *testing.T)
 		name, status, proof string
 		mapped              int
 	}{
-		{"actual", "covered", "execution:scan-1", 1},
-		{"actual-negative", "negated", "source:live-source", 1},
+		{"actual", "covered", "execution:scan-1", 0},
+		{"actual-negative", "negated", "source:live-source", 0},
 		{"copied-na", "not-applicable", "execution:scan-1", 0},
 		{"invented", "negated", "execution:made-up", 0},
 		{"token-prefix", "covered", "execution:scan-10", 0},
@@ -370,11 +370,11 @@ func TestCompleteCoverageSourcesFreshnessAndStructuredBinding(t *testing.T) {
 		fields map[string]any
 		want   bool
 	}{
-		{map[string]any{"source_id": "live-source", "execution_id": "live-execution"}, true},
+		{map[string]any{"source_id": "live-source", "execution_id": "live-execution"}, false},
 		{map[string]any{"source_id": "live-source", "execution_id": "other-execution"}, false},
 		{map[string]any{"source_id": "invented", "evidence": "execution:live-execution"}, false},
 		{map[string]any{"execution_id": "expired-execution", "evidence": "source:live-source"}, false},
-		{map[string]any{"evidence": "mcp_execution:live-execution"}, true},
+		{map[string]any{"evidence": "mcp_execution:live-execution"}, false},
 		{map[string]any{"evidence": "execution:live-execution-suffix"}, false},
 	} {
 		if got := index.corroborates(test.fields); got != test.want {

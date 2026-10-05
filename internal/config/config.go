@@ -1114,7 +1114,8 @@ type RedisConfig struct {
 }
 
 type AgentConfig struct {
-	// MaxFactWritesPerRun bounds model-written facts across all roles and automatic segments; <=0 uses 256.
+	// MaxFactWritesPerRun bounds validated fact mutations across roles/segments;
+	// <=0 uses 1024. Exhaustion blocks fact writes, not real tools or reporting.
 	MaxFactWritesPerRun                int `yaml:"max_fact_writes_per_run,omitempty" json:"max_fact_writes_per_run,omitempty"`
 	MaxIterations                      int `yaml:"max_iterations" json:"max_iterations"`
 	ToolTimeoutMinutes                 int `yaml:"tool_timeout_minutes" json:"tool_timeout_minutes"`                                     // 单次工具执行最大时长（分钟），超时自动终止，防止长时间挂起；0 表示不限制（不推荐）
@@ -1135,7 +1136,7 @@ type AgentConfig struct {
 
 func (c AgentConfig) MaxFactWritesPerRunEffective() int {
 	if c.MaxFactWritesPerRun <= 0 {
-		return 256
+		return 1024
 	}
 	return c.MaxFactWritesPerRun
 }

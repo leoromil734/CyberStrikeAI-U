@@ -160,6 +160,30 @@ func finalizationCheckMessage(d agentfinalizer.Decision) string {
 	return finalizationBlockedMessage(d)
 }
 
+// finalizationStopSummary is the durable task/queue diagnostic. The full phase
+// report stays in the result and assistant message; repeating it here previously
+// made one queue error nearly 100,000 characters.
+func finalizationStopSummary(d agentfinalizer.Decision) string {
+	status := strings.TrimSpace(d.Status)
+	if status == "" {
+		status = "blocked"
+	}
+	reason := strings.TrimSpace(d.CompletionReason)
+	if reason == "" {
+		reason = "delivery_incomplete"
+	}
+	summary := fmt.Sprintf("%s/%s", status, reason)
+	if d.CoverageProgressKnown {
+		summary += fmt.Sprintf("；独立候选 %d 组，已关联处置 %d 组，未完成 %d 组", d.CoverageInventoryGroups, d.CoverageMappedGroups, d.CoverageUnresolvedGroups)
+	}
+	summary += "。完整报告见任务结果，不能据此认定评估通过或目标安全。"
+	runes := []rune(summary)
+	if len(runes) > 500 {
+		return string(runes[:500])
+	}
+	return summary
+}
+
 // finalizationBlockedMessage 生成用户可见的阻断文案（不暴露敏感细节，只说明未达最终化条件）。
 func finalizationBlockedMessage(d agentfinalizer.Decision) string {
 	if d.DeliveryAvailable && d.RunTerminated && d.DeliveryKind == agentfinalizer.DeliveryKindPartialReport && strings.TrimSpace(d.DeliveryText) != "" {

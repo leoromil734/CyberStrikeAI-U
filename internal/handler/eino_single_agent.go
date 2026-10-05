@@ -161,7 +161,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	var result *multiagent.RunResult
 	var runErr error
 
-	runDeadline := newAgentRunDeadline(detachedAgentContext(c.Request.Context()), time.Now().Add(600*time.Minute))
+	runDeadline := newAgentRunDeadline(detachedAgentContext(c.Request.Context()), time.Now().Add(defaultAgentRunTimeout))
 	defer runDeadline.close()
 	var taskCtx context.Context
 	var segmentCancel context.CancelFunc
@@ -189,6 +189,9 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 	}
 	h.tasks.SetTaskAgentMode(conversationID, "eino_single")
 	taskOwned = true
+	// This is the only acknowledgement that registration succeeded. Earlier
+	// conversation/message_saved/progress events do not mean the task started.
+	sendEvent("task_started", "任务已启动", map[string]interface{}{"conversationId": conversationID})
 	h.recordConversationAIChannel(conversationID, resolvedAIChannelID, runCfg)
 	h.recordRunTargets(conversationID, req.Message)
 
@@ -440,7 +443,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		progressBuf.WriteString(eventType)
 		progressBuf.WriteByte('\n')
 	}
-	runDeadline := newAgentRunDeadline(c.Request.Context(), time.Now().Add(600*time.Minute))
+	runDeadline := newAgentRunDeadline(c.Request.Context(), time.Now().Add(defaultAgentRunTimeout))
 	defer runDeadline.close()
 	baseCtx, cancelWithCause, taskCtx, segmentCancel := runDeadline.newEinoSegment()
 	defer segmentCancel()

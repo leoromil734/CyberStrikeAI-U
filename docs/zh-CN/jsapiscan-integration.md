@@ -2,7 +2,7 @@
 
 ## 主工具与保留工具
 
-在线 JS/API 发现默认使用 `tools/jsapiscan.yaml`；入口是范围内 URL 或 URL 清单。旧 `tools/jsluice.yaml` 与已安装的 jsluice 保留，只将配置设为 `enabled: false`，后续可恢复；没有删除源码、配置或旧程序。纯离线 JS 文件分析用本地解析/grep/rg，不把文件路径传给 jsapiscan 的 `-u`。
+当前默认改为 `tools/jsluice.yaml`：katana/gau 发现 JS URL、按授权下载保存，然后 jsluice 静态分析本地文件并用 grep/rg 复核。`tools/jsapiscan.yaml` 设为 `enabled: false`，保留显式兼容及历史结果读取，不删除程序与原件。jsluice 不是在线爬虫，source_url 只是来源元数据；详见 `jsluice-integration.md`。
 
 `jsapiscan` 是主动 HTTP 爬取程序，不是离线静态解析器。每个任务仍需工具发现/保存源码 + 对全部 JS/chunk/worker/source map 原源码的 grep/rg 两路证据，合并候选后做可达性、方法/参数和独立风险验证。
 
@@ -43,4 +43,4 @@ Linux/root 宿主负责编排，实际二进制运行于不可登录的专用用
 
 结果位于 `/var/lib/jsapiscan/runs/run-*/`，回包给出 `work_dir/stdout_file/manifest.json`、原件列表/hash与最多50条候选预览。原始 CSV/源码才是完整证据；CSV中的 Body 不回显到预览，原件按项目权限读取。请求头文件复制到受限工作目录，结束后移除副本；原用户文件不改动。不要把原始报告/源码秘密放进公开目录。
 
-工具/角色/Skill 默认引用已经切换到 jsapiscan；服务器工具 YAML 更新后需应用正常的工具重载或下一次重启才更新 MCP 内存注册，修改磁盘文件不冒充已完成运行时重载。后端共享提示代码需正常发布；仅安装独立工具不自动替换后端程序或修改生产模型/数据库配置。
+工具/角色/Skill 默认引用已经切换回本地 jsluice；jsapiscan 的以下安装/版本说明仅作为历史兼容记录。服务器工具 YAML 更新后需应用正常的工具重载或下一次重启才更新 MCP 内存注册，修改磁盘文件不冒充已完成运行时重载。后端共享提示代码需正常发布；仅安装独立工具不自动替换后端程序或修改生产模型/数据库配置。

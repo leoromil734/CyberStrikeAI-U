@@ -10,7 +10,7 @@ func TestCoverageFactInflationSwitchesStrategyWithoutRenewingProgress(t *testing
 		if !observeFinalizationContinuation(d, state) {
 			t.Fatalf("investigation stopped at %d: %+v", i, state)
 		}
-		state.Attempts++
+		state.recordContinuation(d)
 	}
 	if state.WorkMode != "classify_and_verify" || state.CoverageEvidenceHighWater != 3 || state.CoverageNoProgress != 2 || state.StopReason != "" {
 		t.Fatalf("fact inflation must switch strategy, not count as evidence: %+v", state)
@@ -40,6 +40,6 @@ func TestUnknownEvidenceCannotRenewProgressButCanInvestigate(t *testing.T) {
 		if !observeFinalizationContinuation(d, state) || state.WorkMode != "classify_and_verify" || state.CoverageEvidenceHighWater != 0 {
 			t.Fatalf("unknown evidence was trusted or investigation blocked: %+v", state)
 		}
-		state.Attempts++
+		state.recordContinuation(d)
 	}
 }

@@ -18,6 +18,9 @@
 #   PIP_INDEX_URL    默认 https://pypi.tuna.tsinghua.edu.cn/simple
 #   GO_VERSION       默认 1.25.0（官方 tarball，覆盖 apt 过旧的 golang）
 #   TOOLS_BIN_DIR    默认 /usr/local/bin
+#   JSLUICE_VERSION  默认 v0.0.0-20240110145140-0ddfab153e06（官方模块固定版本）
+#   ONEFORALL_HOME   默认 /opt/OneForAll；保留已有安装，不自动 git pull
+#   ONEFORALL_PYTHON 可显式指定既有 venv 的 python 绝对路径
 # =============================================================================
 
 set -euo pipefail
@@ -43,6 +46,10 @@ GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 GO_VERSION="${GO_VERSION:-1.25.0}"
 TOOLS_BIN_DIR="${TOOLS_BIN_DIR:-/usr/local/bin}"
+# Official CLI uses cgo/tree-sitter; pin the upstream Go module revision.
+JSLUICE_VERSION="${JSLUICE_VERSION:-v0.0.0-20240110145140-0ddfab153e06}"
+ONEFORALL_HOME="${ONEFORALL_HOME:-/opt/OneForAll}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=21
 PY_MIN_MAJOR=3
@@ -193,7 +200,7 @@ TOOLS_CORE_EXTRA=(
   # 子域深度收集（YAML: tools/oneforall.yaml）；与 subfinder 互补
   "oneforall|oneforall|script|install_oneforall"
   # JS 端点提取（YAML: tools/jsluice.yaml）；katana 后展开 recon/endpoint
-  "jsluice|jsluice|go|github.com/BishopFox/jsluice/cmd/jsluice@latest"
+  "jsluice|jsluice|script|install_jsluice"
   # API skill 常用：OpenAPI lint + GraphQL 扫描（YAML: api-schema-analyzer / graphql-scanner）
   "api-schema-analyzer|spectral|script|install_spectral"
   "graphql-scanner|graphqlmap|script|install_graphqlmap"
@@ -1140,58 +1147,72 @@ EOF
   fi
 }
 
-# OneForAll：子域收集框架（https://github.com/shmilylty/OneForAll）
-# 可装；与 subfinder 互补。依赖多、首次慢，装到 /opt 并用包装脚本暴露 oneforall 命令。
-install_oneforall() {
-  local name="oneforall" check="oneforall"
-  if already_ok "$check"; then mark_skip "$name"; return 0; fi
-  info "安装 OneForAll → /opt/OneForAll ..."
-  if [[ "$DRY_RUN" -eq 1 ]]; then mark_ok "$name"; return 0; fi
-
-  local dest="/opt/OneForAll"
-  if [[ ! -d "$dest/.git" ]]; then
-    rm -rf "$dest"
-    if ! git clone --depth 1 https://github.com/shmilylty/OneForAll.git "$dest"; then
-      mark_fail "$name" "git clone 失败"
-      return 0
+# BishopFox static JavaScript CLI: go-tree-sitter requires cgo and a C compiler.
+# No target/source URL is fetched or analyzed by this installation function.
+install_jsluice() {
+  local module="github.com/BishopFox/jsluice/cmd/jsluice@${JSLUICE_VERSION}"
+  if already_ok jsluice; then mark_skip "jsluice (已存在；--force 可重装固定版本)"; return 0; fi
+  if ! command -v go >/dev/null 2>&1; then
+    mark_fail "jsluice" "go 不可用"; return 0
+  fi
+  if ! run_cmd apt-get install -y --no-install-recommends build-essential; then
+    mark_fail "jsluice" "tree-sitter 的 C 编译依赖安装失败"; return 0
+  fi
+  if run_cmd env CGO_ENABLED=1 GOBIN="${GOBIN:-$TOOLS_BIN_DIR}" GOPROXY="$GOPROXY" go install "$module"; then
+    if [[ "$DRY_RUN" -eq 1 || -x "${GOBIN:-$TOOLS_BIN_DIR}/jsluice" ]]; then
+      mark_ok "jsluice (${JSLUICE_VERSION}; 官方静态 CLI)"
+    else
+      mark_fail "jsluice" "go install 完成但目标二进制不存在"
     fi
   else
-    git -C "$dest" pull --ff-only 2>/dev/null || true
+    mark_fail "jsluice" "固定版本构建失败；检查 C 编译器和 CGO_ENABLED=1"
   fi
+}
 
-  # 依赖：优先项目 requirements
-  if [[ -f "$dest/requirements.txt" ]]; then
-    python3 -m pip install --break-system-packages -i "$PIP_INDEX_URL" -r "$dest/requirements.txt" \
-      || python3 -m pip install --break-system-packages -r "$dest/requirements.txt" \
-      || warn "OneForAll 部分 Python 依赖安装失败，仍写入包装脚本"
+# OneForAll: preserve existing vendor configuration and venv; always apply the
+# version-checked offline adapter, even if an old launcher is already in PATH.
+install_oneforall() {
+  local name="oneforall" dest="$ONEFORALL_HOME" python="${ONEFORALL_PYTHON:-}"
+  local preparer="$SCRIPT_DIR/scripts/recon/oneforall_prepare.py" fresh=0
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    info "[dry-run] OneForAll → $dest; preserve existing config/venv; prepare read-only runtime adapter"
+    mark_ok "$name"; return 0
   fi
-
-  # 入口：上游为 oneforall.py；部分 fork 可能是 oneforall/oneforall.py
-  local entry=""
-  if [[ -f "$dest/oneforall.py" ]]; then
-    entry="$dest/oneforall.py"
-  elif [[ -f "$dest/oneforall/oneforall.py" ]]; then
-    entry="$dest/oneforall/oneforall.py"
+  if [[ ! -f "$preparer" || ! -f "$SCRIPT_DIR/scripts/recon/oneforall_runner.py" ]]; then
+    mark_fail "$name" "安装器需要随仓库提供的 scripts/recon/oneforall_{prepare,runner}.py"; return 0
+  fi
+  if [[ ! -f "$dest/oneforall.py" ]]; then
+    if [[ -e "$dest" ]]; then
+      mark_fail "$name" "目录已存在但入口缺失；拒绝删除或覆盖，请人工核对 $dest"; return 0
+    fi
+    if ! git clone --depth 1 https://github.com/shmilylty/OneForAll.git "$dest"; then
+      mark_fail "$name" "git clone 失败"; return 0
+    fi
+    fresh=1
+  fi
+  # Never git pull an installed tree: API keys and operator settings are local.
+  if [[ -z "$python" ]]; then
+    if [[ -x "$dest/.venv/bin/python" ]]; then
+      python="$dest/.venv/bin/python"
+    elif [[ -x "$dest/venv/bin/python" ]]; then
+      python="$dest/venv/bin/python"
+    else
+      if ! python3 -m venv "$dest/.venv"; then
+        mark_fail "$name" "venv 创建失败"; return 0
+      fi
+      python="$dest/.venv/bin/python"; fresh=1
+    fi
+  fi
+  if [[ ! -x "$python" ]]; then mark_fail "$name" "ONEFORALL_PYTHON 必须指向现有可执行解释器"; return 0; fi
+  if [[ "$fresh" -eq 1 || "$FORCE_REINSTALL" -eq 1 ]]; then
+    if [[ ! -f "$dest/requirements.txt" ]] || ! "$python" -m pip install -i "$PIP_INDEX_URL" -r "$dest/requirements.txt"; then
+      mark_fail "$name" "venv 依赖安装失败；不写入可用启动器"; return 0
+    fi
+  fi
+  if python3 "$preparer" --install-dir "$dest" --python "$python" --launcher "${TOOLS_BIN_DIR}/oneforall"; then
+    mark_ok "$name → ${TOOLS_BIN_DIR}/oneforall (只读安装目录；每执行独立状态)"
   else
-    entry=$(find "$dest" -maxdepth 2 -name 'oneforall.py' | head -n1)
-  fi
-  if [[ -z "$entry" ]]; then
-    mark_fail "$name" "未找到 oneforall.py"
-    return 0
-  fi
-
-  cat >"${TOOLS_BIN_DIR}/oneforall" <<EOF
-#!/usr/bin/env bash
-# CyberStrikeAI wrapper for OneForAll
-export PYTHONPATH="${dest}:\${PYTHONPATH:-}"
-exec python3 "${entry}" "\$@"
-EOF
-  chmod +x "${TOOLS_BIN_DIR}/oneforall"
-
-  if command -v oneforall >/dev/null 2>&1 || [[ -x "${TOOLS_BIN_DIR}/oneforall" ]]; then
-    mark_ok "$name → ${TOOLS_BIN_DIR}/oneforall"
-  else
-    mark_fail "$name" "包装脚本写入失败"
+    mark_fail "$name" "只读运行适配失败；请检查源版本、massdns架构/权限及准备脚本说明"
   fi
 }
 

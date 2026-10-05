@@ -33,8 +33,11 @@ func TestFactWriteBudgetSharedAcrossParallelRoles(t *testing.T) {
 	if admitted.Load() != 32 {
 		t.Fatalf("admitted=%d, want exactly 32", admitted.Load())
 	}
-	if !errors.Is(context.Cause(ctx), ErrFactWriteBudget) {
-		t.Fatal("whole run was not stopped with its budget reason", context.Cause(ctx))
+	if ctx.Err() != nil {
+		t.Fatal("fact quota cancelled real tool work or report delivery", context.Cause(ctx))
+	}
+	if err := AdmitProjectFactWrite(ctx, 32000); !errors.Is(err, ErrFactWriteBudget) {
+		t.Fatalf("exhausted quota was enlarged: %v", err)
 	}
 }
 
@@ -54,14 +57,17 @@ func TestFactWriteBudgetSurvivesContinuationAndLimitChanges(t *testing.T) {
 	if err := AdmitProjectFactWrite(next, 10000); !errors.Is(err, ErrFactWriteBudget) {
 		t.Fatalf("limit reset on continuation: %v", err)
 	}
-	if !errors.Is(context.Cause(next), ErrFactWriteBudget) {
-		t.Fatal("cancel targeted old segment")
+	if next.Err() != nil {
+		t.Fatal("fact quota cancelled current segment")
 	}
 	again, againCancel := context.WithCancelCause(context.WithoutCancel(next))
 	defer againCancel(nil)
 	again = WithAgentRunBudget(again, againCancel)
-	if !errors.Is(context.Cause(again), ErrFactWriteBudget) {
-		t.Fatal("exhausted run was revived")
+	if again.Err() != nil {
+		t.Fatal("rebound testing/reporting segment was cancelled")
+	}
+	if err := AdmitProjectFactWrite(again, 10000); !errors.Is(err, ErrFactWriteBudget) {
+		t.Fatal("exhausted fact quota was revived", err)
 	}
 	fresh, freshCancel := budgetContext()
 	defer freshCancel(nil)

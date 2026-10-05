@@ -52,6 +52,8 @@ var coverageEvidenceReference = regexp.MustCompile(`\b(mcp_execution|execution|e
 type coverageSourceIndex struct {
 	sources     map[string]database.AssessmentSourceMetadata
 	byExecution map[string][]string
+	http        map[string][]coverage.HTTPObservation
+	binding     coverage.OriginalBinding
 }
 
 func completeCoverageSources(sources []database.AssessmentSourceMetadata, nowMS int64) coverageSourceIndex {
@@ -63,7 +65,7 @@ func completeCoverageSources(sources []database.AssessmentSourceMetadata, nowMS 
 		// Only parsers for real reconnaissance tools may establish progress.
 		// A completed fact-write/read-file execution is never evidence progress.
 		switch recon.CanonicalTool(source.Tool) {
-		case "fofa", "subfinder", "oneforall", "dnsx", "httpx", "naabu", "nmap", "gau", "katana", "jsapiscan", "nuclei":
+		case "fofa", "subfinder", "oneforall", "dnsx", "httpx", "naabu", "nmap", "gau", "katana", "jsapiscan", "jsluice", "nuclei":
 		default:
 			continue
 		}
@@ -76,14 +78,18 @@ func completeCoverageSources(sources []database.AssessmentSourceMetadata, nowMS 
 func (index coverageSourceIndex) corroborates(fields map[string]any) bool {
 	executionID, sourceID := fieldText(fields, "execution_id"), fieldText(fields, "source_id")
 	matches := func(source database.AssessmentSourceMetadata) bool {
-		// Passive inventory/listing tools establish candidates, not current
-		// endpoint behavior, risk results or a JS analysis disposition.
-		switch recon.CanonicalTool(source.Tool) {
-		case "httpx", "katana", "jsapiscan", "nuclei":
-		default:
+		if (executionID != "" && source.ExecutionID != executionID) || (sourceID != "" && source.ID != sourceID) {
 			return false
 		}
-		return (executionID == "" || source.ExecutionID == executionID) && (sourceID == "" || source.ID == sourceID)
+		for _, observation := range index.http[source.ExecutionID] {
+			if tool := fieldText(fields, "http_tool"); tool != "" && tool != observation.Tool() {
+				continue
+			}
+			if observation.Matches(fieldText(fields, "endpoint_url"), fieldText(fields, "method")) {
+				return true
+			}
+		}
+		return false
 	}
 	matchExecution := func(id string) bool {
 		for _, sourceID := range index.byExecution[id] {
@@ -149,7 +155,7 @@ func inventoryDispositionFacts(facts []coverage.Fact, assessmentID string, sourc
 			out = append(out, e.fact)
 			continue
 		}
-		if status != "risk-mapped" && status != "verified" && status != "negated" {
+		if status != "risk-mapped" {
 			continue
 		}
 		units, _ := e.fields["risk_units"].([]any)
@@ -166,7 +172,21 @@ func inventoryDispositionFacts(facts []coverage.Fact, assessmentID string, sourc
 				// Valid N/A units remain in the ledger, but cannot on their own
 				// turn an untested candidate into a resolved business unit.
 			case "covered", "negated", "blocked":
-				valid = valid && sources.corroborates(risk.fields)
+				// An HTTP exchange establishes a baseline, not arbitrary SQLi,
+				// authorization, or business-logic conclusions. Specialized risk
+				// verifiers must be added explicitly rather than trusting labels.
+				riskFields := make(map[string]any, len(risk.fields)+2)
+				for name, value := range risk.fields {
+					riskFields[name] = value
+				}
+				for _, name := range []string{"endpoint_url", "method"} {
+					if value := fieldText(risk.fields, name); value != "" && value != fieldText(e.fields, name) {
+						valid = false
+					}
+					riskFields[name] = e.fields[name]
+				}
+				family := fieldText(risk.fields, "risk_family")
+				valid = valid && fieldText(risk.fields, "status") == "covered" && (family == "http-baseline" || family == "http-response") && sources.corroborates(riskFields)
 				substantive = true
 			default:
 				valid = false

@@ -42,14 +42,6 @@ func newResultPipeline(db *database.DB, cfg *config.Config, logger *zap.Logger) 
 	return p
 }
 
-func reconTool(name string) bool {
-	switch recon.CanonicalTool(name) {
-	case "fofa", "subfinder", "oneforall", "dnsx", "httpx", "naabu", "nmap", "gau", "katana", "jsapiscan", "nuclei":
-		return true
-	}
-	return false
-}
-
 func (p *resultPipeline) observe(ctx context.Context, original *mcp.ToolExecution) {
 	if original == nil || original.ID == "" || original.OwnerUserID == "" || original.ConversationID == "" {
 		return
@@ -141,48 +133,28 @@ func (p *resultPipeline) roots(e evidence.Execution) ([]evidence.ManagedRoot, er
 	if info, err := os.Lstat(dir); err == nil && info.IsDir() {
 		roots = append(roots, evidence.ManagedRoot{Path: dir, Access: e.Access, ExecutionID: e.ID})
 	}
-	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
-		if id, err := uuid.Parse(e.ID); err == nil {
-			dir = filepath.Join(string(filepath.Separator), "var", "lib", "jsapiscan", "runs", "execution-"+id.String())
-			if info, err := os.Lstat(dir); err == nil && info.IsDir() {
-				roots = append(roots, evidence.ManagedRoot{Path: dir, Access: e.Access, ExecutionID: e.ID})
+	tool := recon.CanonicalTool(e.OutputTool())
+	if tool == "jsapiscan" || tool == "jsluice" {
+		if id, err := uuid.Parse(e.ID); err == nil && id.String() == e.ID {
+			// CSAI_ARTIFACT_DIR is derived by Executor from the same reduction
+			// root and immutable binding. Never read tool-reported work_dir.
+			workspace := filepath.Join(dir, tool, "execution-"+id.String())
+			if info, err := os.Lstat(workspace); err == nil {
+				if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+					return nil, evidence.ErrUnsafePath
+				}
+				roots = append(roots, evidence.ManagedRoot{Path: workspace, Access: e.Access, ExecutionID: e.ID})
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			} else if tool == "jsapiscan" {
+				legacy := filepath.Join(string(filepath.Separator), "var", "lib", "jsapiscan", "runs", "execution-"+id.String())
+				if info, err := os.Lstat(legacy); err == nil && info.IsDir() {
+					roots = append(roots, evidence.ManagedRoot{Path: legacy, Access: e.Access, ExecutionID: e.ID})
+				}
 			}
 		}
 	}
 	return roots, nil
-}
-
-func resultFormat(tool string, args map[string]interface{}) string {
-	if command, ok := args["command"].(string); ok && trustedDirectScanner(args) != "" {
-		fields := strings.Fields(command)
-		for i, flag := range fields {
-			if flag == "-json" || flag == "-jsonl" || flag == "-j" {
-				return "jsonl"
-			}
-			if flag == "-oX" && i+1 < len(fields) && fields[i+1] == "-" {
-				return "xml"
-			}
-		}
-	}
-	switch recon.CanonicalTool(tool) {
-	case "fofa":
-		return "json"
-	case "nmap":
-		return "text"
-	case "nuclei":
-		if args["json_output"] == true || args["jsonl"] == true {
-			return "jsonl"
-		}
-		return "text"
-	case "jsapiscan":
-		return "log"
-	}
-	for _, key := range []string{"json", "json_output", "jsonl", "json_lines"} {
-		if args[key] == true {
-			return "jsonl"
-		}
-	}
-	return "text"
 }
 
 func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, original *mcp.ToolExecution) (state, reason string, err error) {
@@ -255,6 +227,29 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 			candidates = append(candidates, evidence.Candidate{Path: filepath.Join(dir, "output.txt"), Kind: "output", Format: resultFormat(e.OutputTool(), original.Arguments), Completion: e.Completion})
 		}
 	}
+	// Independent machine originals win over combined stdout/stderr. The fixed
+	// names are a service/runner contract, never filenames advertised by output.
+	machineName, machineFormat := "", ""
+	switch recon.CanonicalTool(e.OutputTool()) {
+	case "nmap":
+		machineName, machineFormat = "nmap.xml", "xml"
+	case "nuclei":
+		machineName, machineFormat = "nuclei.jsonl", "jsonl"
+	}
+	if machineName != "" {
+		machinePath := filepath.Join(dir, machineName)
+		if _, statErr := os.Lstat(machinePath); statErr == nil {
+			for i := range candidates {
+				if candidates[i].Kind == "output" {
+					candidates[i].Kind = "log"
+					candidates[i].Format = "log"
+				}
+			}
+			candidates = append(candidates, evidence.Candidate{Path: machinePath, Kind: "output", Format: machineFormat, Completion: e.Completion})
+		} else if !os.IsNotExist(statErr) {
+			return "failed", "machine original unavailable", statErr
+		}
+	}
 	roots, err := p.roots(e)
 	if err != nil {
 		reason = "managed roots unavailable"
@@ -264,15 +259,16 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 	// contain templates and never substitute for the originals.
 	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
 		for _, root := range roots {
-			if !strings.Contains(root.Path, "execution-") {
+			if filepath.Base(root.Path) != "execution-"+e.ID {
 				continue
 			}
 			count := 0
-			_ = filepath.WalkDir(filepath.Join(root.Path, "work"), func(path string, d fs.DirEntry, walkErr error) error {
+			walkErr := filepath.WalkDir(filepath.Join(root.Path, "work"), func(path string, d fs.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					return walkErr
 				}
 				if d.Type()&os.ModeSymlink != 0 {
+					e.Completion = evidence.Partial
 					if d.IsDir() {
 						return filepath.SkipDir
 					}
@@ -280,6 +276,7 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 				}
 				if !d.IsDir() && strings.EqualFold(filepath.Ext(path), ".csv") {
 					if count >= 200 {
+						e.Completion = evidence.Partial
 						return fs.SkipAll
 					}
 					count++
@@ -287,6 +284,9 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 				}
 				return nil
 			})
+			if walkErr != nil {
+				e.Completion = evidence.Partial
+			}
 		}
 	}
 	// A retry may reuse a saved spill/CSV only at the previously registered
@@ -315,6 +315,14 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
 		e = p.jsExecutionCompleteness(ctx, e, registry, roots)
 	}
+	if recon.CanonicalTool(e.OutputTool()) == "jsluice" {
+		var jsArtifacts []evidence.Candidate
+		e, jsArtifacts, err = p.jsluiceResultArtifacts(ctx, e, registry, roots)
+		if err != nil {
+			return "failed", "JS original hash or binding rejected", err
+		}
+		candidates = append(candidates, jsArtifacts...)
+	}
 	for i := range candidates {
 		candidates[i].Completion = e.Completion
 	}
@@ -322,18 +330,18 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 	// target in a tool argument is a grant to expand the original task scope.
 	processor := recon.Processor{Store: store, Artifacts: registry, MaxReturnedRecords: 1000, Limits: recon.Limits{MaxRecords: 100000}}
 	logs := []evidence.Candidate{}
-	if recon.CanonicalTool(e.OutputTool()) == "jsapiscan" {
-		machine := []evidence.Candidate{}
-		for _, candidate := range candidates {
-			if candidate.Format == "log" {
+	machine := []evidence.Candidate{}
+	for _, candidate := range candidates {
+		if candidate.Format == "log" || candidate.Kind == "source" {
+			if candidate.Kind == "output" {
 				candidate.Kind = "log"
-				logs = append(logs, candidate)
-			} else {
-				machine = append(machine, candidate)
 			}
+			logs = append(logs, candidate)
+		} else {
+			machine = append(machine, candidate)
 		}
-		candidates = machine
 	}
+	candidates = machine
 	report, err := processor.Observe(ctx, recon.Event{Execution: e, Artifacts: candidates, ExpiresAt: e.FinishedAt.Add(24 * time.Hour)})
 	if err != nil {
 		reason = "offline original registration/parsing failed"
@@ -439,6 +447,10 @@ func (p *resultPipeline) importRecon(ctx context.Context, e evidence.Execution, 
 				}
 				if canProject && record.Kind == recon.Candidate {
 					c := &database.FindingCandidate{ProjectID: e.ProjectID, ConversationID: e.ConversationID, AssessmentID: e.AssessmentID, Target: record.RawURL, Title: record.TemplateID, RiskFamily: "scanner_match", ImpactClass: "unknown", Status: "tentative", Summary: "离线导入的扫描命中；未经安全边界与可复现证据校验。", EvidenceRefs: []string{"execution:" + e.ID}, Priority: 50}
+					if source.Tool == "jsluice" {
+						c.RiskFamily = "static_secret"
+						c.Summary = "本地 JS 静态秘密样式候选；始终 tentative，未请求目标、未验证有效性或安全边界。"
+					}
 					if c.Target == "" {
 						c.Target = record.Host
 					}

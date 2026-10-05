@@ -8,7 +8,7 @@ user_prompt: |
   2) 子域：subfinder 快速首轮；深度/完整侦察或结果不足时 OneForAll 第二阶段补齐；amass 按需补源；跳过 OneForAll 必须写 recon/source 的 blocked 原因
   3) DNS 清洗：dnsx → 存活与指纹：httpx；端口：naabu top-ports → nmap 精扫（或 masscan/rustscan）
   4) 标注 CDN/WAF（cloudflare/`cf-ray` 等），逐 IP 分类：已证实 CDN 边缘不扩裸 IP，业务域名仍测；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，不扫共享 IP 无关租户。分类见 comprehensive-recon.md §2.1；稳定浏览器/脚本差分交 Verify 诊断
-  5) URL：katana / gau / waybackurls；JS：jsapiscan + grep/rg 双通道检索全部下载源码，合并端点及调用上下文；目录、文件和扩展名枚举优先 dirsearch；参数、虚拟主机和自定义请求模糊测试优先 ffuf，隐藏参数可用 arjun/x8/paramspider。未链接路径尚未覆盖或发现需继续枚举的目录时做有界目录发现；同范围、认证态和候选集已有充分有效证据可引用复用，不重复扫描
+  5) URL：katana / gau / waybackurls；JS：先按授权下载保存，再用 jsluice（本地静态分析，不联网，secrets 始终 tentative） + grep/rg 双通道检索全部下载源码，合并端点及调用上下文；目录、文件和扩展名枚举优先 dirsearch；参数、虚拟主机和自定义请求模糊测试优先 ffuf，隐藏参数可用 arjun/x8/paramspider。未链接路径尚未覆盖或发现需继续枚举的目录时做有界目录发现；同范围、认证态和候选集已有充分有效证据可引用复用，不重复扫描
   6) 补充测绘 API：zoomeye_search/quake_search/shodan_search（仅补缺，不替代首步FOFA；失败记blocked）
   7) nuclei 仅作线索（tentative）；被 CF 狂拦则停扫并标注；组件指纹后记 fact 并建议 component-vuln-intel
   8) 每确认一项立即 upsert_project_fact；来源与端点使用 recon/* 前缀（见 attack-surface-recon references/recon-fact-schema.md）
@@ -16,7 +16,7 @@ user_prompt: |
   ## 退出门禁（缺一不可）
   - 交付必须含 **Source Coverage** 表：来源/工具、status、raw、unique、incremental、error、alt_tried
   - 绑定项目时同步来源fact；所有线上目标都需本轮fofa_search（covered或有证据blocked，不能N/A跳过），Deep根域另需subfinder + oneforall(或等价blocked) + dnsx
-  - 有 JS 时：全部下载原源码有 jsapiscan（或等价）+ grep/rg 两路命令/hash/计数证据并合并 `recon/endpoint/*`；缺一路不能覆盖，禁止只写“发现路由表”
+  - 有 JS 时：全部下载原源码有 jsluice（或等价）+ grep/rg 两路命令/hash/计数证据并合并 `recon/endpoint/*`；缺一路不能覆盖，禁止只写“发现路由表”
   - Web 目录发现须有完成所选候选集或复用证据，或具体 blocked/N/A 理由；记录随机路径基线、字典/扩展名、过滤、预算和停止原因。仅爬取/JS 提取不算目录覆盖，超时未完成留 gap/blocked，详见 comprehensive-recon.md §3.1
   - 范围内 Web/SSH/数据库/SMTP/IMAP/POP3 密码入口交接验证角色按 credential-stuffing 做一轮简单弱口令；侦察只记录能力/身份/策略，不以“不爆破”免测
   - 缺 Source Coverage 或缺强制 source fact → 只能输出进度，禁止“已全覆盖/信息收集完成”结案话术
@@ -43,7 +43,7 @@ tools:
   - katana
   - gau
   - waybackurls
-  - jsapiscan
+  - jsluice
   - ffuf
   - dirsearch
   - nuclei

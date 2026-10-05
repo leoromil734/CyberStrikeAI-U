@@ -3,13 +3,13 @@ name: attack-surface-recon
 description: >-
   攻击面测绘 / 信息收集 / 侦察 / recon / OSINT / 子域名枚举 / DNS / 端口存活 / httpx /
   资产发现 / JS API 提取 / 目录参数 / 证书透明度 / FOFA Shodan ZoomEye Quake /
-  wayback / katana / jsapiscan / dirsearch / arjun / x8 / ffuf / 覆盖账本 / recon fact /
+  wayback / katana / jsluice / dirsearch / arjun / x8 / ffuf / 覆盖账本 / recon fact /
   退出门禁 / Deep 硬闸门。用于 Surface、摸底、打点前资产清单、阶段 ledger；
   用户说「信息收集」「收集信息」「侦察」「找资产」「扫子域」「全面侦察」
   「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
   已有 SRC、漏洞赏金、挖集团/品牌上下文时以 `src-hunting` 为领域入口，本 skill 仅在
   独立侦察/覆盖账本阶段加载；不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
-allowed-tools: exec subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsapiscan arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
+allowed-tools: exec subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
 metadata:
   tags: [渗透测试, penetration-testing, recon, osint, information-gathering]
   source_augment: Hi-FullHouse/CyberSecurity-Skills
@@ -30,7 +30,7 @@ metadata:
 1. 根域：Quick=`subfinder`+CT；Standard=`subfinder`+异构来源+`dnsx`；Deep=`subfinder` + `oneforall` + 补 amass/CT/历史/空间测绘，逐项记 raw/增量。
 2. `dnsx` 清洗与通配基线；逐 IP 记录 CDN/范围证据，已证实 CDN 边缘不扩裸 IP；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，共享 IP 不推定归属。细节见 comprehensive-recon.md §2.1。
 3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。`shodan_search`/`zoomeye_search`/`quake_search` 按可用性补缺，不替代首步 FOFA。
-4. Web：`katana`/`gau`/`waybackurls` + JS/`jsapiscan` + 实际 `grep/rg` 检索全部原源码 → 合并 `recon/endpoint/*`；命令与两路证据见 comprehensive-recon.md §4。
+4. Web：`katana`/`gau`/`waybackurls` + JS/`jsluice` + 实际 `grep/rg` 检索全部原源码 → 合并 `recon/endpoint/*`；命令与两路证据见 comprehensive-recon.md §4。
 5. 目录、文件和扩展名枚举优先 `dirsearch`；参数、虚拟主机和自定义请求模糊测试优先 `ffuf`，隐藏参数用 `arjun`/`x8`。未链接路径尚未覆盖或发现需继续枚举的目录时做有界目录发现；先建 SPA catch-all 基线，同范围、认证态和候选集已有充分有效证据可引用复用，否则执行或留具体 blocked/N/A 理由（见 comprehensive-recon.md §3.1）。
 6. `nuclei` 仅 tentative，禁止直接 `record_vulnerability`。
 
@@ -42,7 +42,7 @@ metadata:
 | 子域 | `subfinder`、`oneforall` | `amass` |
 | DNS | `dnsx` | `dnsenum`/`fierce` |
 | HTTP/端口 | `httpx`、`naabu` | `nmap`/`masscan`/`fscan` |
-| 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsapiscan` | — |
+| 历史/爬取/JS | `waybackurls`、`gau`、`katana`、`jsluice` | — |
 | 目录/文件/扩展名 | `dirsearch` | `ffuf` 等价有界扫描 |
 | 参数/虚拟主机/自定义请求模糊测试 | `ffuf` | `arjun`/`x8` 仅补隐藏参数 |
 | 落库 | `upsert_project_fact` | `list_project_facts`/`search_project_facts` |

@@ -19,7 +19,7 @@ description: |
   - 与 subfinder/amass 结果去重后交给 dnsx/httpx，不重复扫描相同主机
 
   **推荐链路：**
-  - subfinder（快）→ **oneforall**（深度补齐，默认关闭爆破/HTTP探测）→ dnsx → httpx
+  - subfinder（快）→ **oneforall**（深度补齐；需关闭爆破/HTTP探测时显式传 --brute False --req False）→ dnsx → httpx
 
   **与 subfinder 的关系：**
   - subfinder：轻量、偏被动 API，适合首轮快速反馈
@@ -30,9 +30,19 @@ description: |
   - 等价：`oneforall --target example.com run`
   - 参数映射：flag 在前，`run` 作为末尾位置参数（position≥1）
 
+  **运行与输出契约：**
+  - `oneforall` 是保留既有 venv 的受控 launcher；安装准备由 `scripts/recon/oneforall_prepare.py` 幂等完成
+  - massdns 在安装阶段设置 0755；运行时只检查已具备的读/执行权限，不再向只读安装目录 chmod
+  - 必须由现有工作区沙箱运行，使用服务注入的 CSAI_EXECUTION_ID/CSAI_ARTIFACT_DIR；缺失时拒绝执行，不回退宿主机
+  - data 缓存、日志、SQLite 和默认导出放在该执行产物目录的私有 oneforall-* 子目录；不复制 API 配置或 venv，不开放 /opt 写权限
+  - stdout/stderr 仍是原生人类日志；结果文件的 fmt/path 按显式参数保留，未指定 fmt 时沿用上游配置（通常 csv），不能把日志冒充 JSON
+  - `--help` 是离线适配器帮助；`--check-runtime` 仅检查安装原件/权限，不导入或运行扫描代码
+  - 非零退出码原样传递；出现 Finished OneForAll 不代表成功，exit 2 不能仅凭退出码归类为参数错误
+
   **注意事项：**
-  - 首次运行会拉依赖/数据，耗时较长
-  - 部分数据源需自行配置 API Key（安装目录 `/opt/OneForAll` 内 config）
+  - 依赖安装应在部署准备阶段完成，执行时不会通过提权或安装包修复依赖
+  - 部分数据源需自行配置 API Key（安装目录 `/opt/OneForAll` 内 config，准备脚本保留这些配置）
+  - 上游版本/路径配置不兼容时准备脚本会明确失败，需人工审核；详见 docs/zh-CN/tool-runtime-adapters.md
   - 仅在授权范围内使用；主动爆破可能产生大量 DNS 查询
 
 parameters:

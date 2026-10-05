@@ -19,21 +19,26 @@ import (
 )
 
 const (
-	finalizationAutoContinueMaxAttempts = 2
-	finalizationCoverageMaxAttempts     = 8
+	finalizationAutoContinueMaxAttempts = 4
+	finalizationCoverageMaxAttempts     = 64
 	finalizationCoverageNoProgressLimit = 2
+	finalizationCoverageStagnationLimit = 8
 	finalizationPendingWaitTimeout      = 20 * time.Minute
 	finalizationPendingPollInterval     = 5 * time.Second
 )
 
 // A bounded continuation budget belongs to this request, not to a model response.
-// New fact rows or a shorter error list are not evidence progress. Only new,
-// independently recorded evidence executions can renew the stagnation allowance.
+// Work and report delivery have separate allowances. New fact rows or a shorter
+// error list are not progress; only independent evidence or source-backed
+// dispositions can renew the consecutive-stagnation allowance.
 type finalizationContinuationState struct {
-	Attempts                    int
+	Attempts                    int // Total restored segments; diagnostic only.
+	WorkAttempts                int
+	DeliveryAttempts            int
 	CoverageObserved            bool
 	CoverageValidFactsHighWater int
 	CoverageEvidenceHighWater   int
+	CoverageMappedHighWater     int
 	CoverageNoProgress          int
 	// WorkMode changes the next action, never the coverage proof or task scope.
 	WorkMode            string
@@ -42,11 +47,37 @@ type finalizationContinuationState struct {
 	StopStatus          string
 }
 
+func finalizationNeedsCoverageWork(d agentfinalizer.Decision) bool {
+	switch d.CompletionReason {
+	case agentfinalizer.ReasonCoverageIncomplete, agentfinalizer.ReasonMissingEvidence, agentfinalizer.ReasonPendingTools:
+		return true
+	}
+	// An empty/short candidate must not hide still executable inventory work.
+	return d.CoverageRepairBlocked || d.CoverageUnresolvedGroups > 0
+}
+
 func finalizationContinuationLimit(d agentfinalizer.Decision) int {
-	if d.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+	if finalizationNeedsCoverageWork(d) {
 		return finalizationCoverageMaxAttempts
 	}
 	return finalizationAutoContinueMaxAttempts
+}
+
+func (s *finalizationContinuationState) usedAttempts(d agentfinalizer.Decision) int {
+	if finalizationNeedsCoverageWork(d) {
+		return s.WorkAttempts
+	}
+	return s.DeliveryAttempts
+}
+
+// Call only after the exact current trace was saved and restored successfully.
+func (s *finalizationContinuationState) recordContinuation(d agentfinalizer.Decision) {
+	s.Attempts++
+	if finalizationNeedsCoverageWork(d) {
+		s.WorkAttempts++
+	} else {
+		s.DeliveryAttempts++
+	}
 }
 
 func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int) bool {
@@ -72,21 +103,27 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 	if d.Finalizable || d.Finalized {
 		return false
 	}
-	if !shouldAutoContinueAfterFinalization(d, state.Attempts) {
-		if state.Attempts >= finalizationContinuationLimit(d) {
-			state.StopReason = fmt.Sprintf("自动续跑已达到本次运行的 %d 段硬上限，检查仍未通过；保留轨迹供人工修复后恢复", finalizationContinuationLimit(d))
+	used := state.usedAttempts(d)
+	if !shouldAutoContinueAfterFinalization(d, used) {
+		if used >= finalizationContinuationLimit(d) {
+			phase := "报告收尾"
+			if finalizationNeedsCoverageWork(d) {
+				phase = "实际工作"
+			}
+			state.StopReason = fmt.Sprintf("%s自动续跑已达到本次运行的 %d 段硬上限，检查仍未通过；保留轨迹供人工修复后恢复", phase, finalizationContinuationLimit(d))
 		}
 		return false
 	}
-	if d.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+	if finalizationNeedsCoverageWork(d) {
 		state.WorkMode = "coverage_work"
 		if d.CoverageRepairBlocked {
 			// Large/unknown raw inventory forbids mechanical fact inflation,
 			// not investigation. Reclassify within scope and verify real work.
 			state.WorkMode = "classify_and_verify"
 		}
+		progress := d.CoverageProgressKnown && (d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater || d.CoverageMappedGroups > state.CoverageMappedHighWater)
 		if state.CoverageObserved {
-			if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
+			if progress {
 				state.CoverageNoProgress = 0
 			} else {
 				state.CoverageNoProgress++
@@ -96,11 +133,18 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 		if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
 			state.CoverageEvidenceHighWater = d.CoverageEvidenceExecutions
 		}
+		if d.CoverageProgressKnown && d.CoverageMappedGroups > state.CoverageMappedHighWater {
+			state.CoverageMappedHighWater = d.CoverageMappedGroups
+		}
 		if d.CoverageValidFacts > state.CoverageValidFactsHighWater {
 			state.CoverageValidFactsHighWater = d.CoverageValidFacts
 		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
 			state.WorkMode = "classify_and_verify"
+		}
+		if state.CoverageNoProgress >= finalizationCoverageStagnationLimit {
+			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据或有来源支持的处置关联；实际工作无法自动推进，保留真实缺口和完整轨迹", state.CoverageNoProgress)
+			return false
 		}
 	} else {
 		state.WorkMode = "deliver_report"
@@ -296,7 +340,7 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	*curHistory = hist
 	*curFinalMessage = ""
 	var coverageChecksFile string
-	if decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete {
+	if finalizationNeedsCoverageWork(decision) {
 		// This segment performs real classification/verification, not a timed
 		// bookkeeping loop. The request deadline and tool budgets still apply.
 		root := ""
@@ -318,18 +362,19 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			}
 		}
 	}
-	state.Attempts++
+	state.recordContinuation(decision)
 	if progressCallback != nil {
 		progressCallback("finalization_auto_continue", "最终回复检查尚未收敛，正在基于已有轨迹继续执行…", map[string]interface{}{
 			"conversationId": conversationID, "source": "finalizer", "attempt": state.Attempts,
-			"maxAttempts": finalizationContinuationLimit(decision), "status": decision.Status,
+			"maxAttempts": finalizationContinuationLimit(decision), "phaseAttempt": state.usedAttempts(decision),
+			"workAttempts": state.WorkAttempts, "deliveryAttempts": state.DeliveryAttempts, "status": decision.Status,
 			"completionReason": decision.CompletionReason, "missingChecks": decision.MissingChecks,
 			"coverageChecksFile": coverageChecksFile, "coverageValidFacts": decision.CoverageValidFacts,
 			"coverageNoProgress": state.CoverageNoProgress, "coverageEvidenceExecutions": decision.CoverageEvidenceExecutions,
-			"coverageUnresolvedGroups": decision.CoverageUnresolvedGroups, "workMode": state.WorkMode,
+			"coverageUnresolvedGroups": decision.CoverageUnresolvedGroups, "coverageMappedGroups": decision.CoverageMappedGroups, "workMode": state.WorkMode,
 			"bookkeepingRepairStopped": state.WorkMode == "classify_and_verify",
 			"pendingExecutionIds":      decision.PendingExecutionIDs,
-			"contextInjection":         decision.CompletionReason == agentfinalizer.ReasonCoverageIncomplete,
+			"contextInjection":         finalizationNeedsCoverageWork(decision),
 		})
 	}
 	select {
@@ -394,6 +439,9 @@ func coverageContinuationMessage(checks []string, opts tooloutput.SpillOpts) (me
 func finalizationAutoContinueBackoff(attempt int) time.Duration {
 	if attempt <= 1 {
 		return 500 * time.Millisecond
+	}
+	if attempt > 5 {
+		attempt = 5
 	}
 	return time.Duration(attempt) * time.Second
 }

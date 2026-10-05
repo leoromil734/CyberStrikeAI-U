@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	ErrFactWriteBudget      = errors.New("事实写入预算已耗尽：停止批量补写，保留原始库存和未完成项，不得将其标记为已验证")
+	ErrFactWriteBudget      = errors.New("本次事实写入额度已用完：暂停新增或更新事实；实际工具验证、原件保存、漏洞记录和报告整理仍可继续。不要重复补写，也不得将未完成项标为已验证")
 	ErrCoverageRepairBudget = errors.New("覆盖补写阶段已达到时间上限：停止自动续跑，保留已验证成果与未完成项")
 )
 
@@ -17,7 +17,8 @@ type agentRunBudgetKey struct{}
 
 // AgentRunBudget belongs to one explicit user request. All parallel roles and
 // automatic continuation segments share it; new requests get a new instance.
-// Admission occurs in the actual write handler, not asynchronously in SSE logs.
+// The fact quota limits validated mutations, not the lifetime of real tool work.
+// Only explicit run/repair deadlines cancel the parent execution.
 type AgentRunBudget struct {
 	mu            sync.Mutex
 	limit         int
@@ -52,8 +53,10 @@ func AgentRunBudgetFromContext(ctx context.Context) *AgentRunBudget {
 	return b
 }
 
-// Invalid and repeated model writes consume the budget as well. The first
-// invocation snapshots the service limit; arguments cannot enlarge/reset it.
+// Call after authorization, schema validation and no-op detection, immediately
+// before mutation. Rejected fields and reads do not consume the mutation quota.
+// The limit is snapshotted once and cannot be enlarged by continuation/config.
+// Exhaustion rejects only fact writes, never cancels testing or report delivery.
 func AdmitProjectFactWrite(ctx context.Context, limit int) error {
 	b := AgentRunBudgetFromContext(ctx)
 	if b == nil {
@@ -63,7 +66,7 @@ func AdmitProjectFactWrite(ctx context.Context, limit int) error {
 		return err
 	}
 	if limit <= 0 {
-		limit = 256
+		limit = 1024
 	}
 	b.mu.Lock()
 	if b.stopped != nil {
@@ -83,12 +86,8 @@ func AdmitProjectFactWrite(ctx context.Context, limit int) error {
 		b.mu.Unlock()
 		return nil
 	}
-	b.stopped = fmt.Errorf("%w（本次请求上限 %d 次，包含创建、更新及失败重试）", ErrFactWriteBudget, b.limit)
-	err, cancel := b.stopped, b.cancel
+	err := fmt.Errorf("%w（本次请求有效写入上限 %d 次；失败的字段校验与无变化重试不占用额度）", ErrFactWriteBudget, b.limit)
 	b.mu.Unlock()
-	if cancel != nil {
-		cancel(err)
-	}
 	return err
 }
 

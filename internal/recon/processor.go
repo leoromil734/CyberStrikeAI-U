@@ -151,7 +151,7 @@ func (p *Processor) process(ctx context.Context, e evidence.Execution, a evidenc
 			state = UnknownScope
 		}
 		r.ScopeState = state
-		r.CandidateOnly = state != InScope || r.Kind == Candidate
+		r.CandidateOnly = state != InScope || r.Kind == Candidate || s.Tool == "jsluice" || s.Tool == "jsapiscan"
 		r.ArtifactID = a.ID
 		r.ExecutionID = e.ID
 	}

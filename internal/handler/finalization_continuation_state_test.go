@@ -31,7 +31,7 @@ func TestCoverageContinuationProgressAndHardBudget(t *testing.T) {
 		if !observeFinalizationContinuation(d, state) {
 			t.Fatalf("real progress stopped at %d: %+v", attempt, state)
 		}
-		state.Attempts++
+		state.recordContinuation(d)
 	}
 	d := coverageDecision(100, "still incomplete")
 	if observeFinalizationContinuation(d, state) {
@@ -54,7 +54,7 @@ func TestCoverageContinuationNoProgressAndBrokenManifest(t *testing.T) {
 			if !got {
 				t.Fatalf("counts=%v at %d: investigation stopped instead of changing strategy: %+v", counts, i, state)
 			}
-			state.Attempts++
+			state.recordContinuation(d)
 		}
 		if state.Attempts != 3 || state.StopReason != "" || state.WorkMode != "classify_and_verify" {
 			t.Fatalf("stagnant bookkeeping did not switch to investigation: %+v", state)
@@ -67,7 +67,7 @@ func TestCoverageContinuationNoProgressAndBrokenManifest(t *testing.T) {
 		if !observeFinalizationContinuation(d, state) {
 			t.Fatalf("new independent evidence should reset stagnation: %+v", state)
 		}
-		state.Attempts++
+		state.recordContinuation(d)
 	}
 }
 

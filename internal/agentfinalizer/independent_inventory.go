@@ -47,14 +47,18 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 		report.Missing = append(report.Missing, "cannot read actual reconnaissance source metadata")
 	}
 	index := completeCoverageSources(sources, time.Now().UnixMilli())
+	originalsErr := loadHTTPOriginals(db, projectID, conversationID, assessmentID, &index)
+	if originalsErr != nil {
+		report.Missing = append(report.Missing, originalsErr.Error())
+	}
 	progress.EvidenceExecutions = len(index.byExecution)
-	progress.Known = ingestionComplete && groupsErr == nil && !capped && sourcesErr == nil
+	progress.Known = ingestionComplete && groupsErr == nil && !capped && sourcesErr == nil && originalsErr == nil
 	if groupsErr == nil {
 		// Do not confuse a copied endpoint+risk=N/A fact with an evidenced
 		// disposition. The full independent inventory is still checked below;
 		// only its displayed diagnostics are sampled, never its counts.
 		dispositions := inventoryDispositionFacts(facts, assessmentID, index)
-		missing := coverage.CheckDiscoveryInventory(dispositions, assessmentID, groups)
+		missing := coverage.CheckBoundDiscoveryInventory(dispositions, assessmentID, groups, index.binding)
 		progress.InventoryGroups = len(groups)
 		progress.UnresolvedGroups = len(missing)
 		progress.MappedGroups = len(groups) - len(missing)
@@ -86,6 +90,15 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 		executionID := fieldText(fields, "execution_id")
 		sourceID := fieldText(fields, "source_id")
 		matched := false
+		if status == "covered" && (tool == "exec" || tool == "execute" || tool == "curl" || tool == "http-framework-test") {
+			bound := make(map[string]any, len(fields)+1)
+			for name, value := range fields {
+				bound[name] = value
+			}
+			bound["endpoint_url"] = fieldText(fields, "target")
+			bound["http_tool"] = tool
+			matched = index.corroborates(bound)
+		}
 		for _, source := range sources {
 			if source.Tool != tool {
 				continue
@@ -119,7 +132,7 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 			continue
 		}
 		switch source.Tool {
-		case "fofa", "subfinder", "oneforall", "dnsx", "httpx", "naabu", "nmap", "gau", "katana", "jsapiscan", "nuclei":
+		case "fofa", "subfinder", "oneforall", "dnsx", "httpx", "naabu", "nmap", "gau", "katana", "jsapiscan", "jsluice", "nuclei":
 		default:
 			continue
 		}

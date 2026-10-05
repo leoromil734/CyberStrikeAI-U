@@ -32,7 +32,7 @@ func TestSubmittedExitWaitsForPendingToolsBeforeContinuationBudget(t *testing.T)
 		t.Fatal(err)
 	}
 	h := &AgentHandler{db: db, logger: zap.NewNop()}
-	state := &finalizationContinuationState{Attempts: finalizationAutoContinueMaxAttempts}
+	state := &finalizationContinuationState{Attempts: finalizationCoverageMaxAttempts, WorkAttempts: finalizationCoverageMaxAttempts}
 	d := agentfinalizer.Decision{Status: "in_progress", CompletionReason: agentfinalizer.ReasonPendingTools, PendingExecutionIDs: []string{execution.ID}, FinalText: "已提交的报告。"}
 	result := &multiagent.RunResult{ReportSubmitted: true, SubmittedReport: d.FinalText}
 	var history []agent.ChatMessage
@@ -47,7 +47,7 @@ func TestSubmittedExitWaitsForPendingToolsBeforeContinuationBudget(t *testing.T)
 			}
 		}
 	})
-	if ok || !waited || !strings.Contains(state.StopReason, "硬上限") || state.Attempts != finalizationAutoContinueMaxAttempts {
+	if ok || !waited || !strings.Contains(state.StopReason, "硬上限") || state.Attempts != finalizationCoverageMaxAttempts {
 		t.Fatalf("exit bypassed pending work/budget: ok=%v waited=%v state=%+v", ok, waited, state)
 	}
 	got, err := db.GetToolExecution(execution.ID)

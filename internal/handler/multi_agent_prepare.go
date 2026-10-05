@@ -31,22 +31,25 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	}
 
 	conversationID := strings.TrimSpace(req.ConversationID)
-	projectID := strings.TrimSpace(effectiveProjectID(h.config, req.ProjectID))
+	projectID := strings.TrimSpace(req.ProjectID)
+	if conversationID == "" {
+		projectID = strings.TrimSpace(effectiveProjectID(h.config, req.ProjectID))
+	}
 	webshellID := strings.TrimSpace(req.WebShellConnectionID)
 	session, hasSession := security.CurrentSession(c)
 	if !hasSession || !session.Permissions["chat:write"] {
 		return nil, fmt.Errorf("无权写入对话")
 	}
-	canAccess := func(resourceType, resourceID string) bool {
+	canAccess := func(permission, resourceType, resourceID string) bool {
 		if !hasSession || h.db == nil || strings.TrimSpace(resourceID) == "" {
 			return false
 		}
-		return h.db.UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID)
+		return h.db.UserCanAccessResource(session.UserID, session.ScopeFor(permission), resourceType, resourceID)
 	}
-	if projectID != "" && (!session.Permissions["project:read"] || !canAccess("project", projectID)) {
+	if projectID != "" && (!session.Permissions["project:read"] || !canAccess("project:read", "project", projectID)) {
 		return nil, fmt.Errorf("无权访问目标项目")
 	}
-	if webshellID != "" && (!session.Permissions["webshell:write"] || !canAccess("webshell", webshellID)) {
+	if webshellID != "" && (!session.Permissions["webshell:write"] || !canAccess("webshell:write", "webshell", webshellID)) {
 		return nil, fmt.Errorf("无权访问该 WebShell 连接")
 	}
 	createdNew := false
@@ -74,12 +77,17 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 			_ = h.db.AssignResourceToUser(session.UserID, "conversation", conversationID)
 		}
 	} else {
+		if !canAccess("chat:write", "conversation", conversationID) {
+			return nil, fmt.Errorf("无权访问该对话")
+		}
 		if _, err := h.db.GetConversation(conversationID); err != nil {
 			return nil, fmt.Errorf("对话不存在")
 		}
-		if !canAccess("conversation", conversationID) {
-			return nil, fmt.Errorf("无权访问该对话")
-		}
+	}
+	// Reject a known active run before touching role, attachments or messages.
+	// StartTask remains the final atomic guard for requests racing this check.
+	if h.tasks != nil && h.tasks.GetTask(conversationID) != nil {
+		return nil, fmt.Errorf("当前会话已有任务正在执行或停止中: %w", ErrTaskAlreadyRunning)
 	}
 	if err := h.db.SetConversationRoleName(conversationID, req.Role); err != nil {
 		h.logger.Warn("更新对话角色失败", zap.String("conversationId", conversationID), zap.String("role", req.Role), zap.Error(err))
@@ -151,6 +159,9 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	}
 	finalMessage = appendAttachmentsToMessage(finalMessage, req.Attachments, savedPaths)
 
+	if h.tasks != nil && h.tasks.GetTask(conversationID) != nil {
+		return nil, fmt.Errorf("当前会话已有任务正在执行或停止中: %w", ErrTaskAlreadyRunning)
+	}
 	userContent := userMessageContentForStorage(req.Message, req.Attachments, savedPaths)
 	userMsgRow, uerr := h.db.AddMessage(conversationID, "user", userContent, nil)
 	if uerr != nil {

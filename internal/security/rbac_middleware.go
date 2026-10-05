@@ -40,6 +40,15 @@ func RBACMiddlewareWithDenyHook(db *database.DB, denyHook RBACDenyHook) gin.Hand
 			})
 			return
 		}
+		for _, extra := range additionalPermissionsForRequest(c.Request.Method, c.FullPath()) {
+			if !SessionHasPermission(c, extra) {
+				if denyHook != nil {
+					denyHook(c, "permission_denied", extra)
+				}
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "权限不足", "permission": extra})
+				return
+			}
+		}
 		// Bind the scope of the permission authorizing this request. Scope is
 		// permission-specific; using the user's broadest role scope here would
 		// let an unrelated global read role widen a write permission.
@@ -75,11 +84,26 @@ func sessionHasRoutePermission(c *gin.Context, method, fullPath string) (string,
 	return permission, SessionHasPermission(c, permission)
 }
 
+func additionalPermissionsForRequest(method, fullPath string) []string {
+	path := strings.TrimPrefix(fullPath, "/api")
+	if method == http.MethodPost && path == "/batch-tasks/:queueId/tasks/:taskId/continue" {
+		return []string{"chat:write"}
+	}
+	if (method == http.MethodGet || method == http.MethodHead) && path == "/batch-tasks/:queueId/tasks/:taskId/original-message" {
+		return []string{"chat:read"}
+	}
+	return nil
+}
+
 func permissionAlternativesForRequest(method, path string) []string {
 	if method != http.MethodGet && method != http.MethodHead {
 		return nil
 	}
 	switch {
+	case path == "/config/ai-channels":
+		// Only the credential-free picker list is shared with ordinary readers.
+		// Full configuration, stored admin records and probe execution keep their permissions.
+		return []string{"chat:read", "tasks:read", "config:read"}
 	case strings.HasPrefix(path, "/config/tools"):
 		// MCP 管理页只需 mcp:read；系统设置页仍可用 config:read 访问同一接口。
 		return []string{"mcp:read", "config:read"}

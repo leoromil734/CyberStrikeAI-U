@@ -25,13 +25,53 @@ func TestProjectFactBudgetRejectsBeforeDatabaseMutation(t *testing.T) {
 	if err = mcp.AdmitProjectFactWrite(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _ = server.CallTool(ctx, builtin.ToolUpsertProjectFact, map[string]interface{}{"fact_key": before.FactKey, "summary": "must never be stored"})
-	if reason := mcp.AgentRunBudgetStopReason(context.Cause(ctx)); reason != "fact_write_budget_exceeded" {
-		t.Fatalf("missing cancellation: %v", context.Cause(ctx))
+	result, _, callErr := server.CallTool(ctx, builtin.ToolUpsertProjectFact, map[string]interface{}{"fact_key": before.FactKey, "summary": "must never be stored"})
+	if callErr != nil || result == nil || !result.IsError || !strings.Contains(mcp.ToolResultPlainText(result), "事实写入额度") {
+		t.Fatalf("fact quota must be a recoverable tool response: %+v %v", result, callErr)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("fact quota cancelled testing/reporting: %v", context.Cause(ctx))
 	}
 	stored, err := db.GetProjectFactByKey(projectID, before.FactKey)
 	if err != nil || stored.Summary != "original" || stored.Body != "original evidence" {
 		t.Fatalf("budget stop changed existing evidence: %+v %v", stored, err)
+	}
+}
+
+func TestProjectFactInvalidAndNoopWritesDoNotSpendQuota(t *testing.T) {
+	_, server, ctx, _ := newProjectFactToolTest(t)
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	ctx = mcp.WithAgentRunBudget(ctx, cancel)
+	defer mcp.CloseAgentRunBudget(ctx)
+	for i := 0; i < 3; i++ {
+		result, _, err := server.CallTool(ctx, builtin.ToolUpsertProjectFact, map[string]interface{}{"fact_key": "note/invalid"})
+		if err == nil && (result == nil || !result.IsError) {
+			t.Fatal("invalid fact unexpectedly accepted")
+		}
+	}
+	// If a rejected field spent the quota, this first trusted admission fails.
+	if err := mcp.AdmitProjectFactWrite(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]interface{}{"fact_key": "note/same", "summary": "saved once", "body": "local fixture; no request executed"}
+	result, _, err := server.CallTool(ctx, builtin.ToolUpsertProjectFact, args)
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("valid mutation was not admitted: %+v %v", result, err)
+	}
+	for i := 0; i < 3; i++ {
+		result, _, err = server.CallTool(ctx, builtin.ToolUpsertProjectFact, args)
+		if err != nil || result == nil || result.IsError || !strings.Contains(mcp.ToolResultPlainText(result), "未变化") {
+			t.Fatalf("no-op retry was charged/rejected: %+v %v", result, err)
+		}
+	}
+	result, _, err = server.CallTool(ctx, builtin.ToolUpsertProjectFact, map[string]interface{}{"fact_key": "note/same", "summary": "changed"})
+	if err != nil || result == nil || !result.IsError || ctx.Err() != nil {
+		t.Fatalf("quota did not isolate mutation from run lifetime: %+v %v", result, err)
+	}
+	result, _, err = server.CallTool(ctx, builtin.ToolGetProjectFact, map[string]interface{}{"fact_key": "note/same"})
+	if err != nil || result == nil || result.IsError {
+		t.Fatalf("read/report preparation was blocked by quota: %+v %v", result, err)
 	}
 }
 

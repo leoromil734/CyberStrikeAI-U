@@ -67,7 +67,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			"source 的 raw/unique/incremental 是真实整数，原始输出用 raw_output，covered 必须有 evidence；工具执行 success 不是覆盖终态。" +
 			"评估清单 schema_version=2、mode=comprehensive、status=active/completed，补齐真实 scope_kind 与 endpoint_count/js_count/risk_unit_count；缺字段的 active 仅保存启动记录，不能通过收尾门禁。" +
 			"原始 URL/库存明细留在 query_recon_inventory 与结果工件，不要逐行复制成 fact；仅记录新的可复用结论与必要证据。" +
-			"禁止为了结项而为历史 URL 批量套用 N/A/negated 或虚构逐项实测证据；超出补写预算应停止并报告未完成范围。" +
+			"禁止为了结项而为历史 URL 批量套用 N/A/negated 或虚构逐项实测证据；事实额度用完仅暂停事实补写，继续可执行的实际验证、原件保存与漏洞记录，最终报告如实保留未完成范围。" +
 			"同 fact_key 覆盖更新。需当前对话已绑定项目。",
 		ShortDescription: "写入/更新项目事实（含 recon 账本）",
 		InputSchema: map[string]interface{}{
@@ -134,9 +134,6 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 	}
 
 	mcpServer.RegisterTool(upsertTool, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
-		if err := mcp.AdmitProjectFactWrite(ctx, cfg.Agent.MaxFactWritesPerRunEffective()); err != nil {
-			return textResult(err.Error(), true), err
-		}
 		projectID, err := projectIDFromConversation(db, ctx)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
@@ -206,6 +203,22 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		}
 		_, pinnedSet := args["pinned"]
 		_, relatedVulnerabilityIDSet := args["related_vulnerability_id"]
+		if projectFactMutationIsNoop(existing, f, args) {
+			return textResult(fmt.Sprintf("事实内容未变化，复用已保存记录；本次不占用写入额度。\nfact_key: %s\nid: %s\nconfidence: %s", existing.FactKey, existing.ID, existing.Confidence), false), nil
+		}
+		if _, hasLinks := args["links"]; hasLinks {
+			if _, err := project.ParseFactLinkInputs(args["links"]); err != nil {
+				return textResult("错误: "+err.Error(), true), nil
+			}
+		}
+		// Schema errors and exact repeats cannot consume the mutation quota.
+		// A quota failure is a recoverable tool response, not a run error.
+		if err := mcp.AdmitProjectFactWrite(ctx, cfg.Agent.MaxFactWritesPerRunEffective()); err != nil {
+			if errors.Is(err, mcp.ErrFactWriteBudget) {
+				return textResult(err.Error(), true), nil
+			}
+			return textResult(err.Error(), true), err
+		}
 		created, err := db.UpsertProjectFactPatch(f, database.ProjectFactPatchFields{
 			PinnedSet:                 pinnedSet,
 			RelatedVulnerabilityIDSet: relatedVulnerabilityIDSet,

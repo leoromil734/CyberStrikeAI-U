@@ -28,6 +28,8 @@
     <link rel="stylesheet" href="/static/css/targets.css?v=20261002-ui1">
     <link rel="stylesheet" href="/static/css/vulnerability-models.css?v=20261003-1">
     <link rel="stylesheet" href="/static/css/model-management.css?v=20261003-layout2">
+    <link rel="stylesheet" href="/static/css/ai-channel-probes.css?v=20261005-1">
+    <link rel="stylesheet" href="/static/css/task-detail.css?v=20261005-1">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
     <script src="/static/js/router.js?v=20260929-perf1"></script>
@@ -6237,9 +6239,10 @@
                 <div class="form-group">
                     <label for="batch-queue-default-model" data-i18n="batchImportModal.model">默认模型</label>
                     <div style="display:flex; gap:8px; align-items:center;">
-                        <select id="batch-queue-default-model" style="flex:1;"></select>
+                        <select id="batch-queue-default-model" style="flex:1;min-width:0;" aria-describedby="batch-queue-default-model-probe"></select>
                         <button type="button" class="btn-secondary" onclick="applyBatchDefaultModelToRows()" data-i18n="batchImportModal.applyModel">应用到全部</button>
                     </div>
+                    <div id="batch-queue-default-model-probe" class="ai-channel-probe-details ai-channel-probe-current" aria-live="polite"></div>
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.modelHint">每条任务可以单独选模型。留空则使用系统默认通道。</div>
                 </div>
                 <div class="form-group">
@@ -6285,11 +6288,11 @@
     </div>
 
     <!-- 批量任务队列详情模态框 -->
-    <div id="batch-queue-detail-modal" class="modal">
-        <div class="modal-content" style="max-width: 900px;">
+    <div id="batch-queue-detail-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="batch-queue-detail-title">
+        <div class="modal-content bq-detail-dialog">
             <div class="modal-header">
                 <h2 id="batch-queue-detail-title" data-i18n="batchQueueDetailModal.title">批量任务队列详情</h2>
-                <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="bq-dialog-header-tools">
                     <div class="modal-header-actions">
                         <button class="btn-secondary btn-small" data-require-permission="tasks:write" id="batch-queue-add-task-btn" onclick="showAddBatchTaskModal()" style="display: none;" data-i18n="batchQueueDetailModal.addTask">添加任务</button>
                         <button class="btn-primary btn-small" data-require-permission="tasks:write" id="batch-queue-start-btn" onclick="startBatchQueue()" style="display: none;" data-i18n="batchQueueDetailModal.startExecute">开始执行</button>
@@ -6297,7 +6300,7 @@
                         <button class="btn-secondary btn-small" data-require-permission="tasks:write" id="batch-queue-pause-btn" onclick="pauseBatchQueue()" style="display: none;" data-i18n="batchQueueDetailModal.pauseQueue">暂停队列</button>
                         <button class="btn-secondary btn-small btn-danger" data-require-permission="tasks:delete" id="batch-queue-delete-btn" onclick="deleteBatchQueue()" style="display: none;" data-i18n="batchQueueDetailModal.deleteQueue">删除队列</button>
                     </div>
-                    <span class="modal-close" onclick="closeBatchQueueDetailModal()">&times;</span>
+                    <button type="button" class="modal-close" onclick="closeBatchQueueDetailModal()" aria-label="关闭" data-i18n="common.close" data-i18n-attr="aria-label">&times;</button>
                 </div>
             </div>
             <div class="modal-body">
@@ -6320,7 +6323,8 @@
                 </div>
                 <div class="form-group">
                     <label for="add-task-model" data-i18n="batchImportModal.model">模型</label>
-                    <select id="add-task-model"></select>
+                    <select id="add-task-model" aria-describedby="add-task-model-probe"></select>
+                    <div id="add-task-model-probe" class="ai-channel-probe-details ai-channel-probe-current" aria-live="polite"></div>
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.modelHint">留空则使用系统默认通道。</div>
                 </div>
                 <div class="form-actions">
@@ -6919,10 +6923,11 @@
     <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/chat-scroll.js?v=20260727-1"></script>
     <script src="/static/js/monitor.js?v=20261004-report1"></script>
-    <script src="/static/js/chat.js?v=20261004-report1"></script>
+    <script src="/static/js/ai-channel-probes.js?v=20261005-1"></script>
+    <script src="/static/js/chat.js?v=20261005-task-ui1"></script>
     <script src="/static/js/hitl.js"></script>
     <script src="/static/js/settings.js?v=20261003-model-management1"></script>
-    <script src="/static/js/model-management.js?v=20261003-1"></script>
+    <script src="/static/js/model-management.js?v=20261005-task-ui1"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
     <script src="/static/js/wechat-robot.js"></script>
@@ -6938,7 +6943,7 @@
     <script src="/static/js/vulnerability-models.js?v=20261003-1"></script>
     <script src="/static/js/webshell.js?v=20261004-report1"></script>
     <script src="/static/js/chat-files.js"></script>
-    <script src="/static/js/tasks.js?v=20261002-governance"></script>
+    <script src="/static/js/tasks.js?v=20261005-task-ui1"></script>
     <script src="/static/js/targets.js?v=20261002-ui1"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>

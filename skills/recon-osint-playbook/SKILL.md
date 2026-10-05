@@ -11,7 +11,7 @@ description: >-
   已有 SRC、漏洞赏金、挖集团/品牌上下文时优先 `src-hunting`，再按其路由索引读取
   侦察方法；本包只用于独立 OSINT 阶段。提供可执行 MCP 工具顺序与多源交叉验证；
   覆盖账本/退出门禁叠加 attack-surface-recon。
-allowed-tools: subfinder amass oneforall dnsx dnsenum fierce httpx naabu nmap masscan rustscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsapiscan nuclei fscan exec upsert_project_fact
+allowed-tools: subfinder amass oneforall dnsx dnsenum fierce httpx naabu nmap masscan rustscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice nuclei fscan exec upsert_project_fact
 metadata:
   tags:
     - penetration-testing
@@ -57,7 +57,7 @@ metadata:
 | HTTP 存活/指纹 | `httpx` | `exec`+curl | 存活列表 |
 | 端口 | `naabu` | `masscan`、`rustscan`、`nmap`、`fscan` | 开放端口 fact |
 | 历史 URL | `waybackurls`、`gau` | `katana` 主动爬 | `recon/endpoint/*` |
-| JS/API 抽取 | `jsapiscan` | `katana`、手工 `httpx` | endpoint 清单 |
+| JS/API 抽取 | `jsluice` | `katana`、手工 `httpx` | endpoint 清单 |
 | 线索扫描 | `nuclei` | `jaeles`、`nikto` | **仅 tentative**，禁止直接 `record_vulnerability` |
 | 通用兜底 | `exec` | `execute-python-script` | 仅无专用 YAML 工具时 |
 

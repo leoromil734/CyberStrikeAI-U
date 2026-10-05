@@ -151,7 +151,7 @@ function batchQueueTaskStats(queue) {
     return stats;
 }
 
-function batchQueueOutcomeSummaryHtml(stats) {
+function batchQueueOutcomeSummaryHtml(stats, interactive = false) {
     const entries = [
         ['verifiedComplete', 'verifiedCompleteCount', 'completed'], ['delivered', 'deliveredCount', 'delivered'],
         ['legacyCompleted', 'legacyCompletedCount', 'legacy-completed'], ['deliveredWithGaps', 'deliveredWithGapsCount', 'gaps'],
@@ -160,9 +160,14 @@ function batchQueueOutcomeSummaryHtml(stats) {
         ['paused', 'pausedCount', 'blocked'], ['running', 'runningCount', 'running'], ['cancelling', 'cancellingCount', 'running'],
         ['pending', 'pendingCount', 'pending'], ['unknown', 'unknownCount', 'unknown']
     ];
-    return entries.filter(([key]) => stats[key] > 0).map(([key, label, tone]) =>
-        `<span class="batch-task-status batch-task-status-${tone}">${escapeHtml(_tPlain('tasks.' + label, { count: stats[key] }))}</span>`
-    ).join('');
+    const filterKeys = { verifiedComplete: 'verified_complete', deliveredWithGaps: 'delivered_with_gaps', legacyCompleted: 'completed' };
+    return entries.filter(([key]) => stats[key] > 0).map(([key, label, tone]) => {
+        const text = escapeHtml(_tPlain('tasks.' + label, { count: stats[key] }));
+        const status = filterKeys[key] || key;
+        return interactive
+            ? `<button type="button" class="batch-task-status batch-task-status-${tone} bq-outcome-filter" data-bq-filter="${status}" aria-pressed="${batchQueuesState.detailStatus === status}" onclick="setBatchDetailFilter(this.dataset.bqFilter)">${text}</button>`
+            : `<span class="batch-task-status batch-task-status-${tone}">${text}</span>`;
+    }).join('');
 }
 
 function batchQueueDuplicatesSkipped(queue) {
@@ -902,6 +907,13 @@ window.clearTasksHistory = clearTasksHistory;
 const batchQueuesState = {
     queues: [],
     currentQueueId: null,
+    currentQueue: null,
+    detailStatus: 'all',
+    detailSearch: '',
+    detailRequestSeq: 0,
+    continuationPending: new Set(),
+    continuationBatchRunning: false,
+    detailNotice: '',
     refreshInterval: null,
     // 筛选和分页状态
     filterStatus: 'all', // 'all', 'pending', 'running', 'paused', 'completed', 'cancelled'
@@ -1016,7 +1028,7 @@ async function showBatchImportModal() {
         batchTaskModelByIndex = [];
         const retryInput = document.getElementById('batch-queue-model-retry');
         if (retryInput) retryInput.value = '3';
-        await ensureBatchAIChannels();
+        await ensureBatchAIChannels(true);
         fillBatchModelSelect(document.getElementById('batch-queue-default-model'), '');
         syncBatchTaskModelRows('');
         
@@ -1114,6 +1126,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 let batchAIChannels = {};
+let batchDefaultAIChannel = '';
+let batchAIChannelsLoadedAt = 0;
+let batchAIChannelsRequest = null;
 let batchTaskModelByIndex = [];
 
 // ===== 重复目标提醒（新建任务弹窗） =====
@@ -1291,23 +1306,29 @@ function batchTargetReminderHandleInput() {
 }
 // ===== 重复目标提醒结束 =====
 
-async function ensureBatchAIChannels() {
-    if (Object.keys(batchAIChannels).length > 0) return batchAIChannels;
-    try {
-        const response = await apiFetch('/api/config');
-        if (!response.ok) return batchAIChannels;
-        const cfg = await response.json();
-        const channels = (cfg.ai && cfg.ai.channels) || {};
-        const safe = {};
-        Object.keys(channels).forEach(function (id) {
-            const ch = channels[id] || {};
-            safe[id] = { name: ch.name || id, model: ch.model || '' };
-        });
-        batchAIChannels = safe;
-    } catch (error) {
-        console.warn('加载模型通道失败:', error);
+async function ensureBatchAIChannels(force = false) {
+    if (!force && batchAIChannelsLoadedAt && Date.now() - batchAIChannelsLoadedAt < 30000) return batchAIChannels;
+    if (batchAIChannelsRequest) {
+        if (!force) return batchAIChannelsRequest;
+        await batchAIChannelsRequest;
+        return ensureBatchAIChannels(true);
     }
-    return batchAIChannels;
+    batchAIChannelsRequest = (async () => {
+        try {
+            const response = await apiFetch('/api/config/ai-channels');
+            if (!response.ok) throw new Error('模型列表暂不可用');
+            const data = await response.json();
+            batchAIChannels = data.channels || {};
+            batchDefaultAIChannel = data.default_channel || '';
+            batchAIChannelsLoadedAt = Date.now();
+        } catch (error) {
+            batchAIChannelsLoadedAt = 0;
+            batchAIChannels = Object.fromEntries(Object.entries(batchAIChannels).map(([id, channel]) => [id, { ...channel, probe: { status: 'unknown' } }]));
+            console.warn('加载模型通道失败:', error);
+        }
+        return batchAIChannels;
+    })();
+    try { return await batchAIChannelsRequest; } finally { batchAIChannelsRequest = null; }
 }
 
 function batchAIChannelLabel(id) {
@@ -1319,18 +1340,47 @@ function batchAIChannelLabel(id) {
 
 function batchAIChannelOptionsHTML(selected) {
     const current = selected || '';
-    let html = '<option value="">' + escapeHtml(_t('batchImportModal.modelDefault')) + '</option>';
-    Object.keys(batchAIChannels).sort().forEach(function (id) {
-        html += '<option value="' + escapeHtml(id) + '"' + (id === current ? ' selected' : '') + '>' + escapeHtml(batchAIChannelLabel(id)) + '</option>';
-    });
+    const option = (id, base, channel) => {
+        const ui = typeof AIChannelProbeUI !== 'undefined' ? AIChannelProbeUI : null;
+        const label = ui && channel ? ui.optionLabel(channel, id, base) : base;
+        const title = ui && channel ? base + '\n' + ui.describe(channel).details : base;
+        return `<option value="${escapeHtml(id)}" title="${escapeHtml(title)}"${id === current ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+    };
+    const defaultChannel = batchAIChannels[batchDefaultAIChannel];
+    const defaultLabel = _t('batchImportModal.modelDefault') + (defaultChannel ? ' · ' + batchAIChannelLabel(batchDefaultAIChannel) : '');
+    let html = option('', defaultLabel, defaultChannel);
+    Object.keys(batchAIChannels).sort().forEach(id => { html += option(id, batchAIChannelLabel(id), batchAIChannels[id]); });
+    // 历史通道已删除也保留选择，不在刷新时静默换成默认通道。
+    if (current && !batchAIChannels[current]) html += option(current, current + ' · ' + _t('tasks.modelUnavailable'), null);
     return html;
+}
+
+function syncBatchModelProbeDetails(select) {
+    if (!select || typeof AIChannelProbeUI === 'undefined') return;
+    const channel = batchAIChannels[select.value || batchDefaultAIChannel] || { probe: { status: batchAIChannelsLoadedAt ? 'untested' : 'unknown' } };
+    const details = AIChannelProbeUI.describe(channel).details;
+    select.title = details;
+    const panel = select.id ? document.getElementById(select.id + '-probe') : null;
+    if (panel) AIChannelProbeUI.renderDetails(panel, channel);
 }
 
 function fillBatchModelSelect(select, selected) {
     if (!select) return;
     select.innerHTML = batchAIChannelOptionsHTML(selected);
     select.value = selected || '';
+    syncBatchModelProbeDetails(select);
+    if (!select.dataset.probeBound) {
+        select.dataset.probeBound = '1';
+        select.addEventListener('change', () => syncBatchModelProbeDetails(select));
+    }
 }
+
+async function refreshBatchModelProbes() {
+    await ensureBatchAIChannels(true);
+    document.querySelectorAll('#batch-import-modal select.batch-task-model-select, #batch-queue-default-model, #add-task-model, #batch-queue-detail-content select.batch-task-model-select').forEach(select => fillBatchModelSelect(select, select.value));
+}
+
+document.addEventListener('ai-channel-probes-updated', refreshBatchModelProbes);
 
 function batchTaskLines(text) {
     return String(text || '').split('\n').map(function (line) { return line.trim(); }).filter(function (line) { return line !== ''; });
@@ -2130,6 +2180,279 @@ function changeBatchQueuesPageSize() {
     }
 }
 
+// 子任务筛选遵循历史 outcome 的统计口径；活跃续跑另列，不改写历史。
+function batchTaskFilterKey(task) {
+    const result = taskGovernanceResult(task);
+    return ['tool_blocked', 'no_execution_evidence'].includes(result) ? 'blocked' : result;
+}
+
+function filteredBatchDetailTasks(queue = batchQueuesState.currentQueue) {
+    const keyword = batchQueuesState.detailSearch.trim().toLocaleLowerCase();
+    return (queue?.tasks || []).filter(Boolean).filter(task => {
+        const statusMatches = batchQueuesState.detailStatus === 'all' ||
+            (batchQueuesState.detailStatus === 'manual_active' ? isTaskManualContinuation(task) : batchTaskFilterKey(task) === batchQueuesState.detailStatus);
+        const haystack = [task.message, task.error, task.result, task.projectName, task.id].join('\n').toLocaleLowerCase();
+        return statusMatches && (!keyword || haystack.includes(keyword));
+    });
+}
+
+function batchDetailFilterHTML(queue) {
+    const entries = [['all', 'filterAll'], ['blocked', 'filterBlocked'], ['declined', 'filterDeclined'],
+        ['failed', 'filterFailed'], ['paused', 'filterPaused'], ['pending', 'filterPending'],
+        ['running', 'filterRunning'], ['cancelling', 'statusCancelling'], ['timeout', 'statusTimeout'],
+        ['verified_complete', 'statusVerifiedComplete'], ['delivered', 'statusDelivered'],
+        ['delivered_with_gaps', 'statusDeliveredWithGaps'], ['completed', 'statusLegacyCompleted'],
+        ['cancelled', 'statusCancelled'], ['unknown', 'unknown'], ['manual_active', 'filterManualActive']];
+    const tasks = (queue.tasks || []).filter(Boolean);
+    return entries.map(([key, label]) => {
+        const count = key === 'all' ? tasks.length : tasks.filter(task => key === 'manual_active' ? isTaskManualContinuation(task) : batchTaskFilterKey(task) === key).length;
+        if (!count && key !== 'all' && key !== batchQueuesState.detailStatus) return '';
+        return `<button type="button" class="bq-filter-chip" data-bq-filter="${key}" aria-pressed="${key === batchQueuesState.detailStatus}" onclick="setBatchDetailFilter(this.dataset.bqFilter)"><span>${escapeHtml(_t('tasks.' + label))}</span><strong>${count}</strong></button>`;
+    }).join('');
+}
+
+function setBatchDetailFilter(status) {
+    batchQueuesState.detailStatus = status;
+    refreshBatchDetailTaskList();
+}
+
+function setBatchDetailSearch(value) {
+    batchQueuesState.detailSearch = String(value || '');
+    refreshBatchDetailTaskList();
+}
+
+function batchTaskCanContinue(queue, task) {
+    if (!queue || !task?.conversationId || queue.status === 'running' || queue.executorActive) return false;
+    if (['running', 'cancelling', 'pending'].includes(task.status) || isTaskConversationActive(task)) return false;
+    if (batchQueuesState.continuationPending.has(task.conversationId)) return false;
+    return typeof hasPermission !== 'function' || (hasPermission('tasks:write') && hasPermission('chat:write'));
+}
+
+function batchContinuationCandidates(queue, tasks) {
+    const seen = new Set();
+    return tasks.filter(task => {
+        // 默认批量操作不再次运行已完成的任务；完成项仍可单条显式发送。
+        if (['verified_complete', 'delivered', 'completed', 'unknown'].includes(batchTaskFilterKey(task))) return false;
+        if (!batchTaskCanContinue(queue, task) || seen.has(task.conversationId)) return false;
+        seen.add(task.conversationId);
+        return true;
+    });
+}
+
+function batchTaskActionContext(button) {
+    const row = button?.closest('.batch-task-item');
+    const queue = batchQueuesState.currentQueue;
+    if (!row || !queue || row.getAttribute('data-queue-id') !== queue.id) return null;
+    const task = (queue.tasks || []).find(task => task?.id === row.getAttribute('data-task-id'));
+    return task ? { queue, task } : null;
+}
+
+function renderBatchDetailTasks(queue) {
+    const allowSubtaskMutation = batchQueueAllowsSubtaskMutation(queue);
+    const tasks = filteredBatchDetailTasks(queue);
+    if (!tasks.length) return `<div class="bq-detail-empty"><strong>${escapeHtml(_t('tasks.filterEmpty'))}</strong><p>${escapeHtml(_t('tasks.filterEmptyHint'))}</p></div>`;
+    return tasks.map(task => {
+        const index = queue.tasks.indexOf(task);
+        const taskStatus = taskGovernancePresentation(task);
+        const canEdit = allowSubtaskMutation && task.status !== 'running';
+        const canRunSingle = batchQueueCanRunSingleTask(queue, task);
+        const canContinue = batchTaskCanContinue(queue, task);
+        const waiting = batchQueuesState.continuationPending.has(task.conversationId);
+        const message = escapeHtml(task.message).replace(/\n/g, '&#10;').replace(/\r/g, '&#13;');
+        const modelLabel = batchAIChannelLabel(task.aiChannelId);
+        const resumable = ['pending', 'paused'].includes(task.status);
+        const hasEvidence = task.latestRun || task.completionReason || task.result;
+        return `<article class="batch-task-item ${isTaskConversationActive(task) || task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${escapeHtml(queue.id)}" data-task-id="${escapeHtml(task.id)}" data-task-message="${message}">
+            <div class="batch-task-header">
+                <div class="bq-task-heading"><span class="batch-task-index">#${index + 1}</span><span class="batch-task-status ${taskStatus.class}">${escapeHtml(taskStatus.text)}</span>
+                    ${isTaskManualContinuation(task) ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_t('tasks.manualContinuationActive'))}</span>` : ''}
+                </div>
+                <div class="batch-task-message" title="${escapeHtml(task.message)}">${escapeHtml(task.message)}</div>
+                <div class="bq-task-controls">
+                    ${canEdit ? `<select class="batch-task-model-select" title="${escapeHtml(_t('batchQueueDetailModal.model'))}" aria-label="${escapeHtml(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModelFromElement(this)">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
+                    <div class="bq-task-actions">
+                        ${task.conversationId ? `<button type="button" class="btn-primary btn-small bq-continue-btn" onclick="sendBatchTaskContinue(this)" ${!canContinue ? 'disabled' : ''} title="${escapeHtml(_t('tasks.sendContinueHint'))}">${escapeHtml(_t(waiting ? 'tasks.continueSending' : 'tasks.sendContinue'))}</button>` : ''}
+                        <button type="button" class="btn-secondary btn-small" onclick="copyBatchTaskOriginal(this)">${escapeHtml(_t('tasks.copyOriginalInput'))}</button>
+                        ${task.conversationId ? `<button type="button" class="btn-secondary btn-small" onclick="viewBatchTaskFromElement(this)">${escapeHtml(_t('tasks.viewConversation'))}</button>` : ''}
+                        <button type="button" class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? 'onclick="runBatchTaskFromElement(this)"' : `disabled title="${escapeHtml(batchQueueRunSingleTaskDisabledReason(queue, task))}"`}>${escapeHtml(_t(resumable ? 'tasks.continueExecution' : 'tasks.rerunTask'))}</button>
+                        ${canEdit ? `<button type="button" class="btn-secondary btn-small batch-task-edit-btn" onclick="editBatchTaskFromElement(this)">${escapeHtml(_t('common.edit'))}</button><button type="button" class="btn-secondary btn-small btn-danger batch-task-delete-btn" onclick="deleteBatchTaskFromElement(this)">${escapeHtml(_t('common.delete'))}</button>` : ''}
+                    </div>
+                </div>
+            </div>
+            <div class="bq-task-meta">${task.projectId ? `<span title="${escapeHtml(task.projectId)}">${escapeHtml(_t('batchImportModal.project'))}: ${escapeHtml(task.projectName || task.projectId)}</span>` : ''}
+                ${task.startedAt ? `<span>${escapeHtml(_t('batchQueueDetailModal.startLabel'))}: ${escapeHtml(new Date(task.startedAt).toLocaleString())}</span>` : ''}
+                ${task.completedAt ? `<span>${escapeHtml(_t('batchQueueDetailModal.completeLabel'))}: ${escapeHtml(new Date(task.completedAt).toLocaleString())}</span>` : ''}
+                ${task.retryCount > 0 ? `<span>${escapeHtml(_tPlain('batchQueueDetailModal.retried', { count: task.retryCount }))}</span>` : ''}
+            </div>
+            ${task.error ? `<div class="${['blocked', 'tool_blocked', 'no_execution_evidence'].includes(taskStatus.result) ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(taskStatus.result === 'declined' ? 'tasks.declinedReasonLabel' : taskStatus.result === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
+            ${hasEvidence ? `<details class="bq-task-evidence" data-task-evidence="${escapeHtml(task.id)}"><summary>${escapeHtml(_t('tasks.runDetails'))}</summary>${renderTaskGovernance(task)}${task.result ? `<div class="batch-task-result">${escapeHtml(task.result)}</div>` : ''}</details>` : ''}
+        </article>`;
+    }).join('');
+}
+
+function refreshBatchDetailTaskList() {
+    const queue = batchQueuesState.currentQueue;
+    if (!queue) return;
+    const list = document.getElementById('bq-detail-task-items');
+    if (list) list.innerHTML = renderBatchDetailTasks(queue);
+    const root = document.getElementById('batch-queue-detail-content');
+    root?.querySelectorAll?.('[data-bq-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.bqFilter === batchQueuesState.detailStatus)));
+    const tasks = filteredBatchDetailTasks(queue);
+    const count = document.getElementById('bq-detail-filter-count');
+    if (count) count.textContent = _tPlain('tasks.filterCount', { count: tasks.length, total: (queue.tasks || []).filter(Boolean).length });
+    const bulk = document.getElementById('bq-detail-continue-filtered');
+    if (bulk) {
+        const candidates = batchContinuationCandidates(queue, tasks);
+        bulk.disabled = batchQueuesState.continuationBatchRunning || !candidates.length;
+        bulk.textContent = _tPlain('tasks.continueFiltered', { count: candidates.length });
+    }
+    const notice = document.getElementById('bq-detail-notice');
+    if (notice) { notice.textContent = batchQueuesState.detailNotice; notice.hidden = !batchQueuesState.detailNotice; }
+}
+
+function updateBatchTaskModelFromElement(select) {
+    const context = batchTaskActionContext(select);
+    if (context) updateBatchTaskModel(context.queue.id, context.task.id, select.value);
+}
+
+function viewBatchTaskFromElement(button) {
+    const context = batchTaskActionContext(button);
+    if (context) viewBatchTaskConversation(context.task.conversationId);
+}
+
+function runBatchTaskFromElement(button) {
+    const context = batchTaskActionContext(button);
+    if (context) runSingleBatchTask(context.queue.id, context.task.id);
+}
+
+// 只在服务端确认取得任务运行权后结束展示流；reader.cancel 不等于停止后端任务。
+async function readBatchContinuationStarted(response) {
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || _t('tasks.continueFailed'));
+    }
+    if (!response.body?.getReader) throw new Error(_t('tasks.continueUnconfirmed'));
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error(_t('tasks.continueUnconfirmed'));
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                const event = JSON.parse(line.slice(5).trim());
+                if (event.type === 'error') throw new Error(event.message || _t('tasks.continueFailed'));
+                if (event.type === 'task_started') return event.data;
+                if (event.type === 'done') throw new Error(_t('tasks.continueUnconfirmed'));
+            }
+        }
+    } finally {
+        await reader.cancel().catch(() => {});
+    }
+}
+
+async function requestBatchTaskContinue(queue, task) {
+    if (!batchTaskCanContinue(queue, task)) throw new Error(_t('tasks.continueUnavailable'));
+    batchQueuesState.continuationPending.add(task.conversationId);
+    if (batchQueuesState.currentQueueId === queue.id) refreshBatchDetailTaskList();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+        const response = await apiFetch(`/api/batch-tasks/${encodeURIComponent(queue.id)}/tasks/${encodeURIComponent(task.id)}/continue`, { method: 'POST', signal: controller.signal });
+        await readBatchContinuationStarted(response);
+    } catch (error) {
+        if (error.name === 'AbortError') throw new Error(_t('tasks.continueUnconfirmed'));
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+        batchQueuesState.continuationPending.delete(task.conversationId);
+    }
+}
+
+async function sendBatchTaskContinue(button) {
+    const context = batchTaskActionContext(button);
+    if (!context || batchQueuesState.continuationBatchRunning) return;
+    if (typeof requirePermission === 'function' && (!requirePermission('tasks:write') || !requirePermission('chat:write'))) return;
+    const { queue, task } = context;
+    button.disabled = true;
+    try {
+        await requestBatchTaskContinue(queue, task);
+        if (batchQueuesState.currentQueueId === queue.id) batchQueuesState.detailNotice = _t('tasks.continueSent');
+    } catch (error) {
+        if (batchQueuesState.currentQueueId === queue.id) batchQueuesState.detailNotice = error.message;
+    } finally {
+        if (batchQueuesState.currentQueueId === queue.id) await showBatchQueueDetail(queue.id);
+        refreshBatchQueues();
+    }
+}
+
+async function sendFilteredBatchTaskContinue() {
+    const queue = batchQueuesState.currentQueue;
+    if (!queue || batchQueuesState.continuationBatchRunning) return;
+    if (typeof requirePermission === 'function' && (!requirePermission('tasks:write') || !requirePermission('chat:write'))) return;
+    const tasks = batchContinuationCandidates(queue, filteredBatchDetailTasks(queue));
+    if (!tasks.length || !confirm(_tPlain('tasks.continueFilteredConfirm', { count: tasks.length }))) return;
+    batchQueuesState.continuationBatchRunning = true;
+    let sent = 0;
+    const failures = [];
+    refreshBatchDetailTaskList();
+    try {
+        for (const task of tasks) {
+            try { await requestBatchTaskContinue(queue, task); sent++; }
+            catch (error) { failures.push(`#${queue.tasks.indexOf(task) + 1}: ${error.message}`); }
+        }
+    } finally {
+        batchQueuesState.continuationBatchRunning = false;
+        const notice = _tPlain('tasks.continueBatchResult', { sent, failed: failures.length }) + (failures.length ? '\n' + failures.join('\n') : '');
+        if (batchQueuesState.currentQueueId === queue.id) {
+            batchQueuesState.detailNotice = notice;
+            await showBatchQueueDetail(queue.id);
+        } else if (typeof showToastNotification === 'function') showToastNotification(notice, failures.length ? 'error' : 'success');
+        refreshBatchQueues();
+    }
+}
+
+async function writeBatchOriginalClipboard(text) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        try { await navigator.clipboard.writeText(text); return; } catch (_) { /* HTTP/denied: fallback below */ }
+    }
+    const input = document.createElement('textarea');
+    const focused = document.activeElement;
+    input.value = text;
+    input.readOnly = true;
+    input.style.cssText = 'position:fixed;left:-10000px;top:0;';
+    // 模态框焦点约束下也能工作；回退适用于未启用 HTTPS 的部署。
+    (document.getElementById('batch-queue-detail-content') || document.body).appendChild(input);
+    try {
+        input.select();
+        if (!document.execCommand('copy')) throw new Error(_t('common.copyFailed'));
+    } finally { input.remove(); focused?.focus?.(); }
+}
+
+async function copyBatchTaskOriginal(button) {
+    const context = batchTaskActionContext(button);
+    if (!context) return;
+    const { queue, task } = context;
+    button.disabled = true;
+    try {
+        const response = await apiFetch(`/api/batch-tasks/${encodeURIComponent(queue.id)}/tasks/${encodeURIComponent(task.id)}/original-message`);
+        const data = await response.json();
+        if (!response.ok || typeof data.message !== 'string') throw new Error(data.error || _t('common.copyFailed'));
+        await writeBatchOriginalClipboard(data.message);
+        button.textContent = _t('common.copied');
+    } catch (error) {
+        if (batchQueuesState.currentQueueId === queue.id) {
+            batchQueuesState.detailNotice = error.message;
+            const notice = document.getElementById('bq-detail-notice');
+            if (notice) { notice.textContent = error.message; notice.hidden = false; }
+        }
+    } finally { button.disabled = false; }
+}
+
 // 显示批量任务队列详情
 async function showBatchQueueDetail(queueId) {
     const modal = document.getElementById('batch-queue-detail-modal');
@@ -2142,6 +2465,14 @@ async function showBatchQueueDetail(queueId) {
         
         if (!modal || !content) return;
 
+        const requestSeq = ++batchQueuesState.detailRequestSeq;
+        if (batchQueuesState.currentQueueId !== queueId) {
+            batchQueuesState.detailStatus = 'all';
+            batchQueuesState.detailSearch = '';
+            batchQueuesState.detailNotice = '';
+            batchQueuesState.currentQueue = null;
+        }
+        batchQueuesState.currentQueueId = queueId;
         const alreadyOpen = isAppModalOpen('batch-queue-detail-modal');
         if (!alreadyOpen) {
             if (content) content.innerHTML = '<p style="color:#64748b;margin:0;">…</p>';
@@ -2167,7 +2498,8 @@ async function showBatchQueueDetail(queueId) {
         
         const result = await response.json();
         const queue = result.queue;
-        batchQueuesState.currentQueueId = queueId;
+        if (requestSeq !== batchQueuesState.detailRequestSeq || batchQueuesState.currentQueueId !== queueId) return;
+        batchQueuesState.currentQueue = queue;
         const pres = getBatchQueueStatusPresentation(queue);
         const allowSubtaskMutation = batchQueueAllowsSubtaskMutation(queue);
         const stats = batchQueueTaskStats(queue);
@@ -2253,8 +2585,11 @@ async function showBatchQueueDetail(queueId) {
         const prevDetailFor = prevLayout ? prevLayout.getAttribute('data-bq-detail-for') : null;
         const sameQueueAsBefore = prevDetailFor === queue.id;
         const savedTechDetailsOpen = sameQueueAsBefore && !!(prevTechDetails && prevTechDetails.open);
+        const savedConfigOpen = sameQueueAsBefore && !!content.querySelector('details.bq-detail-config')?.open;
+        const openEvidence = sameQueueAsBefore ? Array.from(content.querySelectorAll?.('[data-task-evidence][open]') || []).map(el => el.dataset.taskEvidence) : [];
 
         deferModalContent(function () {
+        if (requestSeq !== batchQueuesState.detailRequestSeq || batchQueuesState.currentQueueId !== queueId) return;
         content.innerHTML = `
             <div class="batch-queue-detail-layout" data-bq-detail-for="${escapeHtml(queue.id)}">
             <section class="batch-queue-detail-hero">
@@ -2262,10 +2597,12 @@ async function showBatchQueueDetail(queueId) {
                 ${pres.sublabel ? `<p class="batch-queue-detail-hero__sub">${escapeHtml(pres.sublabel)}</p>` : ''}
                 ${showProgressNoteInModal ? `<p class="batch-queue-detail-hero__note">${escapeHtml(pres.progressNote)}</p>` : ''}
                 <p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.queueResultsLabel'))} · ${escapeHtml(_tPlain('tasks.processedFraction', { count: stats.processed, total: stats.total }))}</p>
-                <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats)}</div>
-                <p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.processedProgressHint'))}</p>
+                <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats, true)}</div>
+                <div class="bq-detail-progress" role="progressbar" aria-label="${escapeHtml(_t('tasks.processedLabel'))}" aria-valuemin="0" aria-valuemax="${stats.total || 1}" aria-valuenow="${stats.processed}"><span style="width:${stats.total ? Math.round(stats.processed / stats.total * 100) : 0}%"></span></div>
+                <details class="bq-detail-help"><summary>${escapeHtml(_t('tasks.progressExplanation'))}</summary><p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.processedProgressHint'))}</p></details>
                 ${stats.manualActive > 0 ? `<p class="task-governance-note">${escapeHtml(_tPlain('tasks.manualActiveCount', { count: stats.manualActive }))} · ${escapeHtml(_t('tasks.queueHistoricalCountsHint'))}</p>` : ''}
             </section>
+            <details class="bq-detail-config"><summary>${escapeHtml(_t('tasks.queueConfiguration'))}<span>${escapeHtml(agentModeText)} · ${escapeHtml(batchAssessmentModeLabel(queue.assessmentMode))}</span></summary>
             <section class="batch-queue-detail-kv">
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.queueTitle'))}</span><span class="bq-kv__v" id="bq-title-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditTitle()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span>` : escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.role'))}</span><span class="bq-kv__v" id="bq-role-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditRole()" title="${escapeHtml(_t('common.edit'))}">${roleLineVal}</span>` : roleLineVal}</span></div>
@@ -2277,8 +2614,8 @@ async function showBatchQueueDetail(queueId) {
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.modelRetry'))}</span><span class="bq-kv__v">${escapeHtml(String(Number.isFinite(queue.modelRetryMax) ? queue.modelRetryMax : 3))}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.taskTotal'))}</span><span class="bq-kv__v">${stats.total}</span></div>
                 ${queue.scheduleMode === 'cron' ? `<div class="bq-kv bq-kv--block"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAuto'))}</span><span class="bq-kv__v bq-kv__v--control"><label class="bq-cron-toggle"><input type="checkbox" ${queue.scheduleEnabled !== false ? 'checked' : ''} onchange="updateBatchQueueScheduleEnabled(this.checked)" /><span class="bq-cron-toggle__hint">${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}</span></label></span></div>` : ''}
-            </section>
-            ${stats.blocked > 0 ? `<div class="bq-alert bq-alert--blocked"><strong>${escapeHtml(_t('tasks.blockedCount', { count: stats.blocked }))}</strong><p>${escapeHtml(_t('tasks.blockedRecoveryHint'))}</p></div>` : ''}
+            </section></details>
+            ${stats.blocked > 0 ? `<details class="bq-alert bq-alert--blocked bq-detail-help"><summary>${escapeHtml(_t('tasks.blockedRecoveryHelp'))}</summary><p>${escapeHtml(_t('tasks.blockedRecoveryHint'))}</p></details>` : ''}
             ${queue.lastScheduleError ? `<div class="bq-alert bq-alert--err"><strong>${escapeHtml(_t('batchQueueDetailModal.lastScheduleError'))}</strong><p>${escapeHtml(queue.lastScheduleError)}</p></div>` : ''}
             ${queue.lastRunError ? `<div class="bq-alert bq-alert--err"><strong>${escapeHtml(_t('batchQueueDetailModal.lastRunError'))}</strong><p>${escapeHtml(queue.lastRunError)}</p></div>` : ''}
             ${pres.callout ? `<div class="batch-queue-cron-callout batch-queue-cron-callout--compact"><span class="batch-queue-cron-callout-icon" aria-hidden="true">\u21BB</span><p>${escapeHtml(pres.callout)}</p></div>` : ''}
@@ -2294,42 +2631,25 @@ async function showBatchQueueDetail(queueId) {
                 </div>
             </details>
             </div>
-            <div class="batch-queue-tasks-list">
-                <h4>` + _t('batchQueueDetailModal.taskList') + `</h4>
-                ${(Array.isArray(queue.tasks) ? queue.tasks.filter(Boolean) : []).map((task, index) => {
-                    const taskStatus = taskGovernancePresentation(task);
-                    const canEdit = allowSubtaskMutation && task.status !== 'running';
-                    const canRunSingle = batchQueueCanRunSingleTask(queue, task);
-                    const runSingleUnavailableTitle = escapeHtml(batchQueueRunSingleTaskDisabledReason(queue, task));
-                    const taskMessageEscaped = escapeHtml(task.message).replace(/'/g, "&#39;").replace(/"/g, "&quot;").replace(/\n/g, "\\n");
-                    const modelLabel = batchAIChannelLabel(task.aiChannelId);
-                    const retryNote = task.retryCount > 0 ? _t('batchQueueDetailModal.retried', { count: task.retryCount }) : '';
-                    return `
-                        <div class="batch-task-item ${task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${queue.id}" data-task-id="${task.id}" data-task-message="${taskMessageEscaped}">
-                            <div class="batch-task-header">
-                                <span class="batch-task-index">#${index + 1}</span>
-                                <span class="batch-task-status ${taskStatus.class}">${escapeHtml(taskStatus.text)}</span>
-                                ${isTaskManualContinuation(task) ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_t('tasks.manualContinuationActive'))}</span>` : ''}
-                                <span class="batch-task-message" title="${escapeHtml(task.message)}">${escapeHtml(task.message)}</span>
-                                ${canEdit ? `<select class="batch-task-model-select" title="${escapeHtml(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModel('${queue.id}', '${task.id}', this.value); event.stopPropagation();">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
-                                <button class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? `onclick="runSingleBatchTask('${queue.id}', '${task.id}'); event.stopPropagation();"` : `disabled title="${runSingleUnavailableTitle}"`}>` + _t('tasks.runSingleTask') + `</button>
-                                ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewBatchTaskConversation('${task.conversationId}'); event.stopPropagation();">` + _t('tasks.viewConversation') + `</button>` : ''}
-                                ${canEdit ? `<button class="btn-secondary btn-small batch-task-edit-btn" onclick="editBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.edit') + `</button>` : ''}
-                                ${canEdit ? `<button class="btn-secondary btn-small btn-danger batch-task-delete-btn" onclick="deleteBatchTaskFromElement(this); event.stopPropagation();">` + _t('common.delete') + `</button>` : ''}
-                            </div>
-                            ${task.projectId ? `<div class="batch-task-time" title="${escapeHtml(task.projectId)}">${escapeHtml(_t('batchImportModal.project'))}: ${escapeHtml(task.projectName || task.projectId)}</div>` : ''}
-                            ${task.startedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.startLabel') + `: ${new Date(task.startedAt).toLocaleString()}</div>` : ''}
-                            ${retryNote ? `<div class="batch-task-time">${escapeHtml(retryNote)}</div>` : ''}
-                            ${task.completedAt ? `<div class="batch-task-time">` + _t('batchQueueDetailModal.completeLabel') + `: ${new Date(task.completedAt).toLocaleString()}</div>` : ''}
-                            ${renderTaskGovernance(task)}
-                            ${task.error ? `<div class="${['blocked', 'tool_blocked', 'no_execution_evidence'].includes(taskStatus.result) ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(taskStatus.result === 'declined' ? 'tasks.declinedReasonLabel' : taskStatus.result === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
-                            ${task.result ? `<div class="batch-task-result">` + _t('batchQueueDetailModal.resultLabel') + `: ${escapeHtml(task.result.substring(0, 200))}${task.result.length > 200 ? '...' : ''}</div>` : ''}
-                        </div>
-                    `;
-                }).join('')}
-            </div>
+            <section class="batch-queue-tasks-list">
+                <div class="bq-detail-toolbar">
+                    <div class="bq-detail-toolbar__heading"><h4>${escapeHtml(_t('batchQueueDetailModal.taskList'))}</h4><span id="bq-detail-filter-count" aria-live="polite"></span></div>
+                    <div class="bq-detail-toolbar__actions">
+                        <input type="search" id="bq-detail-search" value="${escapeHtml(batchQueuesState.detailSearch)}" placeholder="${escapeHtml(_t('tasks.filterSearch'))}" aria-label="${escapeHtml(_t('tasks.filterSearch'))}" oninput="setBatchDetailSearch(this.value)">
+                        <button type="button" class="btn-primary btn-small" id="bq-detail-continue-filtered" data-require-permission="chat:write" onclick="sendFilteredBatchTaskContinue()" title="${escapeHtml(_t('tasks.sendContinueHint'))}"></button>
+                    </div>
+                </div>
+                <div class="bq-detail-filters" role="group" aria-label="${escapeHtml(_t('tasks.filterByStatus'))}">${batchDetailFilterHTML(queue)}</div>
+                <p class="bq-detail-action-hint">${escapeHtml(_t('tasks.continueActionsHint'))}</p>
+                <div id="bq-detail-notice" class="bq-detail-notice" role="status" aria-live="polite" hidden></div>
+                <div id="bq-detail-task-items">${renderBatchDetailTasks(queue)}</div>
+            </section>
         `;
         
+        refreshBatchDetailTaskList();
+        const configDetails = content.querySelector('details.bq-detail-config');
+        if (configDetails) configDetails.open = savedConfigOpen;
+        content.querySelectorAll?.('[data-task-evidence]').forEach(el => { el.open = openEvidence.includes(el.dataset.taskEvidence); });
         // 恢复滚动位置
         if (savedModalBodyScrollTop > 0 && modalBody) {
             modalBody.scrollTop = savedModalBodyScrollTop;
@@ -2352,6 +2672,7 @@ async function showBatchQueueDetail(queueId) {
             stopBatchQueueRefresh();
         }
     } catch (error) {
+        if (requestSeq !== batchQueuesState.detailRequestSeq || batchQueuesState.currentQueueId !== queueId) return;
         console.error('获取队列详情失败:', error);
         closeBatchQueueDetailModal();
         alert(_t('tasks.getQueueDetailFailed') + ': ' + error.message);
@@ -2524,6 +2845,8 @@ async function deleteBatchQueueFromList(queueId) {
 function closeBatchQueueDetailModal() {
     closeAppModal('batch-queue-detail-modal');
     batchQueuesState.currentQueueId = null;
+    batchQueuesState.currentQueue = null;
+    batchQueuesState.detailRequestSeq++;
     stopBatchQueueRefresh();
 }
 
@@ -2541,7 +2864,7 @@ function startBatchQueueRefresh(queueId) {
             content.querySelector('.bq-inline-edit-controls') ||
             content.querySelector('.batch-task-inline-edit')
         );
-        if ((addModal && isAppModalOpen('add-batch-task-modal')) || hasInlineEdit) {
+        if ((addModal && isAppModalOpen('add-batch-task-modal')) || hasInlineEdit || document.activeElement?.id === 'bq-detail-search' || batchQueuesState.continuationBatchRunning) {
             return;
         }
         if (batchQueuesState._bqDetailRefreshing) {
@@ -2601,11 +2924,8 @@ function editBatchTaskFromElement(button) {
     const taskMessage = taskItem.getAttribute('data-task-message');
     if (!queueId || !taskId) return;
 
-    // 解码HTML实体
-    const decodedMessage = taskMessage
-        .replace(/&#39;/g, "'")
-        .replace(/&quot;/g, '"')
-        .replace(/\\n/g, '\n');
+    // 属性读取已经由 DOM 解码；保留原文中的字面量 \\n 和 HTML 实体。
+    const decodedMessage = taskMessage;
 
     // 找到 .batch-task-message 和 header 中的按钮
     const msgSpan = taskItem.querySelector('.batch-task-message');
@@ -3187,6 +3507,7 @@ async function saveInlineConcurrency() {
 // --- 单条执行 ---
 async function runSingleBatchTask(queueId, taskId) {
     if (!queueId || !taskId) return;
+    if (typeof requirePermission === 'function' && !requirePermission('tasks:write')) return;
     if (!confirm(_t('tasks.confirmRunSingleTask'))) return;
     try {
         const response = await apiFetch(`/api/batch-tasks/${queueId}/tasks/${taskId}/run`, {

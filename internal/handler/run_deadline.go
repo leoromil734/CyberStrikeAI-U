@@ -8,6 +8,10 @@ import (
 	"cyberstrike-ai/internal/mcp"
 )
 
+// Batch and interactive requests share one absolute lifetime. Continuations do
+// not renew it; explicit user cancellation and per-tool limits remain effective.
+const defaultAgentRunTimeout = 600 * time.Minute
+
 // agentRunDeadline owns the budget and terminal cancellation for one user request.
 // Continuations create sibling segments beneath Context, never a new deadline.
 // Only the request entry point may detach the HTTP context (for SSE reconnects).

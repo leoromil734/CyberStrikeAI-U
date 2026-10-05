@@ -108,6 +108,7 @@ let multiAgentAPIEnabled = false;
 let chatAIChannels = {};
 let chatDefaultAIChannel = '';
 let chatAIChannelIdByNormalizedId = {};
+let chatAIChannelLoadRequest = 0;
 
 // 人机协同（HITL）会话级配置
 const HITL_STORAGE_PREFIX = 'cyberstrike-chat-hitl';
@@ -132,6 +133,26 @@ function syncSessionSettingsSelect(select) {
     if (!reg) return;
     const selected = select.options[select.selectedIndex];
     reg.value.textContent = sessionSettingsSelectLabel(selected);
+    if (select.id === 'chat-ai-channel-select') {
+        reg.trigger.title = selected ? selected.title || sessionSettingsSelectLabel(selected) : '';
+        const details = selected && selected.dataset.aiProbeDetails || '';
+        if (!reg.probeDetails) {
+            reg.probeDetails = document.createElement('div');
+            reg.probeDetails.id = 'chat-ai-channel-probe-details';
+            reg.probeDetails.className = 'ai-channel-probe-details ai-channel-probe-current';
+            reg.probeDetails.setAttribute('role', 'status');
+            reg.probeDetails.setAttribute('aria-live', 'polite');
+            reg.wrapper.appendChild(reg.probeDetails);
+            [select, reg.trigger].forEach(function (control) {
+                const ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+                if (!ids.includes(reg.probeDetails.id)) ids.push(reg.probeDetails.id);
+                control.setAttribute('aria-describedby', ids.join(' '));
+            });
+        }
+        reg.probeDetails.textContent = details;
+        reg.probeDetails.hidden = !details;
+        reg.probeDetails.dataset.aiProbeStatus = selected && selected.dataset.aiProbeStatus || '';
+    }
     reg.trigger.disabled = !!select.disabled;
     reg.wrapper.classList.toggle('is-disabled', !!select.disabled);
     reg.menu.innerHTML = '';
@@ -148,8 +169,17 @@ function syncSessionSettingsSelect(select) {
 
         const label = document.createElement('span');
         label.className = 'session-settings-select-option-label';
-        label.textContent = sessionSettingsSelectLabel(option);
+        label.textContent = option.dataset.aiChannelLabel || sessionSettingsSelectLabel(option);
         item.appendChild(label);
+        if (option.dataset.aiProbeDetails) {
+            item.classList.add('ai-channel-probe-option');
+            item.title = option.title || '';
+            item.dataset.aiProbeStatus = option.dataset.aiProbeStatus;
+            const details = document.createElement('span');
+            details.className = 'ai-channel-probe-details';
+            details.textContent = option.dataset.aiProbeDetails;
+            item.appendChild(details);
+        }
         reg.menu.appendChild(item);
     });
 }
@@ -893,8 +923,15 @@ function resolveChatAIChannelId(id) {
 function populateChatAIChannelSelect(ai) {
     const select = document.getElementById('chat-ai-channel-select');
     const cfg = ai && typeof ai === 'object' ? ai : {};
-    chatAIChannels = cfg.channels && typeof cfg.channels === 'object' ? cfg.channels : {};
-    chatAIChannelIdByNormalizedId = {};
+    const channels = cfg.channels && typeof cfg.channels === 'object' ? cfg.channels : {};
+    // Settings can still pass the full configuration after saving. Keep only
+    // display fields locally and reload authoritative probe data separately.
+    chatAIChannels = Object.create(null);
+    Object.keys(channels).forEach(function (id) {
+        const ch = channels[id] || {};
+        chatAIChannels[id] = {name: ch.name || id, model: ch.model || '', probe: ch.probe || {status: 'unknown'}};
+    });
+    chatAIChannelIdByNormalizedId = Object.create(null);
     Object.keys(chatAIChannels).forEach(function (id) {
         const normalized = normalizeChatAIChannelId(id);
         if (normalized && !chatAIChannelIdByNormalizedId[normalized]) {
@@ -908,12 +945,18 @@ function populateChatAIChannelSelect(ai) {
     const fallbackOpt = document.createElement('option');
     fallbackOpt.value = '';
     fallbackOpt.textContent = typeof window.t === 'function' ? window.t('chat.aiChannelDefault') : '跟随默认通道';
+    if (window.AIChannelProbeUI && chatDefaultAIChannel) {
+        const defaultChannel = chatAIChannels[chatDefaultAIChannel];
+        const base = fallbackOpt.textContent + ' · ' + window.AIChannelProbeUI.channelLabel(defaultChannel, chatDefaultAIChannel);
+        window.AIChannelProbeUI.applyOption(fallbackOpt, defaultChannel, base);
+    }
     select.appendChild(fallbackOpt);
     Object.keys(chatAIChannels).sort().forEach(function (id) {
         const ch = chatAIChannels[id] || {};
         const opt = document.createElement('option');
         opt.value = id;
         opt.textContent = (ch.name || id) + (ch.model ? ' · ' + ch.model : '');
+        if (window.AIChannelProbeUI) window.AIChannelProbeUI.applyOption(opt, ch);
         select.appendChild(opt);
     });
     let stored = '';
@@ -922,6 +965,30 @@ function populateChatAIChannelSelect(ai) {
     select.value = stored || '';
     refreshSessionSettingsSelects();
     updateChatReasoningSummary();
+    if (!Object.prototype.hasOwnProperty.call(cfg, 'probes_available') && typeof loadChatAIChannels === 'function') {
+        loadChatAIChannels();
+    }
+}
+
+async function loadChatAIChannels() {
+    const request = ++chatAIChannelLoadRequest;
+    try {
+        const response = await apiFetch('/api/config/ai-channels');
+        if (!response.ok) throw new Error('模型列表加载失败');
+        const data = await response.json();
+        if (request !== chatAIChannelLoadRequest) return;
+        populateChatAIChannelSelect({channels: data.channels, default_channel: data.default_channel, probes_available: data.probes_available === true});
+    } catch (error) {
+        if (request !== chatAIChannelLoadRequest) return;
+        // Retain selectable models on refresh failure, without showing an old
+        // success as if it were the latest persisted test result.
+        const channels = Object.create(null);
+        Object.keys(chatAIChannels).forEach(function (id) {
+            channels[id] = {name: chatAIChannels[id].name, model: chatAIChannels[id].model, probe: {status: 'unknown'}};
+        });
+        populateChatAIChannelSelect({channels: channels, default_channel: chatDefaultAIChannel, probes_available: false});
+        console.warn('加载模型通道测试摘要失败');
+    }
 }
 
 function conversationAIChannelLabel(conversation) {
@@ -1203,12 +1270,15 @@ async function initChatAgentModeFromConfig() {
     restoreChatReasoningControlsFromStorage();
     syncReasoningRowVisibility(stored);
 
+    // This narrow endpoint is available to ordinary chat/task readers, unlike
+    // the full administrative configuration below.
+    await loadChatAIChannels();
+    if (typeof hasPermission === 'function' && !hasPermission('config:read')) return;
     try {
         const r = await apiFetch('/api/config');
         if (!r.ok) return;
         const cfg = await r.json();
         multiAgentAPIEnabled = !!(cfg.multi_agent && cfg.multi_agent.enabled);
-        populateChatAIChannelSelect(cfg.ai || {});
         if (typeof window !== 'undefined') {
             window.__csaiMultiAgentPublic = cfg.multi_agent || null;
             const tw = cfg.hitl && cfg.hitl.tool_whitelist;
@@ -1240,8 +1310,12 @@ async function initChatAgentModeFromConfig() {
     }
 }
 
+document.addEventListener('ai-channel-probes-updated', function () {
+    loadChatAIChannels();
+});
+
 document.addEventListener('languagechange', function () {
-    refreshConversationAILabels();
+    populateChatAIChannelSelect({channels: chatAIChannels, default_channel: chatDefaultAIChannel, probes_available: true});
     const hid = document.getElementById('agent-mode-select');
     if (!hid) return;
     const v = hid.value;

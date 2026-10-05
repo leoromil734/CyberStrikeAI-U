@@ -171,7 +171,7 @@ func registerResultTools(server *mcp.Server, p *resultPipeline) {
 	props["relative_path"] = stringField
 	props["location"] = map[string]interface{}{"type": "string", "enum": []string{"execution", "js", "reduction"}, "default": "execution"}
 	props["format"] = map[string]interface{}{"type": "string", "enum": []string{"json", "jsonl", "csv", "text", "xml"}}
-	add(builtin.ToolRegisterResultArtifact, "登记同执行托管目录中的机读原件并离线解析。文件须先输出到CSAI_ARTIFACT_DIR；不接受绝对路径或stdout自称的work_dir，通用exec不猜扫描器。", props, []string{"execution_id", "relative_path", "format"}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+	add(builtin.ToolRegisterResultArtifact, "登记同执行托管目录中的机读原件并离线解析。文件须先输出到CSAI_ARTIFACT_DIR；JS用location=js读取固定执行目录的urls.jsonl/secrets.jsonl，Nmap/Nuclei优先nmap.xml/nuclei.jsonl；不接受绝对路径或stdout自称的work_dir，通用exec不猜扫描器。", props, []string{"execution_id", "relative_path", "format"}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		ctx, e, registry, err := p.authorizedRegistry(ctx, strArg(args, "execution_id"))
 		if err != nil {
 			return textResult("无法访问当前执行管理根", true), nil
@@ -212,8 +212,22 @@ func registerResultTools(server *mcp.Server, p *resultPipeline) {
 				e.ParserTool = trustedDirectScanner(original.Arguments)
 			}
 		}
+		candidate := evidence.Candidate{Path: path, Kind: "output", Format: strArg(args, "format"), Completion: e.Completion}
+		previous, err := p.db.ResultArtifacts(ctx, e.ID, 1000, 0)
+		if err != nil {
+			return textResult("无法复核已登记原件 hash", true), nil
+		}
+		for _, old := range previous {
+			if filepath.Clean(old.Path) != filepath.Clean(path) {
+				continue
+			}
+			if candidate.ExpectedSHA256 != "" && candidate.ExpectedSHA256 != old.SHA256 {
+				return textResult("同路径已存在冲突 hash，拒绝重新登记", true), nil
+			}
+			candidate.ExpectedSHA256 = old.SHA256
+		}
 		processor := recon.Processor{Store: p.db, Artifacts: registry, MaxReturnedRecords: 100, Limits: recon.Limits{MaxRecords: 100000}}
-		report, err := processor.Observe(ctx, recon.Event{Execution: e, Artifacts: []evidence.Candidate{{Path: path, Kind: "output", Format: strArg(args, "format"), Completion: e.Completion}}, ExpiresAt: e.FinishedAt.Add(24 * time.Hour)})
+		report, err := processor.Observe(ctx, recon.Event{Execution: e, Artifacts: []evidence.Candidate{candidate}, ExpiresAt: e.FinishedAt.Add(24 * time.Hour)})
 		if err != nil {
 			return textResult("原件登记/离线解析失败", true), nil
 		}
@@ -232,22 +246,4 @@ func registerResultTools(server *mcp.Server, p *resultPipeline) {
 		_ = p.db.SetResultIngestionState(ctx, e, state, reason)
 		return resultJSON(compactResultReport(report))
 	})
-}
-func trustedDirectScanner(args map[string]interface{}) string {
-	command, _ := args["command"].(string)
-	if command == "" || strings.ContainsAny(command, ";&|><`$\r\n") {
-		return ""
-	}
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return ""
-	}
-	name := filepath.Base(fields[0])
-	if name == "httpx-pd" {
-		name = "httpx"
-	}
-	if reconTool(name) {
-		return name
-	}
-	return ""
 }

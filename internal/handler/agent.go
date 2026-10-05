@@ -914,7 +914,7 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 
 // StreamEvent 流式事件
 type StreamEvent struct {
-	Type    string      `json:"type"`    // conversation, progress, tool_call, tool_result, response, error, cancelled, done
+	Type    string      `json:"type"`    // conversation, task_started, progress, tool_call, tool_result, response, error, cancelled, done
 	Message string      `json:"message"` // 显示消息
 	Data    interface{} `json:"data,omitempty"`
 }

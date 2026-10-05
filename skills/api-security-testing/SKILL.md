@@ -8,7 +8,7 @@ description: >-
   「BOLA」「BFLA」「Swagger」时加载。出现 SRC、漏洞赏金、挖集团/品牌、白帽或中文
   SRC 报告上下文时优先 `src-hunting`，本 skill 主动让路；不是通用 Web 注入清单；
   缺少可达基线时不得宣称接口安全。
-allowed-tools: httpx http-framework-test api-schema-analyzer graphql-scanner jwt-analyzer arjun x8 ffuf katana jsapiscan interactsh-client dnslog nuclei sqlmap exec record_vulnerability list_vulnerabilities upsert_project_fact
+allowed-tools: httpx http-framework-test api-schema-analyzer graphql-scanner jwt-analyzer arjun x8 ffuf katana jsluice interactsh-client dnslog nuclei sqlmap exec record_vulnerability list_vulnerabilities upsert_project_fact
 metadata:
   tags:
     - penetration-testing
@@ -54,11 +54,11 @@ API 测试优先建立「端点 × 身份 × 对象归属 × 动作」差分矩�
 | 场景 | 优先工具 | 备选 |
 | --- | --- | --- |
 | 可达/指纹 | `httpx` / `http-framework-test` | — |
-| OpenAPI | `api-schema-analyzer` | `katana`/`jsapiscan` |
+| OpenAPI | `api-schema-analyzer` | `katana`/`jsluice` |
 | GraphQL | `graphql-scanner` | 手工 introspection |
 | JWT | `jwt-analyzer` | — |
 | 隐藏参数 | `arjun` / `x8` | `ffuf` |
-| 端点发现 | `jsapiscan` / `katana` | — |
+| 端点发现 | `jsluice` / `katana` | — |
 | OOB | `interactsh-client` / `dnslog` | — |
 | 线索 | `nuclei` | `sqlmap`（适用时） |
 | 落库 | `list_vulnerabilities` → `record_vulnerability` | `upsert_project_fact` |

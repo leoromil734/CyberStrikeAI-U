@@ -83,7 +83,7 @@ func TestComprehensiveAssessmentContractPreventsPrematureExit(t *testing.T) {
 		"raw_output",
 		"success≠covered",
 		"status、raw、unique、incremental、error、alt_tried",
-		"jsapiscan",
+		"jsluice",
 		"recon/endpoint/",
 		"不得 record_vulnerability",
 		"可执行“下一步”",

@@ -14,10 +14,12 @@ import (
 // DiscoveryMember references an independently parsed original, not a model's
 // self-declared endpoint count. RawURL is never overwritten by the group key.
 type DiscoveryMember struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	RawURL string `json:"raw_url"`
-	Method string `json:"method"`
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	RawURL  string `json:"raw_url"`
+	Method  string `json:"method"`
+	Owner   string `json:"owner,omitempty"`
+	ScopeID string `json:"scope_id,omitempty"`
 }
 type DiscoveryGroup struct {
 	Key        string   `json:"key"`
@@ -26,6 +28,8 @@ type DiscoveryGroup struct {
 	Method     string   `json:"method"`
 	Members    int      `json:"members"`
 	ExampleIDs []string `json:"example_ids"`
+	Owner      string   `json:"owner,omitempty"`
+	ScopeID    string   `json:"scope_id,omitempty"`
 }
 
 var routeQueryKeys = map[string]bool{"route": true, "action": true, "controller": true, "method": true, "service": true, "format": true, "op": true, "cmd": true, "request": true, "module": true, "function": true, "path": true, "page": true, "resource": true, "view": true, "handler": true, "endpoint": true}
@@ -103,12 +107,14 @@ func GroupDiscoveries(members []DiscoveryMember) []DiscoveryGroup {
 		if err != nil {
 			continue
 		}
-		key = kind + ":" + key
-		g := groups[key]
+		// Different owner/scope partitions retain separate work even when the
+		// request identity is identical; a proof cannot silently cross either.
+		partition, _ := json.Marshal([]string{kind, member.Owner, member.ScopeID, key})
+		mapKey := string(partition)
+		g := groups[mapKey]
 		if g == nil {
-			base := strings.TrimPrefix(key, kind+":")
-			g = &DiscoveryGroup{Key: base, Kind: kind, URL: member.RawURL, Method: member.Method}
-			groups[key] = g
+			g = &DiscoveryGroup{Key: key, Kind: kind, URL: member.RawURL, Method: member.Method, Owner: member.Owner, ScopeID: member.ScopeID}
+			groups[mapKey] = g
 		}
 		// JS records emitted alongside the same endpoint are not double counted.
 		if member.Kind == "js" {
@@ -123,7 +129,9 @@ func GroupDiscoveries(members []DiscoveryMember) []DiscoveryGroup {
 	for _, g := range groups {
 		out = append(out, *g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Kind+out[i].Key < out[j].Kind+out[j].Key })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Kind+out[i].Key+"\x00"+out[i].Owner+"\x00"+out[i].ScopeID < out[j].Kind+out[j].Key+"\x00"+out[j].Owner+"\x00"+out[j].ScopeID
+	})
 	return out
 }
 

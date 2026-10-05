@@ -89,6 +89,7 @@ async function loadSavedAIChannelProbes() {
         Object.assign(aiChannelProbeResults, data.results || {});
         renderAIChannelSelect();
         renderAIChannelProbeTable();
+        if (typeof document.dispatchEvent === 'function') document.dispatchEvent(new Event('ai-channel-probes-updated'));
     } catch (error) {
         const status = document.getElementById('ai-probe-progress');
         if (status) status.textContent = settingsT('modelManagement.loadFailed', '测试记录加载失败，请刷新重试');
@@ -155,6 +156,7 @@ async function testSavedAIChannels(forceAll = false) {
     } finally {
         aiChannelProbeRunning = false;
         document.querySelectorAll('[data-model-probe-button]').forEach(button => { button.disabled = false; });
+        if (typeof document.dispatchEvent === 'function') document.dispatchEvent(new Event('ai-channel-probes-updated'));
     }
 }
 

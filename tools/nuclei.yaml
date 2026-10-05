@@ -8,6 +8,10 @@ description: |
   **定位：** 模板化漏洞扫描的**主用工具**（替代已弃用的 jaeles）。
   **推荐链路：** httpx 探活后 → nuclei。
 
+  **输出契约：** 默认 `-jsonl -silent`，stdout 为原生 JSONL（一行一条发现），诊断与人类日志留在 stderr。
+  人类可读摘要由展示层生成。空 stdout 可以表示零发现，不是 JSON 解码失败，也不能单凭空输出认定扫描完整。
+  显式 `json_output=false` 保留原生文本输出，解析层必须据实际参数/原件标为 text；不会将文本伪装成 JSONL。
+
   **主要功能：**
   - 快速漏洞扫描
   - 基于模板的检测
@@ -44,6 +48,20 @@ parameters:
     description: "自定义模板路径"
     required: false
     flag: "-t"
+    format: "flag"
+  - name: "json_output"
+    type: "bool"
+    description: "原生 JSONL 输出（-jsonl），默认开启。显式 false 关闭；使用 additional_args 自定义输出模式时先关闭本参数。-json-export/-jsonl-export 仅导出文件，不代表 stdout 的格式。"
+    required: false
+    default: true
+    flag: "-jsonl"
+    format: "flag"
+  - name: "silent"
+    type: "bool"
+    description: "只输出发现，默认开启；可显式 false 保留进度诊断。stderr 不属于 JSONL 数据流。"
+    required: false
+    default: true
+    flag: "-silent"
     format: "flag"
   - name: "additional_args"
     type: "string"

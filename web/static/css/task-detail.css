@@ -1,0 +1,82 @@
+/* 任务集合详情：单一滚动区域、分层摘要和响应式操作区。 */
+#batch-queue-detail-modal .bq-detail-dialog {
+    width: min(1120px, calc(100vw - 40px));
+    max-width: 1120px;
+    max-height: 90vh;
+    border-radius: 16px;
+}
+#batch-queue-detail-modal .modal-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    padding: 20px 24px;
+}
+#batch-queue-detail-title { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; font-size: 1.15rem; line-height: 1.5; }
+#batch-queue-detail-modal .bq-dialog-header-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+#batch-queue-detail-modal .modal-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#batch-queue-detail-modal .modal-close { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; flex-shrink: 0; }
+#batch-queue-detail-modal .modal-body { padding: 20px 24px 28px; overflow-x: hidden; }
+#batch-queue-detail-modal .batch-queue-detail-layout { margin-bottom: 20px; }
+#batch-queue-detail-modal .batch-queue-detail-hero { padding: 18px 20px; gap: 12px; background: var(--bg-secondary); border-radius: 12px; }
+#batch-queue-detail-modal .batch-queue-outcome-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+#batch-queue-detail-modal .bq-outcome-filter { border: 1px solid transparent; cursor: pointer; font-family: inherit; min-height: 28px; }
+#batch-queue-detail-modal .bq-outcome-filter[aria-pressed="true"] { border-color: currentColor; }
+.bq-detail-help > summary { cursor: pointer; font-size: .78rem; color: var(--text-secondary); }
+.bq-detail-help[open] > summary { margin-bottom: 8px; }
+#batch-queue-detail-modal .bq-alert.bq-detail-help { padding: 10px 14px; }
+#batch-queue-detail-modal .bq-alert.bq-detail-help > summary { color: inherit; }
+.bq-detail-progress { height: 6px; width: 100%; border-radius: 10px; background: var(--border-color); overflow: hidden; }
+.bq-detail-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent-color); transition: width .2s ease; }
+#batch-queue-detail-modal .bq-detail-config { border: 1px solid var(--border-color); border-radius: 10px; margin: 0 0 12px; background: var(--bg-primary); }
+.bq-detail-config > summary { cursor: pointer; padding: 12px 16px; font-size: .85rem; font-weight: 600; color: var(--text-primary); }
+.bq-detail-config > summary > span { margin-left: 12px; font-size: .78rem; color: var(--text-secondary); font-weight: 400; }
+#batch-queue-detail-modal .batch-queue-detail-kv { padding: 0 16px 12px; margin: 0; gap: 0 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#batch-queue-detail-modal .bq-kv { min-width: 0; grid-template-columns: 100px minmax(0, 1fr); }
+#batch-queue-detail-modal .bq-alert { border-radius: 10px; font-size: .8rem; line-height: 1.6; }
+#batch-queue-detail-modal .bq-alert p { max-height: 88px; overflow: auto; white-space: pre-wrap; }
+#batch-queue-detail-modal .batch-queue-tasks-list { max-height: none; overflow: visible; }
+.bq-detail-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.bq-detail-toolbar__heading, .bq-detail-toolbar__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+#batch-queue-detail-modal .bq-detail-toolbar h4 { margin: 0; font-size: .95rem; }
+#bq-detail-filter-count { font-size: .78rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+#bq-detail-search { width: 240px; max-width: 100%; min-height: 34px; padding: 7px 11px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font-size: .8rem; }
+.bq-detail-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.bq-filter-chip { display: inline-flex; align-items: center; gap: 9px; padding: 6px 11px; min-height: 32px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); color: var(--text-secondary); font-family: inherit; font-size: .78rem; cursor: pointer; }
+.bq-filter-chip strong { font-size: .76rem; font-variant-numeric: tabular-nums; }
+.bq-filter-chip:hover, .bq-filter-chip[aria-pressed="true"] { border-color: var(--accent-color); color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary)); }
+#batch-queue-detail-modal button:focus-visible, #bq-detail-search:focus-visible, #batch-queue-detail-modal summary:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
+.bq-detail-action-hint { margin: 12px 0 16px; color: var(--text-secondary); font-size: .77rem; line-height: 1.6; }
+.bq-detail-notice { padding: 10px 14px; margin-bottom: 14px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; font-size: .8rem; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+#batch-queue-detail-modal .batch-task-item { border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; background: var(--bg-primary); }
+#batch-queue-detail-modal .batch-task-header { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin: 0; }
+.bq-task-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+#batch-queue-detail-modal .batch-task-index { min-width: 26px; font-size: .78rem; }
+#batch-queue-detail-modal .batch-task-message { width: 100%; white-space: pre-wrap; line-height: 1.65; max-height: 108px; overflow: auto; overflow-wrap: anywhere; }
+.bq-task-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 2px; }
+#batch-queue-detail-modal .batch-task-model-select, #batch-queue-detail-modal .batch-task-model { max-width: 100%; width: 280px; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#batch-queue-detail-modal .batch-task-model-select { min-height: 32px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 5px 8px; }
+.bq-task-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+#batch-queue-detail-modal .bq-task-actions .btn-small { margin: 0; padding: 6px 9px; font-size: .75rem; min-height: 30px; white-space: nowrap; }
+.bq-task-meta { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 10px; color: var(--text-secondary); font-size: .73rem; overflow-wrap: anywhere; }
+.bq-task-meta:empty { display: none; }
+#batch-queue-detail-modal .batch-task-error, #batch-queue-detail-modal .batch-task-blocked-reason { margin-top: 12px; padding: 9px 12px; border-radius: 6px; font-size: .78rem; line-height: 1.55; max-height: 100px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bq-task-evidence { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.bq-task-evidence > summary { cursor: pointer; color: var(--text-secondary); font-size: .78rem; }
+.bq-task-evidence .task-latest-run { box-shadow: none; border-radius: 8px; font-size: .78rem; }
+.bq-task-evidence .task-latest-run code { overflow-wrap: anywhere; }
+#batch-queue-detail-modal .batch-task-result { max-height: 220px; white-space: pre-wrap; }
+.bq-detail-empty { padding: 32px 20px; text-align: center; color: var(--text-secondary); border: 1px dashed var(--border-color); border-radius: 12px; }
+.bq-detail-empty p { font-size: .82rem; margin-bottom: 0; }
+@media (max-width: 760px) {
+    #batch-queue-detail-modal .bq-detail-dialog { width: calc(100vw - 16px); max-height: 94vh; }
+    #batch-queue-detail-modal .modal-header, #batch-queue-detail-modal .modal-body { padding: 16px; }
+    #batch-queue-detail-modal .modal-header > .bq-dialog-header-tools { width: 100%; justify-content: space-between; flex-shrink: 1; }
+    #batch-queue-detail-modal .modal-header-actions { justify-content: flex-start; }
+    #batch-queue-detail-modal .batch-queue-detail-kv { grid-template-columns: minmax(0, 1fr); }
+    .bq-detail-config > summary > span { display: block; margin: 6px 0 0; }
+    .bq-detail-toolbar__actions, #bq-detail-search { width: 100%; }
+    .bq-task-actions { margin-left: 0; }
+    #batch-queue-detail-modal .batch-task-item { padding: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .bq-detail-progress > span { transition: none; } }

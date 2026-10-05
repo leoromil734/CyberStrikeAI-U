@@ -1,7 +1,7 @@
 name: "jsapiscan"
 command: "/usr/local/bin/jsapiscan"
-enabled: true
-short_description: "JSAPIscan 有界发现 JS/API 候选；心跳、完整性清单与离线源码复核"
+enabled: false
+short_description: "历史兼容（默认停用）：在线 JS/API 发现；默认改用本地 jsluice 静态分析"
 description: |
   JSAPIscan 官方 v1.1.2 Linux/amd64 发布版，通过本项目 Python 启动器运行。
   参考 https://github.com/ruisika/jsapiscan，但参数以已校验二进制实际运行结果为准。
@@ -13,10 +13,13 @@ description: |
   外层硬超时需容纳 total_timeout_seconds + 20 + export_timeout_seconds，并预留清单写入余量；心跳不延长硬超时。
   heartbeat_interval_seconds 默认20秒、范围15–30秒；stdout 只输出阶段、数字计数、受控原因及私有结果路径，不输出 URL、请求头或正文。
 
-  **默认职责：** URL → HTML/JS/chunk 发现 → 保存 JS → API/路由候选。
+  **兼容职责（默认停用，需显式启用）：** URL → HTML/JS/chunk 发现 → 保存 JS → API/路由候选。
+  当前默认流程为 katana/gau 发现 + 授权下载保存 JS + jsluice 本地静态分析 + grep/rg 原源码复核。
+  保留本配置及历史结果读入，停用不删除历史原件，也不把 jsluice 当作在线爬虫。
   这是会发送 HTTP GET 的爬取工具，不是原 jsluice 的离线文件解析替代命令；不能传本地 JS 当 URL。
   只提供 url 或 targets_file 其中一个；validate_only=true 只做本地输入类型/文件/目标/预算复核，不调用 systemd/扫描器、不请求网络。
-  每次结果写入 /var/lib/jsapiscan/runs/run-*/，批次原件放在 work/batch-0001 等目录。
+  服务执行在 workspace 模式写入 $CSAI_ARTIFACT_DIR/jsapiscan/execution-$CSAI_EXECUTION_ID/；旧 systemd 模式为 /var/lib/jsapiscan/runs/execution-<id>/，非服务独立调用才用 run-*。
+  批次原件放在 work/batch-0001 等目录。后端只按受信配置与执行绑定派生根，不接受 stdout 的任意路径。
   最后 jsapiscan_result 回包包含 manifest_file、work_dir、stdout_file、candidates_file、counts 和完整性状态；50条预览保存在私有 manifest 中。
   上游 -o 是 txt/html 输出类型；-op 由启动器限制为每批内部文件名，不能当任意目录或覆盖生产文件。
   原件 CSV（URL/Method/Length/Body/Status）、保存的 JS 和受限工具日志需按回包路径读取；日志和原件可能含敏感内容，不整体回显。

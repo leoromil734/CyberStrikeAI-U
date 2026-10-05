@@ -11,6 +11,8 @@ description: |
   - `-sT` TCP 连接扫描（无需 root）
   - `-sV` 版本检测
   - `-sC` 默认 NSE 脚本
+  - `xml_output="-"` 生成 `-oX -`：stdout 是 Nmap 原生 XML，不是把人类文本标记成 XML；诊断仍在 stderr
+  - 人类可读摘要由结果展示层生成；需要原生文本副本可另加 `-oN <工作区文件>`，不要使用 `-oN -` 混入 XML stdout
 
   **可选增强：**
   - `timing`：`-T0`～`-T5` 时序
@@ -39,6 +41,17 @@ parameters:
       端口范围。示例：`80`、`1-1000`、`80,443,8080`、`1-65535`（全端口很慢）
     required: false
     flag: "-p"
+    format: "flag"
+  - name: "xml_output"
+    type: "string"
+    description: |
+      原生 XML 输出位置，默认 "-" 表示 stdout，供资产解析器读取。
+      显式文件路径只写该文件，此时 stdout 是人类文本，不能再声明为 XML。
+      显式空字符串关闭默认 -oX；在 additional_args/scan_type 中自行使用 -oX/-oA 或 -oN - 时，请先设 xml_output=""，避免重复输出选项或 stdout 混流。
+      scan_type 只替换扫描选项，不改变此输出契约；不会自动改写用户指定的格式或路径。
+    required: false
+    default: "-"
+    flag: "-oX"
     format: "flag"
   - name: "timing"
     type: "string"

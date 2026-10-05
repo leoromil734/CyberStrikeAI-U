@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/c2"
@@ -166,6 +167,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	mcpServer.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
 	mcpServer.ConfigureToolResultSpillRoot(cfg.MultiAgent.EinoMiddleware.ReductionRootDir)
 	resultPipeline := newResultPipeline(db, cfg, log.Logger)
+	if err := agentfinalizer.ConfigureCoverageOriginals(db, cfg.MultiAgent.EinoMiddleware.ReductionRootDir); err != nil && log.Logger != nil {
+		log.Logger.Warn("HTTP 原件覆盖校验未启用", zap.Error(err))
+	}
 	mcpServer.SetExecutionObserver(resultPipeline.observe)
 	registerResultTools(mcpServer, resultPipeline)
 
@@ -1059,6 +1063,8 @@ func setupRoutes(
 		protected.DELETE("/batch-tasks/:queueId", agentHandler.DeleteBatchQueue)
 		protected.PUT("/batch-tasks/:queueId/tasks/:taskId", agentHandler.UpdateBatchTask)
 		protected.POST("/batch-tasks/:queueId/tasks/:taskId/run", agentHandler.RunSingleBatchTask)
+		protected.POST("/batch-tasks/:queueId/tasks/:taskId/continue", agentHandler.ContinueBatchTask)
+		protected.GET("/batch-tasks/:queueId/tasks/:taskId/original-message", agentHandler.GetBatchTaskOriginalMessage)
 		protected.POST("/batch-tasks/:queueId/tasks", agentHandler.AddBatchTask)
 		protected.DELETE("/batch-tasks/:queueId/tasks/:taskId", agentHandler.DeleteBatchTask)
 
@@ -1112,6 +1118,7 @@ func setupRoutes(
 		protected.PUT("/config", configHandler.UpdateConfig)
 		protected.POST("/config/apply", configHandler.ApplyConfig)
 		protected.POST("/config/test-openai", configHandler.TestOpenAI)
+		protected.GET("/config/ai-channels", configHandler.GetAIChannels)
 		protected.GET("/config/ai-channel-probes", configHandler.GetAIChannelProbes)
 		protected.POST("/config/ai-channels/:id/test", configHandler.TestAIChannel)
 		protected.POST("/config/test-vision", configHandler.TestVision)

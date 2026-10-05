@@ -84,7 +84,7 @@ func ExecutionCoverageSection() string {
 
 - 品牌扩测限任务范围，解析 IP 逐项分类并存 CNAME/ASN/服务证据。Cloudflare/Akamai 等已证实 CDN 边缘 IP 不扩裸 IP，域名业务仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务和入口。CDN unknown 留 gap/blocked；共享 IP/ASN 不证明品牌归属，不扫供应商网段或无关租户。
 - 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 登录做一次简单弱口令尝试，侦察角色识别后交接验证。用已知/产品默认身份与精简字典；每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒，用户更严预算优先。命中/验证码/MFA/锁定/429/异常即停；不枚举号段、不全量笛卡尔积、不以“未爆破”跳过。协议不支持口令可凭证据 N/A，缺身份/策略阻断记 blocked；保存实际次数、字典 hash、停止原因，未测不写安全；方法见 credential-stuffing。
-- JS 必须双通道：jsapiscan 发现并保存资源（离线用本地解析）+ 对全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg 命令；补绝对/相对 URL、fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并去重写 recon/endpoint/*。记录两路命令、raw/unique/incremental、文件/hash；工具零结果不替代源码检索，字符串命中不等于完整或可达。缺任一路留 gap/blocked，不能写已覆盖。`
+- JS 必须双通道：katana/gau 发现，按授权下载→jsluice 静态分析本地 JS+全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg；补 fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并 recon/endpoint/*。记URL/hash、命令、raw/unique/incremental；secrets 始终 tentative。工具零结果不替代源码检索，字符串命中不等于完整或可达；缺任一路留 gap/blocked。`
 }
 
 // EvidenceLoopSection 将发现过程约束为可审计的状态循环。
@@ -133,7 +133,7 @@ func ComprehensiveAssessmentSection() string {
 阶段仅pending、active、passed、blocked。passed附证据；blocked附错误与替代。pending/active或可执行gap不得宣称全面完成；能继续则执行，否则交阶段报告。
 
 - Deep 根域至少跑 subfinder、oneforall、dnsx，补证书/历史/品牌/测绘。每来源用body_fields写recon/source/{id}/{tool}/{target}，含status、raw、unique、incremental、error、alt_tried、evidence；raw是真整数，文本用raw_output，success≠covered；缺来源recon_sources不得passed。
-- HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；jsapiscan + grep/rg 双通道写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
+- HTML/manifest/JS/chunk/worker/source map 递归至队列空或有证据阻断；jsluice + grep/rg 双通道写 recon/endpoint/*；SPA 通配不得批量否定真实接口。
 - 身份与受控邮箱由用户提供，不自动补齐双账号；使用既有授权身份覆盖匿名/认证及双主体。缺身份仅blocked依赖单元，独立单元继续；未建号≠已覆盖。
 - 侦察/信息收集不得 record_vulnerability；扫描命中仅 tentative。侦察摘要是阶段交接。收尾若仍列范围内可执行“下一步”或未验证高价值候选，须继续执行或委派。
 - 有数据或管理功能的资产（含有关联证据的疑似下游）在缺口复核前，给六类有危害面各一个终态：未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传。终态只能是测完、有证据的 blocked，或引用能力证据的 N/A。低价值面仍直接 N/A，不占这六类。`

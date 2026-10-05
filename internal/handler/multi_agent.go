@@ -174,7 +174,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	var result *multiagent.RunResult
 	var runErr error
 
-	runDeadline := newAgentRunDeadline(detachedAgentContext(c.Request.Context()), time.Now().Add(600*time.Minute))
+	runDeadline := newAgentRunDeadline(detachedAgentContext(c.Request.Context()), time.Now().Add(defaultAgentRunTimeout))
 	defer runDeadline.close()
 	var taskCtx context.Context
 	var segmentCancel context.CancelFunc
@@ -202,6 +202,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	}
 	h.tasks.SetTaskAgentMode(conversationID, effectiveOrchestration)
 	taskOwned = true
+	sendEvent("task_started", "任务已启动", map[string]interface{}{"conversationId": conversationID})
 	h.recordConversationAIChannel(conversationID, resolvedAIChannelID, runCfg)
 	h.recordRunTargets(conversationID, req.Message)
 
@@ -461,7 +462,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 		return
 	}
 
-	runDeadline := newAgentRunDeadline(c.Request.Context(), time.Now().Add(600*time.Minute))
+	runDeadline := newAgentRunDeadline(c.Request.Context(), time.Now().Add(defaultAgentRunTimeout))
 	defer runDeadline.close()
 	baseCtx, cancelWithCause, taskCtx, segmentCancel := runDeadline.newEinoSegment()
 	defer segmentCancel()
@@ -637,7 +638,9 @@ func formatInterruptContinueUserMessage(note string) string {
 func multiAgentHTTPErrorStatus(err error) (int, string) {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "无权访问"):
+	case errors.Is(err, ErrTaskAlreadyRunning):
+		return http.StatusConflict, msg
+	case strings.Contains(msg, "无权"):
 		return http.StatusForbidden, msg
 	case strings.Contains(msg, "对话不存在"):
 		return http.StatusNotFound, msg

@@ -25,7 +25,7 @@
 
 ### 2. 从 JS 源码批量提取接口（工具 + 命令双通道）
 
-所有已下载 JS/chunk/worker 和 source map 展开的原源码都要进入两路账本：第一路 `jsapiscan` 从范围内入口/JS URL 发现并保存资源（不能传本地文件），再实际执行 `grep/rg` 检索原件。不是工具失败才改 grep，也不能只抽 `"/api/"` 或几个代表 chunk。下载时保留 URL、文件/hash、抓取状态和新增资源队列，HTML 内联脚本同样落盘。纯离线任务用本地解析替代在线爬取；旧 `jsluice` 保留、默认停用，必要时显式恢复。当前发布版 `-Ineedparms` 虽出现在帮助中，实际会报错，不传该参数，按调用上下文补齐参数。
+所有已下载 JS/chunk/worker 和 source map 展开的原源码都要进入两路账本：先用 katana/gau 发现 JS URL 并按授权下载保存，第一路 `jsluice` 静态分析本地文件（file + source_url），再实际执行 `grep/rg` 检索原件。不是工具失败才改 grep，也不能只抽 `"/api/"` 或几个代表 chunk。下载时保留 URL、文件/hash、抓取状态和新增资源队列，HTML 内联脚本同样落盘。jsluice 不联网、不执行 JS，不根据 JS 目录猜运行时 baseURL；保留 relativeURL/method/EXPR 与调用上下文。secrets 始终 tentative，秘密值仅留私有原件，不直接 record_vulnerability。旧 jsapiscan 默认停用，保留显式兼容和历史 CSV 原件读取。
 
 完整命令、来源计数与退出门禁读根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §4。命令要覆盖绝对/相对 URL、fetch/axios/XHR、baseURL/apiHost/urlPrefix、模板字符串/拼接及 WebSocket/GraphQL；按调用上下文恢复方法、参数、前缀。分别保存工具和命令的 raw/unique/incremental，再合并为 `recon/endpoint/*`，保留两路来源。
 

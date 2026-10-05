@@ -46,7 +46,7 @@ func TestCredentialCoverageIsBoundedAndIncludesNonHTTP(t *testing.T) {
 
 func TestJSRequiresToolAndSourceCommandEvidence(t *testing.T) {
 	for _, required := range []string{
-		"JS 必须双通道", "jsapiscan 发现并保存资源", "全部已下载 JS/chunk/worker/source map 原源码", "实际执行 grep/rg",
+		"JS 必须双通道", "jsluice 静态分析本地 JS", "全部已下载 JS/chunk/worker/source map 原源码", "实际执行 grep/rg",
 		"fetch/axios/XHR", "baseURL", "模板拼接与调用上下文", "raw/unique/incremental",
 		"工具零结果不替代源码检索", "字符串命中不等于完整或可达", "缺任一路留 gap/blocked",
 	} {

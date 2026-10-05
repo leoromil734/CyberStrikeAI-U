@@ -74,6 +74,8 @@ func CanonicalTool(tool string) string {
 		return "fofa"
 	case "one_for_all", "oneforall_run":
 		return "oneforall"
+	case "jsluice_run", "csai-jsluice":
+		return "jsluice"
 	case "jsapiscan_run", "jsapiscan_scan":
 		return "jsapiscan"
 	}
@@ -155,7 +157,7 @@ func (r cancelReader) Read(p []byte) (int, error) {
 func supportsLines(tool, format string) bool {
 	if format == "jsonl" || format == "ndjson" {
 		switch tool {
-		case "subfinder", "dnsx", "httpx", "naabu", "gau", "katana", "nuclei", "jsapiscan", "oneforall":
+		case "subfinder", "dnsx", "httpx", "naabu", "gau", "katana", "nuclei", "jsapiscan", "jsluice", "oneforall":
 			return true
 		}
 	}
@@ -435,6 +437,8 @@ func parseJSONLine(tool string, data []byte) ([]Record, error) {
 			return urlRecords(str(request, "endpoint", "url"), str(request, "method"))
 		}
 		return urlRecords(str(obj, "url", "endpoint"), str(obj, "method"))
+	case "jsluice":
+		return parseJSLuiceLine(obj)
 	case "jsapiscan":
 		return urlRecords(str(obj, "url", "URL"), str(obj, "method", "Method"))
 	case "nuclei":
@@ -735,6 +739,8 @@ func parseNmap(ctx context.Context, reader io.Reader, c *collector) error {
 	d := xml.NewDecoder(reader)
 	rootSeen := false
 	finished := false
+	depth := 0
+	doctypeSeen := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -751,24 +757,44 @@ func parseNmap(ctx context.Context, reader io.Reader, c *collector) error {
 			return errFormat
 		}
 		switch value := token.(type) {
+		case xml.CharData:
+			// encoding/xml accepts text outside the document element. Scanner
+			// logs before/after XML must never count as a complete machine file.
+			if depth == 0 && strings.TrimSpace(string(value)) != "" {
+				return errFormat
+			}
 		case xml.Directive:
 			if strings.TrimSpace(string(value)) != "DOCTYPE nmaprun" {
 				return errUnsupported
 			} // Never resolve external entities.
+			if rootSeen || doctypeSeen {
+				return errFormat
+			}
+			doctypeSeen = true
 		case xml.StartElement:
+			if finished {
+				return errFormat
+			}
 			if !rootSeen {
-				if value.Name.Local != "nmaprun" {
+				if value.Name.Local != "nmaprun" || value.Name.Space != "" {
 					return errUnsupported
 				}
 				rootSeen = true
+			} else if value.Name.Local == "nmaprun" {
+				return errFormat
 			}
+			depth++
 			if value.Name.Local != "host" {
 				continue
+			}
+			if depth != 2 || value.Name.Space != "" {
+				return errFormat
 			}
 			var host nmapHost
 			if err = d.DecodeElement(&host, &value); err != nil {
 				return errFormat
 			}
+			depth-- // DecodeElement consumes the matching host end element.
 			end := d.InputOffset()
 			if end-start > int64(c.limits.MaxLineBytes) || end > c.limits.MaxBytes {
 				return errFormat
@@ -814,7 +840,8 @@ func parseNmap(ctx context.Context, reader io.Reader, c *collector) error {
 				return err
 			}
 		case xml.EndElement:
-			if value.Name.Local == "nmaprun" {
+			depth--
+			if depth == 0 {
 				finished = true
 			}
 		}
