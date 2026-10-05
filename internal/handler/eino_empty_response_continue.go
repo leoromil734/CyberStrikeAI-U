@@ -57,6 +57,10 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	if result == nil || inject == "" || !multiagent.HasEinoResumeTrace(result) {
 		return false
 	}
+	announce := multiagent.ShouldAnnounceEmptyResponseContinue(result)
+	if !announce && continueKind == multiagent.EinoResponseContinueKindEmpty {
+		inject = multiagent.FormatFirstRunEmptyRetryUserMessage()
+	}
 	if pending, err := h.pendingFinalizationTools(taskCtx, conversationID, result.MCPExecutionIDs); err != nil || len(pending) > 0 {
 		// Rebinding this segment would cancel tools before their results are
 		// read. Let the finalizer wait and resume through the governed path.
@@ -82,7 +86,7 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	}
 	waitMsg := fmt.Sprintf("会话已结束但%s，%d 秒后第 %d/%d 次自动续跑…",
 		waitReason, int(backoff.Seconds()), *attempt, maxAttempts)
-	if progressCallback != nil {
+	if progressCallback != nil && announce {
 		progressCallback("eino_empty_response_continue", waitMsg, map[string]interface{}{
 			"conversationId": conversationID,
 			"source":         "eino",
@@ -91,6 +95,11 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 			"maxAttempts":    maxAttempts,
 			"backoffSec":     int(backoff.Seconds()),
 		})
+	} else if !announce && h.logger != nil {
+		h.logger.Info("首次执行没有可恢复上下文，空回复重试不展示自动续跑",
+			zap.String("conversationId", conversationID),
+			zap.String("continueKind", continueKind),
+			zap.Int("attempt", *attempt))
 	}
 	select {
 	case <-taskCtx.Done():
@@ -102,7 +111,7 @@ func (h *AgentHandler) tryContinueOnEinoEmptyResponse(
 	}
 
 	h.applyEinoTraceResumeSegment(conversationID, result, curHistory, curFinalMessage, inject)
-	if progressCallback != nil {
+	if progressCallback != nil && announce {
 		progressCallback("eino_empty_response_continue", "已恢复上下文，正在续跑…", map[string]interface{}{
 			"conversationId": conversationID,
 			"source":         "eino",

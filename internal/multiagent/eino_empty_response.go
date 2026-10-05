@@ -1,6 +1,7 @@
 package multiagent
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -69,6 +70,59 @@ func HasEinoResumeTrace(result *RunResult) bool {
 	return s != "" && s != "[]" && s != "null"
 }
 
+// ShouldAnnounceEmptyResponseContinue 是否向时间线展示「会话已结束，自动续跑」。
+// 第一次执行只有原始请求、没有助手正文或工具结果时，内部重试仍然进行，但不提示续跑。
+func ShouldAnnounceEmptyResponseContinue(result *RunResult) bool {
+	if result == nil {
+		return false
+	}
+	if len(result.MCPExecutionIDs) > 0 {
+		return true
+	}
+	return traceHasPriorWork(result.LastAgentTraceInput)
+}
+
+type emptyResumeTraceMessage struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	ToolCallID       string `json:"tool_call_id"`
+	ToolCalls        []struct {
+		ID string `json:"id"`
+	} `json:"tool_calls"`
+}
+
+func traceHasPriorWork(traceJSON string) bool {
+	traceJSON = strings.TrimSpace(traceJSON)
+	if traceJSON == "" || traceJSON == "[]" || traceJSON == "null" {
+		return false
+	}
+	var msgs []emptyResumeTraceMessage
+	if err := json.Unmarshal([]byte(traceJSON), &msgs); err != nil {
+		// 无法确认时保留原提示，避免把真正的续跑静默掉。
+		return true
+	}
+	for _, msg := range msgs {
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
+		switch role {
+		case "tool":
+			return true
+		case "assistant":
+			if strings.TrimSpace(msg.ToolCallID) != "" || len(msg.ToolCalls) > 0 {
+				return true
+			}
+			if strings.TrimSpace(msg.ReasoningContent) != "" {
+				return true
+			}
+			content := strings.TrimSpace(msg.Content)
+			if content != "" && !isEinoEmptyResponseText(content) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // EmptyResponseContinueMaxAttemptsFromConfig 无助手正文时 Handler 层退避续跑上限；0=默认 5。
 func EmptyResponseContinueMaxAttemptsFromConfig(mw *config.MultiAgentEinoMiddlewareConfig) int {
 	if mw != nil && mw.EmptyResponseContinueMaxAttempts > 0 {
@@ -110,6 +164,13 @@ func EinoResponseContinueInstruction(result *RunResult, preferFinalReport bool) 
 func FormatEmptyResponseContinueUserMessage() string {
 	return strings.TrimSpace(`【系统自动续跑 / Auto resume】
 上一轮 Eino 会话未产出可见助手正文（可能流式中断或仅完成工具调用）。请基于已有轨迹与工具结果继续推进，并给出阶段性总结；勿重复已完成步骤。`)
+}
+
+// FormatFirstRunEmptyRetryUserMessage 第一次执行没有可恢复上下文时的内部重试说明。
+// 不把它说成续跑，避免模型在推理里声称上一轮已经结束。
+func FormatFirstRunEmptyRetryUserMessage() string {
+	return strings.TrimSpace(`【系统重试 / First-run retry】
+这是同一次新任务的第一次执行，上一轮没有产生可见输出，也没有已完成步骤或工具结果。不要声称会话已结束，不要说正在恢复上下文或自动续跑。请直接开始处理用户的原始请求。`)
 }
 
 // FormatFinalReportContinueUserMessage 要求协调者从已有证据生成报告，不为凑篇幅重跑扫描。

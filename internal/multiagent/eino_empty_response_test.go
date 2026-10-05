@@ -22,6 +22,30 @@ func TestIsEinoEmptyResponseResult(t *testing.T) {
 	}
 }
 
+func TestShouldAnnounceEmptyResponseContinue(t *testing.T) {
+	placeholder := "(Eino session completed but no assistant text was captured.)"
+	firstRun := &RunResult{LastAgentTraceInput: `[{"role":"system","content":"你是渗透测试代理"},{"role":"user","content":"测试 revolut.com"}]`, Response: placeholder}
+	if ShouldAnnounceEmptyResponseContinue(firstRun) {
+		t.Fatal("first run with only the original prompt should stay silent")
+	}
+	placeholderTrace := &RunResult{LastAgentTraceInput: `[{"role":"user","content":"go"},{"role":"assistant","content":"(no assistant text was captured)"}]`}
+	if ShouldAnnounceEmptyResponseContinue(placeholderTrace) {
+		t.Fatal("empty placeholder is not prior work")
+	}
+	withTool := &RunResult{LastAgentTraceInput: `[{"role":"assistant","content":"","tool_calls":[{"id":"call-1"}]},{"role":"tool","content":"ok","tool_call_id":"call-1"}]`}
+	if !ShouldAnnounceEmptyResponseContinue(withTool) {
+		t.Fatal("tool trace should announce resume")
+	}
+	withText := &RunResult{LastAgentTraceInput: `[{"role":"assistant","content":"已完成端口扫描"}]`}
+	if !ShouldAnnounceEmptyResponseContinue(withText) {
+		t.Fatal("assistant text should announce resume")
+	}
+	withExecution := &RunResult{LastAgentTraceInput: `[{"role":"user","content":"go"}]`, MCPExecutionIDs: []string{"exec-1"}}
+	if !ShouldAnnounceEmptyResponseContinue(withExecution) {
+		t.Fatal("recorded tool execution should announce resume")
+	}
+}
+
 func TestHasEinoResumeTrace(t *testing.T) {
 	if HasEinoResumeTrace(nil) {
 		t.Fatal("nil")
