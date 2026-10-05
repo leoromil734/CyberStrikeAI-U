@@ -49,24 +49,40 @@ func TestCoverageStagnationRequiresConsecutiveIndependentEvidenceAbsence(t *test
 	}
 }
 
-func TestNewSourceBackedDispositionRenewsStagnationNotHardLimit(t *testing.T) {
+func TestLedgerMappingDoesNotRenewStagnationButNewEvidenceDoes(t *testing.T) {
 	s := &finalizationContinuationState{}
 	d := coverageDecision(1, "still unfinished")
 	d.CoverageEvidenceExecutions = 1
 	d.CoverageInventoryGroups = 20
 	for i := 0; i < finalizationCoverageStagnationLimit; i++ {
 		if !observeFinalizationContinuation(d, s) {
-			t.Fatal("fixture stopped before new verified disposition")
+			t.Fatal("fixture stopped before the ledger-only check")
 		}
 		s.recordContinuation(d)
 	}
-	d.CoverageMappedGroups = 1
+	d.CoverageMappedGroups = 5
+	d.CoverageValidFacts = 500
+	if observeFinalizationContinuation(d, s) || s.CoverageNoProgress == 0 {
+		t.Fatalf("ledger mapping renewed a stalled task: %+v", s)
+	}
+
+	s = &finalizationContinuationState{}
+	d = coverageDecision(1, "still unfinished")
+	d.CoverageEvidenceExecutions = 1
+	d.CoverageInventoryGroups = 20
+	for i := 0; i < finalizationCoverageStagnationLimit-1; i++ {
+		if !observeFinalizationContinuation(d, s) {
+			t.Fatalf("fixture stopped before new execution evidence: %+v", s)
+		}
+		s.recordContinuation(d)
+	}
+	d.CoverageEvidenceExecutions = 2
 	if !observeFinalizationContinuation(d, s) || s.CoverageNoProgress != 0 {
-		t.Fatalf("source-backed progress was discarded: %+v", s)
+		t.Fatalf("new execution evidence was discarded: %+v", s)
 	}
 	s.recordContinuation(d)
 	s.WorkAttempts = finalizationCoverageMaxAttempts
-	d.CoverageMappedGroups = 2
+	d.CoverageEvidenceExecutions = 3
 	if observeFinalizationContinuation(d, s) {
 		t.Fatal("progress bypassed absolute work-segment guard")
 	}

@@ -29,8 +29,8 @@ const (
 
 // A bounded continuation budget belongs to this request, not to a model response.
 // Work and report delivery have separate allowances. New fact rows or a shorter
-// error list are not progress; only independent evidence or source-backed
-// dispositions can renew the consecutive-stagnation allowance.
+// error list are not progress; only a new real execution can renew the
+// consecutive-stagnation allowance. Ledger mappings cannot.
 type finalizationContinuationState struct {
 	Attempts                    int // Total restored segments; diagnostic only.
 	WorkAttempts                int
@@ -121,7 +121,8 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			// not investigation. Reclassify within scope and verify real work.
 			state.WorkMode = "classify_and_verify"
 		}
-		progress := d.CoverageProgressKnown && (d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater || d.CoverageMappedGroups > state.CoverageMappedHighWater)
+		// Ledger rows do not renew the run. Only a new real execution does.
+		progress := d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater
 		if state.CoverageObserved {
 			if progress {
 				state.CoverageNoProgress = 0
@@ -143,7 +144,7 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			state.WorkMode = "classify_and_verify"
 		}
 		if state.CoverageNoProgress >= finalizationCoverageStagnationLimit {
-			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据或有来源支持的处置关联；实际工作无法自动推进，保留真实缺口和完整轨迹", state.CoverageNoProgress)
+			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展，实际测试无法自动推进，保留真实缺口和完整轨迹", state.CoverageNoProgress)
 			return false
 		}
 	} else {
@@ -352,7 +353,7 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			ExecutionID: "coverage-checks-" + uuid.NewString() + ".json",
 		})
 		if state.WorkMode == "classify_and_verify" {
-			*curFinalMessage = coverageContinuationHeader + fmt.Sprintf("【分类与验证续跑】原始候选观察数 %d、待处置观察数 %d，计数是否完整核实=%t。停止逐条抄写事实不等于停止实际测试；先按授权范围、当前性和业务功能分类去重，保留原件及映射，再执行/委派仍可执行的高价值验证。入库失败/待入库是平台证据缺口，不能改成安全或伪造已覆盖；先处理不依赖它的工作。\n\n", decision.CoverageInventoryGroups, decision.CoverageUnresolvedGroups, decision.CoverageProgressKnown) + strings.TrimPrefix(*curFinalMessage, coverageContinuationHeader)
+			*curFinalMessage = coverageContinuationHeader + fmt.Sprintf("【分类与验证续跑】原始候选观察数 %d、待处置观察数 %d，计数是否完整核实=%t。停止逐条抄写事实不等于停止实际测试。本段不要再为库存逐条写 not-applicable、negated 或 covered；未测地址保持缺口。把时间用在认证、越权、注入、敏感数据和后台入口的验证上，确认危害后立即记录漏洞。\n\n", decision.CoverageInventoryGroups, decision.CoverageUnresolvedGroups, decision.CoverageProgressKnown) + strings.TrimPrefix(*curFinalMessage, coverageContinuationHeader)
 		}
 	} else {
 		*curFinalMessage = finalizationResumeInstruction(decision)
@@ -419,9 +420,9 @@ func coverageContinuationMessage(checks []string, opts tooloutput.SpillOpts) (me
 	}
 	var b strings.Builder
 	b.WriteString(coverageContinuationHeader)
-	fmt.Fprintf(&b, "完整 %d 条检查缺口（含具体字段/行号）已保存：%s\n必须使用 read_file 分段读取全部缺口；以下仅为前 20 条的短预览，不是完整清单。逐条核对事实，不得通过删除记录或降低库存计数绕过检查。\n", len(checks), file)
+	fmt.Fprintf(&b, "检查缺口共 %d 条，文件只供抽看：%s\n不要通读，不要逐条补事实或把未测地址写成不适用。下面最多 5 条用来挑选可能造成实际危害的验证；其余保持未测缺口。\n", len(checks), file)
 	for i, check := range checks {
-		if i >= 20 {
+		if i >= 5 {
 			break
 		}
 		line := []rune(strings.TrimSpace(check))
