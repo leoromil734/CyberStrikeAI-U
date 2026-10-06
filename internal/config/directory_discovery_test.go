@@ -34,7 +34,7 @@ func TestDiscoveryToolParameterContracts(t *testing.T) {
 			if name == "dirsearch" {
 				bounds["threads"] = bound{"-t", 20}
 				bounds["rate_limit"] = bound{"--max-rate", 50}
-				bounds["timeout"] = bound{"--timeout", 10}
+				bounds["timeout"] = bound{"--timeout", 30}
 				bounds["max_recursion_depth"] = bound{"--max-recursion-depth", 2}
 			}
 			for key, want := range bounds {

@@ -45,11 +45,11 @@ wpscan --url https://example.com --enumerate u,vp,vt --api-token YOUR_API_TOKEN
 # 首选目录/文件枚举：按技术栈调整扩展名，默认不递归
 # -e 默认仅替换字典 %EXT%，小字典确需逐条追加时才开启 --force-extensions
 dirsearch -u https://example.test/ -e php,html,txt -t 20 \
-  --max-rate 50 --timeout 10 --max-time 900
+  --max-rate 50 --timeout 30 --max-time 900
 
 # dirsearch 不可用或需要自定义请求时的等价替代；先确认字典存在
 ffuf -u https://example.test/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt \
-  -mc all -ac -t 20 -rate 50 -timeout 10 -maxtime 900
+  -mc all -ac -t 20 -rate 50 -timeout 30 -maxtime 900
 ```
 
 ### 3. 参数发现与模糊测试

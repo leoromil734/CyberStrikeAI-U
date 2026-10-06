@@ -50,7 +50,7 @@ func TestDirsearchBundledDefaultsBuildBoundedCLI(t *testing.T) {
 	}
 
 	properties := executor.buildInputSchema(tool)["properties"].(map[string]interface{})
-	for name, want := range map[string]int{"threads": 20, "rate_limit": 50, "timeout": 10, "max_time": 900, "max_recursion_depth": 2} {
+	for name, want := range map[string]int{"threads": 20, "rate_limit": 50, "timeout": 30, "max_time": 900, "max_recursion_depth": 2} {
 		property := properties[name].(map[string]interface{})
 		minimum, ok := numericParameter(property["minimum"])
 		if property["type"] != "integer" || property["default"] != want || !ok || minimum != 1 {

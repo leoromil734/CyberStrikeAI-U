@@ -147,11 +147,11 @@ curl -sI https://target.com | grep -i "server\|x-powered-by\|x-generator\|cf-ray
 ```bash
 # 首选：目录/文件发现；省略 -w 使用自带字典，按技术栈调整 -e
 dirsearch -u https://example.test/ -e html,js,txt,json -t 20 \
-  --max-rate 50 --timeout 10 --max-time 900
+  --max-rate 50 --timeout 30 --max-time 900
 
 # 替代：需要自定义请求或 dirsearch 不可用时；先确认字典存在
 ffuf -u https://example.test/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt \
-  -mc all -ac -t 20 -rate 50 -timeout 10 -maxtime 900
+  -mc all -ac -t 20 -rate 50 -timeout 30 -maxtime 900
 ```
 
 保存范围、认证态、字典/hash/候选数、扩展名、基线/过滤、预算、实际进度、停止原因和执行/原件引用。完成所选候选集且零新增才是该范围负结果；超时/限流/中断未完成留 gap/blocked，不以成功退出宣称全覆盖。先验证就绪候选，再补独立缺口；续跑只处理剩余候选。记录规范见根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §3.1。
@@ -185,7 +185,7 @@ waybackurls target.com | sort -u > wayback_urls.txt
 ```bash
 # Common API paths（路径枚举，不替代逐接口验证；先确认字典存在）:
 dirsearch -u https://example.test/ -w /SecLists/Discovery/Web-Content/api/api-endpoints.txt \
-  -t 20 --max-rate 50 --timeout 10 --max-time 900
+  -t 20 --max-rate 50 --timeout 30 --max-time 900
 
 # Swagger/OpenAPI:
 test: /swagger.json /api-docs /openapi.json /v2/api-docs /.well-known/ /docs/

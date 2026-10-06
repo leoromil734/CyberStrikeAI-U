@@ -85,9 +85,9 @@ parameters:
     format: "flag"
   - name: "timeout"
     type: "int"
-    description: "单请求超时（秒）"
+    description: "单请求超时（秒）；默认 30。经代理时不要低于 30"
     required: false
-    default: 10
+    default: 30
     flag: "-timeout"
     format: "flag"
   - name: "max_time"

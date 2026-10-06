@@ -83,7 +83,7 @@ func TestDirectoryDiscoveryReferencesDoNotEquateToolSuccessWithCoverage(t *testi
 		}},
 		{"src-hunting/references/recon-methodology.md", []string{
 			"目录、文件和扩展名枚举优先 `dirsearch`", "参数、虚拟主机和自定义请求模糊测试优先 `ffuf`",
-			"引用复用", "仅爬取/JS 提取不算目录覆盖", "catch-all", "--max-rate 50 --timeout 10 --max-time 900",
+			"引用复用", "仅爬取/JS 提取不算目录覆盖", "catch-all", "--max-rate 50 --timeout 30 --max-time 900",
 			"超时/限流/中断未完成留 gap/blocked", "执行/原件引用",
 		}},
 	}
