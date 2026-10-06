@@ -22,7 +22,10 @@ const (
 	finalizationAutoContinueMaxAttempts = 4
 	finalizationCoverageMaxAttempts     = 64
 	finalizationCoverageNoProgressLimit = 2
-	finalizationCoverageStagnationLimit = 8
+	// The first observation only records the evidence high water. Each later
+	// segment without a new real execution counts. Three such segments stop
+	// the loop and deliver a phase report; ledger rows never renew this.
+	finalizationCoverageStagnationLimit = 3
 	finalizationPendingWaitTimeout      = 20 * time.Minute
 	finalizationPendingPollInterval     = 5 * time.Second
 )
@@ -144,7 +147,7 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			state.WorkMode = "classify_and_verify"
 		}
 		if state.CoverageNoProgress >= finalizationCoverageStagnationLimit {
-			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展，实际测试无法自动推进，保留真实缺口和完整轨迹", state.CoverageNoProgress)
+			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展。停止续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，不视为已验证安全", state.CoverageNoProgress)
 			return false
 		}
 	} else {
@@ -348,12 +351,15 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 		if h.config != nil {
 			root = h.config.MultiAgent.EinoMiddleware.ReductionRootDir
 		}
-		*curFinalMessage, coverageChecksFile = coverageContinuationMessage(decision.MissingChecks, tooloutput.SpillOpts{
-			RootDir: root, ProjectID: h.conversationProjectID(conversationID), ConversationID: conversationID,
-			ExecutionID: "coverage-checks-" + uuid.NewString() + ".json",
-		})
 		if state.WorkMode == "classify_and_verify" {
-			*curFinalMessage = coverageContinuationHeader + fmt.Sprintf("【分类与验证续跑】原始候选观察数 %d、待处置观察数 %d，计数是否完整核实=%t。停止逐条抄写事实不等于停止实际测试。本段不要再为库存逐条写 not-applicable、negated 或 covered；未测地址保持缺口。把时间用在认证、越权、注入、敏感数据和后台入口的验证上，确认危害后立即记录漏洞。\n\n", decision.CoverageInventoryGroups, decision.CoverageUnresolvedGroups, decision.CoverageProgressKnown) + strings.TrimPrefix(*curFinalMessage, coverageContinuationHeader)
+			// The disposition checklist is what pulled the model back into
+			// ledger repair. Keep it out of this prompt, including the file path.
+			*curFinalMessage = classifyAndVerifyContinuationMessage(decision)
+		} else {
+			*curFinalMessage, coverageChecksFile = coverageContinuationMessage(decision.MissingChecks, tooloutput.SpillOpts{
+				RootDir: root, ProjectID: h.conversationProjectID(conversationID), ConversationID: conversationID,
+				ExecutionID: "coverage-checks-" + uuid.NewString() + ".json",
+			})
 		}
 	} else {
 		*curFinalMessage = finalizationResumeInstruction(decision)
@@ -404,6 +410,43 @@ func formatCoverageContinueMessage(checks []string) string {
 	b.WriteString(coverageContinuationHeader)
 	for _, check := range checks {
 		b.WriteString("- " + strings.TrimSpace(check) + "\n")
+	}
+	return b.String()
+}
+
+func isLedgerDispositionCheck(check string) bool {
+	check = strings.ToLower(check)
+	return strings.Contains(check, "has no matching ledger disposition") ||
+		strings.Contains(check, "independent discovery inventory:") ||
+		strings.Contains(check, "additional independent discovery groups lack") ||
+		strings.Contains(check, "inventory_group_key")
+}
+
+func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
+	var actionable []string
+	for _, check := range d.MissingChecks {
+		if isLedgerDispositionCheck(check) {
+			continue
+		}
+		line := []rune(strings.TrimSpace(check))
+		if len(line) > 180 {
+			line = append(line[:180], []rune("…")...)
+		}
+		actionable = append(actionable, string(line))
+		if len(actionable) == 5 {
+			break
+		}
+	}
+	var b strings.Builder
+	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。本段是分类与验证，不是账本补写。\n")
+	fmt.Fprintf(&b, "【分类与验证续跑】独立候选 %d 组，已关联处置 %d 组，未处置 %d 组，可核验执行 %d 个，计数是否完整核实=%t。第三方主机、平台 JS 和纯静态资源保留为未覆盖限制，不要逐条写端点事实，不要查询或补写发现组绑定，不要打开覆盖检查文件，不要把未测地址写成 N/A、negated 或已安全。\n", d.CoverageInventoryGroups, d.CoverageMappedGroups, d.CoverageUnresolvedGroups, d.CoverageEvidenceExecutions, d.CoverageProgressKnown)
+	b.WriteString("先测用户所给域名下还没测过的关联资产：子域、同注册域、证书或同一运营主体指向的域名，以及这些域名解析到的非 CDN 源站 IP。支付、验证码、社交、统计挂件和纯静态资源不是关联资产，不要为它们扩测。关联域名或源站 IP 尚未测试、也没有证据 blocked 时，不要交卷。\n")
+	b.WriteString("然后再验证仍可能造成实际危害的认证、越权、注入、敏感数据或后台入口，确认危害后立即记录漏洞。关联资产已测完或已 blocked，且没有新的可验证危害，再交付完整报告，并写明未处置组仍未覆盖。\n")
+	if len(actionable) > 0 {
+		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
+		for _, check := range actionable {
+			b.WriteString("- " + check + "\n")
+		}
 	}
 	return b.String()
 }

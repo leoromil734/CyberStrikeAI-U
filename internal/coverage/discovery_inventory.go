@@ -79,6 +79,65 @@ func DiscoveryGroupKey(rawURL, method string) (string, error) {
 	sum := sha256.Sum256(identity)
 	return fmt.Sprintf("discovery-%x", sum[:16]), nil
 }
+
+// discoveryBystanderSuffixes are public widget, captcha, analytics and social
+// hosts extracted from page or bundle JavaScript. A brand assessment must not
+// stall on a ledger row for each of them. The brand's own host is never listed.
+var discoveryBystanderSuffixes = []string{
+	"stripe.com",
+	"braintreegateway.com",
+	"braintree-api.com",
+	"hcaptcha.com",
+	"recaptcha.net",
+	"gstatic.com",
+	"googleapis.com",
+	"google.com",
+	"googletagmanager.com",
+	"google-analytics.com",
+	"doubleclick.net",
+	"youtube.com",
+	"ytimg.com",
+	"facebook.com",
+	"facebook.net",
+	"fbcdn.net",
+	"instagram.com",
+	"pinterest.com",
+	"pinimg.com",
+	"twitter.com",
+	"twimg.com",
+	"tumblr.com",
+	"linkedin.com",
+	"licdn.com",
+	"paystack.co",
+	"payulatam.com",
+	"cybersource.com",
+	"authorize.net",
+	"cardinalcommerce.com",
+	"paypal.com",
+	"paypalobjects.com",
+	"afterpay.com",
+	"cloudflareinsights.com",
+	"jsdelivr.net",
+	"unpkg.com",
+	"cdnjs.cloudflare.com",
+	"fontawesome.com",
+	"bootstrapcdn.com",
+	"jquery.com",
+}
+
+func DiscoveryBystanderHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" {
+		return false
+	}
+	for _, suffix := range discoveryBystanderSuffixes {
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func DiscoveryKind(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -101,6 +160,12 @@ func GroupDiscoveries(members []DiscoveryMember) []DiscoveryGroup {
 		}
 		kind := DiscoveryKind(member.RawURL)
 		if kind == "static" {
+			continue
+		}
+		// Payment, captcha, analytics and social widget hosts are not the
+		// brand's business surface. They stay in the original inventory, but
+		// one missing ledger row per widget must not block delivery.
+		if parsed, err := url.Parse(member.RawURL); err == nil && DiscoveryBystanderHost(parsed.Hostname()) {
 			continue
 		}
 		key, err := DiscoveryGroupKey(member.RawURL, member.Method)

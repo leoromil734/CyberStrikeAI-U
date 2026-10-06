@@ -52,3 +52,28 @@ func TestDiscoveryEndpointFactKeysKeepRoutingGroups(t *testing.T) {
 		t.Fatal("false group binding accepted")
 	}
 }
+
+func TestBystanderWidgetHostsDoNotBlockDiscovery(t *testing.T) {
+	members := []DiscoveryMember{
+		{ID: "brand", Kind: "endpoint", RawURL: "https://fallstudie.example/comment/member", Method: "GET"},
+		{ID: "stripe", Kind: "js", RawURL: "https://js.stripe.com/v3/", Method: "GET"},
+		{ID: "social", Kind: "endpoint", RawURL: "https://www.facebook.com/sharer.php", Method: "GET"},
+		{ID: "captcha", Kind: "js", RawURL: "https://js.hcaptcha.com/1/api.js", Method: "GET"},
+		{ID: "css", Kind: "endpoint", RawURL: "https://fallstudie.example/styles/app.css", Method: "GET"},
+		{ID: "not-google", Kind: "endpoint", RawURL: "https://notgoogle.com/login", Method: "GET"},
+	}
+	groups := GroupDiscoveries(members)
+	if len(groups) != 2 {
+		t.Fatalf("widget or static hosts entered the blocking inventory: %+v", groups)
+	}
+	seen := map[string]bool{}
+	for _, group := range groups {
+		seen[group.URL] = true
+	}
+	if !seen["https://fallstudie.example/comment/member"] || !seen["https://notgoogle.com/login"] {
+		t.Fatalf("in-scope hosts were dropped: %+v", groups)
+	}
+	if DiscoveryBystanderHost("notgoogle.com") || !DiscoveryBystanderHost("js.stripe.com") {
+		t.Fatal("suffix match crossed a label boundary or missed a widget host")
+	}
+}

@@ -18,7 +18,7 @@ func TestExecutionCoverageIsPresentInAllPromptModes(t *testing.T) {
 
 func TestBrandExpansionDistinguishesCDNFromHosting(t *testing.T) {
 	for _, required := range []string{
-		"品牌扩测限任务范围", "Cloudflare/Akamai", "已证实 CDN 边缘 IP",
+		"有关联证据的疑似域名和 IP 都要测", "品牌扩测限任务范围", "Cloudflare/Akamai", "已证实 CDN 边缘 IP",
 		"域名业务仍测", "Hetzner 等云/托管商不是 CDN", "范围内非 CDN IP 必须独立枚举",
 		"CDN unknown 留 gap/blocked", "共享 IP/ASN 不证明品牌归属", "不扫供应商网段或无关租户",
 	} {
@@ -54,7 +54,7 @@ func TestJSRequiresToolAndSourceCommandEvidence(t *testing.T) {
 			t.Errorf("JS extraction missing %q", required)
 		}
 	}
-	for _, required := range []string{"工具+grep/rg 两路证据", "非 CDN IP 扩测", "SSH/数据库/邮件弱口令无未处理 gap"} {
+	for _, required := range []string{"工具+grep/rg 两路证据", "非 CDN IP 扩测", "SSH/数据库/邮件弱口令无未处理 gap", "有关联证据的疑似域名、源站 IP 已测或有证据 blocked"} {
 		if !strings.Contains(CompletionContractSection(), required) {
 			t.Errorf("completion gate missing %q", required)
 		}

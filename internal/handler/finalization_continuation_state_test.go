@@ -157,6 +157,26 @@ func TestFinalizationContinuationMissingTraceAndCancellation(t *testing.T) {
 	}
 }
 
+func TestClassifyAndVerifyPromptOmitsLedgerDispositionQueue(t *testing.T) {
+	d := coverageDecision(39,
+		"independent discovery inventory: total=36, mapped=0, unresolved=36; raw candidates are not confirmed business test units",
+		"independent endpoint inventory group discovery-04a0f71afdf5e8cace9e61fc3f07a5f3 has no matching ledger disposition (owner/scope proof binding missing or different; original retained)",
+		"recon/source/run-a/amass/example.test: source claim has no matching actual execution/original with the required completeness",
+	)
+	d.CoverageInventoryGroups = 36
+	d.CoverageUnresolvedGroups = 36
+	d.CoverageEvidenceExecutions = 8
+	message := classifyAndVerifyContinuationMessage(d)
+	for _, banned := range []string{"discovery-04a0f71", "coverage-checks-", "query_recon_inventory", "has no matching ledger disposition"} {
+		if strings.Contains(message, banned) {
+			t.Fatalf("classify prompt still queues ledger repair via %q: %s", banned, message)
+		}
+	}
+	if !strings.Contains(message, "关联域名或源站 IP 尚未测试") || !strings.Contains(message, "source claim has no matching") || !strings.Contains(message, "未处置 36 组") {
+		t.Fatalf("classify prompt lost the real check or the uncovered total: %s", message)
+	}
+}
+
 func TestFinalizationContinuationRestoresTraceAndFullChecks(t *testing.T) {
 	db, err := database.NewDB(filepath.Join(t.TempDir(), "continuation.db"), zap.NewNop())
 	if err != nil {

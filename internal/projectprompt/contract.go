@@ -82,7 +82,7 @@ func InitialReconSection() string {
 func ExecutionCoverageSection() string {
 	return `## 资产、弱口令与 JS 覆盖
 
-- 品牌扩测限任务范围，解析 IP 逐项分类并存 CNAME/ASN/服务证据。Cloudflare/Akamai 等已证实 CDN 边缘 IP 不扩裸 IP，域名业务仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务和入口。CDN unknown 留 gap/blocked；共享 IP/ASN 不证明品牌归属，不扫供应商网段或无关租户。
+- 用户通常只给一个域名。该域名及其子域，加上有关联证据的疑似域名和 IP 都要测：同注册域、证书 SAN、解析到该域、或页面/标题/主体指向同一运营方。品牌扩测限任务范围，解析 IP 逐项分类并存 CNAME/ASN/服务证据。Cloudflare/Akamai 等已证实 CDN 边缘 IP 不扩裸 IP，域名业务仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务和入口。支付、验证码、社交、统计挂件和纯静态资源不是关联资产。CDN unknown 留 gap/blocked；共享 IP/ASN 不证明品牌归属，不扫供应商网段或无关租户，也不因名称相似把其他公司算进来。
 - 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 登录做一次简单弱口令尝试，侦察角色识别后交接验证。用已知/产品默认身份与精简字典；每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒，用户更严预算优先。命中/验证码/MFA/锁定/429/异常即停；不枚举号段、不全量笛卡尔积、不以“未爆破”跳过。协议不支持口令可凭证据 N/A，缺身份/策略阻断记 blocked；保存实际次数、字典 hash、停止原因，未测不写安全；方法见 credential-stuffing。
 - JS 必须双通道：katana/gau 发现，按授权下载→jsluice 静态分析本地 JS+全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg；补 fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并 recon/endpoint/*。记URL/hash、命令、raw/unique/incremental；secrets 始终 tentative。工具零结果不替代源码检索，字符串命中不等于完整或可达；缺任一路留 gap/blocked。`
 }
@@ -160,7 +160,7 @@ func CompletionContractSection() string {
 
 门禁通过、边界/预算耗尽或用户叫停时收尾。全面交付覆盖账本与Source Coverage；blocked/gap不写已覆盖。
 
-Deep/全面收尾硬闸门（不满足则不能宣称完整结案；有预算继续，无预算交阶段报告）：(1) recon/source 含本轮 fofa_search（所有范围必需）以及根域的 subfinder、oneforall、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 有工具+grep/rg 两路证据或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段，非 CDN IP 扩测及 SSH/数据库/邮件弱口令无未处理 gap；(4) 有数据或管理功能的资产上，未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传均有测完、blocked 或有能力证据的 N/A。口头“已全覆盖”无效。
+Deep/全面收尾硬闸门（不满足则不能宣称完整结案；有预算继续，无预算交阶段报告）：(1) recon/source 含本轮 fofa_search（所有范围必需）以及根域的 subfinder、oneforall、dnsx（covered 或 blocked+alt_tried）；(2) 已发现 JS 有工具+grep/rg 两路证据或逐项 blocked，端点写入 recon/endpoint/*；(3) phase_ledger 无 pending/active 的可执行高价值阶段，非 CDN IP 扩测及 SSH/数据库/邮件弱口令无未处理 gap；用户所给域名的子域和有关联证据的疑似域名、源站 IP 已测或有证据 blocked；(4) 有数据或管理功能的资产上，未授权敏感数据、有影响的默认口、越权、注入、命令执行、有作用的上传均有测完、blocked 或有能力证据的 N/A。口头“已全覆盖”无效。
 
 草稿仍列可执行动作，它只是进度更新：继续执行/路由/委派，不得包装成“后续建议”。完整最终报告不保留可执行的 high-value tentative/gap；边界/预算已到则提交有缺口的阶段报告，写明未完成、blocked/gap 和证据，不宣称全面完成。
 
