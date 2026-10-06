@@ -9133,7 +9133,14 @@ function createConversationListItemWithMenu(conversation, isPinned) {
         if (group) {
             const groupTag = document.createElement('div');
             groupTag.className = 'conversation-group-tag';
-            groupTag.innerHTML = `<span class="group-tag-icon">${group.icon || '📁'}</span><span class="group-tag-name">${group.name}</span>`;
+            const groupTagIcon = document.createElement('span');
+            groupTagIcon.className = 'group-tag-icon';
+            groupTagIcon.textContent = group.icon || '📁';
+            const groupTagName = document.createElement('span');
+            groupTagName.className = 'group-tag-name';
+            groupTagName.textContent = group.name;
+            groupTag.appendChild(groupTagIcon);
+            groupTag.appendChild(groupTagName);
             groupTag.title = `分组: ${group.name}`;
             contentWrapper.appendChild(groupTag);
         }
@@ -9686,8 +9693,10 @@ async function showMoveToGroupSubmenu() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span>${group.name}</span>
             `;
+            const label = document.createElement('span');
+            label.textContent = group.name;
+            item.appendChild(label);
             item.onclick = () => {
                 moveConversationToGroup(contextMenuConversationId, group.id);
             };

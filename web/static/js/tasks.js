@@ -227,6 +227,18 @@ if (typeof escapeHtml === 'undefined') {
     }
 }
 
+function escapeJsString(text) {
+    return JSON.stringify(String(text == null ? '' : text));
+}
+
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsStringAttr(text) {
+    return escapeAttr(escapeJsString(text));
+}
+
 // 任务管理状态
 const tasksState = {
     allTasks: [],
@@ -609,31 +621,31 @@ function renderTaskItem(task, isHistory = false) {
         'workflow':    _t('tasks.modeWorkflow') || 'Workflow',
     };
     const modeLabel = task.agentMode ? (modeMap[task.agentMode] || task.agentMode) : '';
-    const modeBadge = modeLabel ? `<span class="task-mode-badge task-mode-${escapeHtml(task.agentMode || '')}">${escapeHtml(modeLabel)}</span>` : '';
+    const modeBadge = modeLabel ? `<span class="task-mode-badge task-mode-${escapeAttr(task.agentMode || '')}">${escapeHtml(modeLabel)}</span>` : '';
 
     return `
-        <div class="task-item ${isHistory ? 'task-item-history' : ''}" data-task-id="${task.conversationId}" data-started-at="${task.startedAt}" data-status="${task.status}">
+        <div class="task-item ${isHistory ? 'task-item-history' : ''}" data-task-id="${escapeAttr(task.conversationId)}" data-started-at="${escapeAttr(task.startedAt)}" data-status="${escapeAttr(task.status)}">
             <div class="task-header">
                 <div class="task-info">
                     ${canCancel ? `
                         <label class="task-checkbox">
                             <input type="checkbox" ${isSelected ? 'checked' : ''} 
-                                   onchange="toggleTaskSelection('${task.conversationId}', this.checked)">
+                                   onchange="toggleTaskSelection(${escapeJsStringAttr(task.conversationId)}, this.checked)">
                         </label>
                     ` : '<div class="task-checkbox-placeholder"></div>'}
                     <span class="task-status ${status.class}">${escapeHtml(status.text)}</span>
                     ${modeBadge}
                     ${isHistory ? '<span class="task-history-badge" title="' + _t('tasks.historyBadge') + '">📜</span>' : ''}
-                    <span class="task-message" title="${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}">${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}</span>
+                    <span class="task-message" title="${escapeAttr((task.title || task.message || _t('tasks.unnamedTask')))}">${escapeHtml((task.title || task.message || _t('tasks.unnamedTask')))}</span>
                 </div>
                 <div class="task-actions">
                     ${duration ? `<span class="task-duration" title="${_t('tasks.duration')}">⏱ ${duration}</span>` : ''}
                     <span class="task-time" title="${isHistory && completedText ? _t('tasks.completedAt') : _t('tasks.startedAt')}">
                         ${isHistory && completedText ? completedText : timeText}
                     </span>
-                    ${canCancel ? `<button class="btn-secondary btn-small" onclick="cancelTask('${task.conversationId}', this)">` + _t('tasks.cancelTask') + `</button>` : ''}
-                    ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="navigateToVulnerabilitiesFromTasksPage('conversation', '${task.conversationId}')">` + _t('tasks.viewVulnerabilities') + `</button>` : ''}
-                    ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewConversation('${task.conversationId}')">` + _t('tasks.viewConversation') + `</button>` : ''}
+                    ${canCancel ? `<button class="btn-secondary btn-small" onclick="cancelTask(${escapeJsStringAttr(task.conversationId)}, this)">` + _t('tasks.cancelTask') + `</button>` : ''}
+                    ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="navigateToVulnerabilitiesFromTasksPage('conversation', ${escapeJsStringAttr(task.conversationId)})">` + _t('tasks.viewVulnerabilities') + `</button>` : ''}
+                    ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewConversation(${escapeJsStringAttr(task.conversationId)})">` + _t('tasks.viewConversation') + `</button>` : ''}
                 </div>
             </div>
             ${renderTaskGovernance(task)}
@@ -641,7 +653,7 @@ function renderTaskItem(task, isHistory = false) {
             ${task.conversationId ? `
                 <div class="task-details">
                     <span class="task-id-label">` + _t('tasks.conversationIdLabel') + `:</span>
-                    <span class="task-id-value" title="` + _t('tasks.clickToCopy') + `" onclick="copyTaskId('${task.conversationId}')">${escapeHtml(task.conversationId)}</span>
+                    <span class="task-id-value" title="` + _t('tasks.clickToCopy') + `" onclick="copyTaskId(${escapeJsStringAttr(task.conversationId)})">${escapeHtml(task.conversationId)}</span>
                 </div>
             ` : ''}
         </div>
@@ -1344,7 +1356,7 @@ function batchAIChannelOptionsHTML(selected) {
         const ui = typeof AIChannelProbeUI !== 'undefined' ? AIChannelProbeUI : null;
         const label = ui && channel ? ui.optionLabel(channel, id, base) : base;
         const title = ui && channel ? base + '\n' + ui.describe(channel).details : base;
-        return `<option value="${escapeHtml(id)}" title="${escapeHtml(title)}"${id === current ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+        return `<option value="${escapeAttr(id)}" title="${escapeAttr(title)}"${id === current ? ' selected' : ''}>${escapeHtml(label)}</option>`;
     };
     const defaultChannel = batchAIChannels[batchDefaultAIChannel];
     const defaultLabel = _t('batchImportModal.modelDefault') + (defaultChannel ? ' · ' + batchAIChannelLabel(batchDefaultAIChannel) : '');
@@ -2053,7 +2065,7 @@ function renderBatchQueues() {
         if (queue.independentProjects) configParts.push(_t('batchImportModal.independentProjects'));
         const configLine = configParts.map(s => escapeHtml(s)).join(' · ');
         const cronPausedNote = queue.scheduleMode === 'cron' && queue.scheduleEnabled === false
-            ? ` <span class="batch-queue-inline-warn" title="${escapeHtml(_t('batchQueueDetailModal.scheduleCronAutoHint'))}">(${escapeHtml(_t('batchQueueDetailModal.cronSchedulePausedBadge'))})</span>`
+            ? ` <span class="batch-queue-inline-warn" title="${escapeAttr(_t('batchQueueDetailModal.scheduleCronAutoHint'))}">(${escapeHtml(_t('batchQueueDetailModal.cronSchedulePausedBadge'))})</span>`
             : '';
         const shortId = queue.id.length > 14 ? escapeHtml(queue.id.slice(0, 12)) + '\u2026' : escapeHtml(queue.id);
         const titleBlock = queue.title
@@ -2062,7 +2074,7 @@ function renderBatchQueues() {
         const doneCount = stats.processed;
 
         return `
-            <div class="batch-queue-item batch-queue-item--compact${cardMod}${noActionsClass}" data-queue-id="${queue.id}" onclick="showBatchQueueDetail('${queue.id}')">
+            <div class="batch-queue-item batch-queue-item--compact${cardMod}${noActionsClass}" data-queue-id="${escapeAttr(queue.id)}" onclick="showBatchQueueDetail(${escapeJsStringAttr(queue.id)})">
                 <div class="batch-queue-item__inner batch-queue-item__inner--grid">
                     <div class="batch-queue-item__lead">
                         <div class="batch-queue-item__title-row">
@@ -2070,13 +2082,13 @@ function renderBatchQueues() {
                             <div class="batch-queue-item__titles">${titleBlock}</div>
                         </div>
                         <p class="batch-queue-item__config">${configLine}${cronPausedNote}</p>
-                        <p class="batch-queue-item__idline batch-queue-item__idline--lead"><code title="${escapeHtml(queue.id)}">${shortId}</code><span class="batch-queue-item__idsep">\u00b7</span><span>${escapeHtml(_t('tasks.createdTimeLabel'))}\u00a0${escapeHtml(new Date(queue.createdAt).toLocaleString())}</span></p>
+                        <p class="batch-queue-item__idline batch-queue-item__idline--lead"><code title="${escapeAttr(queue.id)}">${shortId}</code><span class="batch-queue-item__idsep">\u00b7</span><span>${escapeHtml(_t('tasks.createdTimeLabel'))}\u00a0${escapeHtml(new Date(queue.createdAt).toLocaleString())}</span></p>
                     </div>
                     <div class="batch-queue-item__cluster">
                         <div class="batch-queue-item__status-inline">
                             <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
                             ${stats.manualActive > 0 ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_tPlain('tasks.manualActiveCount', { count: stats.manualActive }))}</span>` : ''}
-                            <span class="batch-queue-item__pct" title="${escapeHtml(_t('tasks.processedProgressHint'))}">${escapeHtml(_t('tasks.processedLabel'))} ${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
+                            <span class="batch-queue-item__pct" title="${escapeAttr(_t('tasks.processedProgressHint'))}">${escapeHtml(_t('tasks.processedLabel'))} ${progress}%\u00a0<span class="batch-queue-item__pct-frac">(${doneCount}/${stats.total})</span></span>
                         </div>
                         <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats)}</div>
                         ${duplicatesSkipped !== null ? `<span class="batch-queue-item__sublabel">${escapeHtml(_tPlain('tasks.duplicateTasksSkipped', { count: duplicatesSkipped }))}</span>` : ''}
@@ -2089,8 +2101,8 @@ function renderBatchQueues() {
                         </div>
                     </div>
                     <div class="batch-queue-item__actions-col" onclick="event.stopPropagation();">
-                        <button type="button" class="batch-queue-icon-btn" onclick="navigateToVulnerabilitiesFromTasksPage('queue', '${queue.id}')" title="${escapeHtml(_t('tasks.viewVulnerabilitiesQueueTitle'))}" aria-label="${escapeHtml(_t('tasks.viewVulnerabilitiesQueueTitle'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></button>
-                        ${canDelete ? `<button type="button" class="batch-queue-icon-btn batch-queue-icon-btn--danger" onclick="deleteBatchQueueFromList('${queue.id}')" title="${escapeHtml(_t('tasks.deleteQueue'))}" aria-label="${escapeHtml(_t('tasks.deleteQueue'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>` : ''}
+                        <button type="button" class="batch-queue-icon-btn" onclick="navigateToVulnerabilitiesFromTasksPage('queue', ${escapeJsStringAttr(queue.id)})" title="${escapeAttr(_t('tasks.viewVulnerabilitiesQueueTitle'))}" aria-label="${escapeAttr(_t('tasks.viewVulnerabilitiesQueueTitle'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></button>
+                        ${canDelete ? `<button type="button" class="batch-queue-icon-btn batch-queue-icon-btn--danger" onclick="deleteBatchQueueFromList(${escapeJsStringAttr(queue.id)})" title="${escapeAttr(_t('tasks.deleteQueue'))}" aria-label="${escapeAttr(_t('tasks.deleteQueue'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>` : ''}
                     </div>
                 </div>
             </div>
@@ -2258,34 +2270,34 @@ function renderBatchDetailTasks(queue) {
         const canRunSingle = batchQueueCanRunSingleTask(queue, task);
         const canContinue = batchTaskCanContinue(queue, task);
         const waiting = batchQueuesState.continuationPending.has(task.conversationId);
-        const message = escapeHtml(task.message).replace(/\n/g, '&#10;').replace(/\r/g, '&#13;');
+        const message = escapeAttr(task.message).replace(/\n/g, '&#10;').replace(/\r/g, '&#13;');
         const modelLabel = batchAIChannelLabel(task.aiChannelId);
         const resumable = ['pending', 'paused'].includes(task.status);
         const hasEvidence = task.latestRun || task.completionReason || task.result;
-        return `<article class="batch-task-item ${isTaskConversationActive(task) || task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${escapeHtml(queue.id)}" data-task-id="${escapeHtml(task.id)}" data-task-message="${message}">
+        return `<article class="batch-task-item ${isTaskConversationActive(task) || task.status === 'running' ? 'batch-task-item-active' : ''}" data-queue-id="${escapeAttr(queue.id)}" data-task-id="${escapeAttr(task.id)}" data-task-message="${message}">
             <div class="batch-task-header">
                 <div class="bq-task-heading"><span class="batch-task-index">#${index + 1}</span><span class="batch-task-status ${taskStatus.class}">${escapeHtml(taskStatus.text)}</span>
                     ${isTaskManualContinuation(task) ? `<span class="batch-task-status batch-task-status-running">${escapeHtml(_t('tasks.manualContinuationActive'))}</span>` : ''}
                 </div>
-                <div class="batch-task-message" title="${escapeHtml(task.message)}">${escapeHtml(task.message)}</div>
+                <div class="batch-task-message" title="${escapeAttr(task.message)}">${escapeHtml(task.message)}</div>
                 <div class="bq-task-controls">
-                    ${canEdit ? `<select class="batch-task-model-select" title="${escapeHtml(_t('batchQueueDetailModal.model'))}" aria-label="${escapeHtml(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModelFromElement(this)">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeHtml(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
+                    ${canEdit ? `<select class="batch-task-model-select" title="${escapeAttr(_t('batchQueueDetailModal.model'))}" aria-label="${escapeAttr(_t('batchQueueDetailModal.model'))}" onchange="updateBatchTaskModelFromElement(this)">${batchAIChannelOptionsHTML(task.aiChannelId || '')}</select>` : `<span class="batch-task-model" title="${escapeAttr(modelLabel)}">${escapeHtml(modelLabel)}</span>`}
                     <div class="bq-task-actions">
-                        ${task.conversationId ? `<button type="button" class="btn-primary btn-small bq-continue-btn" onclick="sendBatchTaskContinue(this)" ${!canContinue ? 'disabled' : ''} title="${escapeHtml(_t('tasks.sendContinueHint'))}">${escapeHtml(_t(waiting ? 'tasks.continueSending' : 'tasks.sendContinue'))}</button>` : ''}
+                        ${task.conversationId ? `<button type="button" class="btn-primary btn-small bq-continue-btn" onclick="sendBatchTaskContinue(this)" ${!canContinue ? 'disabled' : ''} title="${escapeAttr(_t('tasks.sendContinueHint'))}">${escapeHtml(_t(waiting ? 'tasks.continueSending' : 'tasks.sendContinue'))}</button>` : ''}
                         <button type="button" class="btn-secondary btn-small" onclick="copyBatchTaskOriginal(this)">${escapeHtml(_t('tasks.copyOriginalInput'))}</button>
                         ${task.conversationId ? `<button type="button" class="btn-secondary btn-small" onclick="viewBatchTaskFromElement(this)">${escapeHtml(_t('tasks.viewConversation'))}</button>` : ''}
-                        <button type="button" class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? 'onclick="runBatchTaskFromElement(this)"' : `disabled title="${escapeHtml(batchQueueRunSingleTaskDisabledReason(queue, task))}"`}>${escapeHtml(_t(resumable ? 'tasks.continueExecution' : 'tasks.rerunTask'))}</button>
+                        <button type="button" class="btn-secondary btn-small batch-task-run-btn" ${canRunSingle ? 'onclick="runBatchTaskFromElement(this)"' : `disabled title="${escapeAttr(batchQueueRunSingleTaskDisabledReason(queue, task))}"`}>${escapeHtml(_t(resumable ? 'tasks.continueExecution' : 'tasks.rerunTask'))}</button>
                         ${canEdit ? `<button type="button" class="btn-secondary btn-small batch-task-edit-btn" onclick="editBatchTaskFromElement(this)">${escapeHtml(_t('common.edit'))}</button><button type="button" class="btn-secondary btn-small btn-danger batch-task-delete-btn" onclick="deleteBatchTaskFromElement(this)">${escapeHtml(_t('common.delete'))}</button>` : ''}
                     </div>
                 </div>
             </div>
-            <div class="bq-task-meta">${task.projectId ? `<span title="${escapeHtml(task.projectId)}">${escapeHtml(_t('batchImportModal.project'))}: ${escapeHtml(task.projectName || task.projectId)}</span>` : ''}
+            <div class="bq-task-meta">${task.projectId ? `<span title="${escapeAttr(task.projectId)}">${escapeHtml(_t('batchImportModal.project'))}: ${escapeHtml(task.projectName || task.projectId)}</span>` : ''}
                 ${task.startedAt ? `<span>${escapeHtml(_t('batchQueueDetailModal.startLabel'))}: ${escapeHtml(new Date(task.startedAt).toLocaleString())}</span>` : ''}
                 ${task.completedAt ? `<span>${escapeHtml(_t('batchQueueDetailModal.completeLabel'))}: ${escapeHtml(new Date(task.completedAt).toLocaleString())}</span>` : ''}
                 ${task.retryCount > 0 ? `<span>${escapeHtml(_tPlain('batchQueueDetailModal.retried', { count: task.retryCount }))}</span>` : ''}
             </div>
             ${task.error ? `<div class="${['blocked', 'tool_blocked', 'no_execution_evidence'].includes(taskStatus.result) ? 'batch-task-blocked-reason' : 'batch-task-error'}">${escapeHtml(_t(taskStatus.result === 'declined' ? 'tasks.declinedReasonLabel' : taskStatus.result === 'blocked' ? 'tasks.blockedReasonLabel' : 'batchQueueDetailModal.errorLabel'))}: ${escapeHtml(task.error)}</div>` : ''}
-            ${hasEvidence ? `<details class="bq-task-evidence" data-task-evidence="${escapeHtml(task.id)}"><summary>${escapeHtml(_t('tasks.runDetails'))}</summary>${renderTaskGovernance(task)}${task.result ? `<div class="batch-task-result">${escapeHtml(task.result)}</div>` : ''}</details>` : ''}
+            ${hasEvidence ? `<details class="bq-task-evidence" data-task-evidence="${escapeAttr(task.id)}"><summary>${escapeHtml(_t('tasks.runDetails'))}</summary>${renderTaskGovernance(task)}${task.result ? `<div class="batch-task-result">${escapeHtml(task.result)}</div>` : ''}</details>` : ''}
         </article>`;
     }).join('');
 }
@@ -2591,24 +2603,24 @@ async function showBatchQueueDetail(queueId) {
         deferModalContent(function () {
         if (requestSeq !== batchQueuesState.detailRequestSeq || batchQueuesState.currentQueueId !== queueId) return;
         content.innerHTML = `
-            <div class="batch-queue-detail-layout" data-bq-detail-for="${escapeHtml(queue.id)}">
+            <div class="batch-queue-detail-layout" data-bq-detail-for="${escapeAttr(queue.id)}">
             <section class="batch-queue-detail-hero">
                 <span class="batch-queue-status ${pres.class}">${escapeHtml(pres.text)}</span>
                 ${pres.sublabel ? `<p class="batch-queue-detail-hero__sub">${escapeHtml(pres.sublabel)}</p>` : ''}
                 ${showProgressNoteInModal ? `<p class="batch-queue-detail-hero__note">${escapeHtml(pres.progressNote)}</p>` : ''}
                 <p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.queueResultsLabel'))} · ${escapeHtml(_tPlain('tasks.processedFraction', { count: stats.processed, total: stats.total }))}</p>
                 <div class="batch-queue-outcome-summary">${batchQueueOutcomeSummaryHtml(stats, true)}</div>
-                <div class="bq-detail-progress" role="progressbar" aria-label="${escapeHtml(_t('tasks.processedLabel'))}" aria-valuemin="0" aria-valuemax="${stats.total || 1}" aria-valuenow="${stats.processed}"><span style="width:${stats.total ? Math.round(stats.processed / stats.total * 100) : 0}%"></span></div>
+                <div class="bq-detail-progress" role="progressbar" aria-label="${escapeAttr(_t('tasks.processedLabel'))}" aria-valuemin="0" aria-valuemax="${stats.total || 1}" aria-valuenow="${stats.processed}"><span style="width:${stats.total ? Math.round(stats.processed / stats.total * 100) : 0}%"></span></div>
                 <details class="bq-detail-help"><summary>${escapeHtml(_t('tasks.progressExplanation'))}</summary><p class="batch-queue-detail-hero__note">${escapeHtml(_t('tasks.processedProgressHint'))}</p></details>
                 ${stats.manualActive > 0 ? `<p class="task-governance-note">${escapeHtml(_tPlain('tasks.manualActiveCount', { count: stats.manualActive }))} · ${escapeHtml(_t('tasks.queueHistoricalCountsHint'))}</p>` : ''}
             </section>
             <details class="bq-detail-config"><summary>${escapeHtml(_t('tasks.queueConfiguration'))}<span>${escapeHtml(agentModeText)} · ${escapeHtml(batchAssessmentModeLabel(queue.assessmentMode))}</span></summary>
             <section class="batch-queue-detail-kv">
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.queueTitle'))}</span><span class="bq-kv__v" id="bq-title-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditTitle()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span>` : escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span></div>
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.role'))}</span><span class="bq-kv__v" id="bq-role-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditRole()" title="${escapeHtml(_t('common.edit'))}">${roleLineVal}</span>` : roleLineVal}</span></div>
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.agentMode'))}</span><span class="bq-kv__v" id="bq-agentmode-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditAgentMode()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(agentModeText)}</span>` : escapeHtml(agentModeText)}</span></div>
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.scheduleMode'))}</span><span class="bq-kv__v" id="bq-schedule-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditSchedule()" title="${escapeHtml(_t('common.edit'))}">${scheduleDetail}</span>` : scheduleDetail}</span></div>
-                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.concurrency'))}</span><span class="bq-kv__v" id="bq-concurrency-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditConcurrency()" title="${escapeHtml(_t('common.edit'))}">${escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span>` : escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.queueTitle'))}</span><span class="bq-kv__v" id="bq-title-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditTitle()" title="${escapeAttr(_t('common.edit'))}">${escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span>` : escapeHtml(queue.title || _t('tasks.batchQueueUntitled'))}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.role'))}</span><span class="bq-kv__v" id="bq-role-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditRole()" title="${escapeAttr(_t('common.edit'))}">${roleLineVal}</span>` : roleLineVal}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.agentMode'))}</span><span class="bq-kv__v" id="bq-agentmode-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditAgentMode()" title="${escapeAttr(_t('common.edit'))}">${escapeHtml(agentModeText)}</span>` : escapeHtml(agentModeText)}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.scheduleMode'))}</span><span class="bq-kv__v" id="bq-schedule-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditSchedule()" title="${escapeAttr(_t('common.edit'))}">${scheduleDetail}</span>` : scheduleDetail}</span></div>
+                <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchQueueDetailModal.concurrency'))}</span><span class="bq-kv__v" id="bq-concurrency-val">${allowSubtaskMutation ? `<span class="bq-inline-editable" onclick="startInlineEditConcurrency()" title="${escapeAttr(_t('common.edit'))}">${escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span>` : escapeHtml(String(queue.concurrency && queue.concurrency > 0 ? queue.concurrency : 1))}</span></div>
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('tasks.assessmentModeLabel'))}</span><span class="bq-kv__v">${escapeHtml(batchAssessmentModeLabel(queue.assessmentMode))}</span></div>
                 ${batchQueueDuplicatesSkipped(queue) !== null ? `<div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('tasks.duplicatesSkippedLabel'))}</span><span class="bq-kv__v">${batchQueueDuplicatesSkipped(queue)}</span></div>` : ''}
                 <div class="bq-kv"><span class="bq-kv__k">${escapeHtml(_t('batchImportModal.modelRetry'))}</span><span class="bq-kv__v">${escapeHtml(String(Number.isFinite(queue.modelRetryMax) ? queue.modelRetryMax : 3))}</span></div>
@@ -2635,11 +2647,11 @@ async function showBatchQueueDetail(queueId) {
                 <div class="bq-detail-toolbar">
                     <div class="bq-detail-toolbar__heading"><h4>${escapeHtml(_t('batchQueueDetailModal.taskList'))}</h4><span id="bq-detail-filter-count" aria-live="polite"></span></div>
                     <div class="bq-detail-toolbar__actions">
-                        <input type="search" id="bq-detail-search" value="${escapeHtml(batchQueuesState.detailSearch)}" placeholder="${escapeHtml(_t('tasks.filterSearch'))}" aria-label="${escapeHtml(_t('tasks.filterSearch'))}" oninput="setBatchDetailSearch(this.value)">
-                        <button type="button" class="btn-primary btn-small" id="bq-detail-continue-filtered" data-require-permission="chat:write" onclick="sendFilteredBatchTaskContinue()" title="${escapeHtml(_t('tasks.sendContinueHint'))}"></button>
+                        <input type="search" id="bq-detail-search" value="${escapeAttr(batchQueuesState.detailSearch)}" placeholder="${escapeAttr(_t('tasks.filterSearch'))}" aria-label="${escapeAttr(_t('tasks.filterSearch'))}" oninput="setBatchDetailSearch(this.value)">
+                        <button type="button" class="btn-primary btn-small" id="bq-detail-continue-filtered" data-require-permission="chat:write" onclick="sendFilteredBatchTaskContinue()" title="${escapeAttr(_t('tasks.sendContinueHint'))}"></button>
                     </div>
                 </div>
-                <div class="bq-detail-filters" role="group" aria-label="${escapeHtml(_t('tasks.filterByStatus'))}">${batchDetailFilterHTML(queue)}</div>
+                <div class="bq-detail-filters" role="group" aria-label="${escapeAttr(_t('tasks.filterByStatus'))}">${batchDetailFilterHTML(queue)}</div>
                 <p class="bq-detail-action-hint">${escapeHtml(_t('tasks.continueActionsHint'))}</p>
                 <div id="bq-detail-notice" class="bq-detail-notice" role="status" aria-live="polite" hidden></div>
                 <div id="bq-detail-task-items">${renderBatchDetailTasks(queue)}</div>
@@ -2938,7 +2950,7 @@ function editBatchTaskFromElement(button) {
     // 替换消息为内联编辑区域
     const editDiv = document.createElement('div');
     editDiv.className = 'batch-task-inline-edit';
-    editDiv.innerHTML = `<textarea id="bq-task-edit-${escapeHtml(taskId)}">${escapeHtml(decodedMessage)}</textarea>`;
+    editDiv.innerHTML = `<textarea id="bq-task-edit-${escapeAttr(taskId)}">${escapeHtml(decodedMessage)}</textarea>`;
     msgSpan.style.display = 'none';
     msgSpan.parentNode.insertBefore(editDiv, msgSpan.nextSibling);
 
@@ -3253,7 +3265,7 @@ function startInlineEditTitle() {
     const untitledText = _t('tasks.batchQueueUntitled');
     const val = currentTitle === untitledText ? '' : currentTitle;
     container.innerHTML = `<span class="bq-inline-edit-controls">
-        <input type="text" id="bq-edit-title" value="${escapeHtml(val)}" placeholder="${escapeHtml(_t('batchImportModal.queueTitleHint') || '')}" style="width:180px;" />
+        <input type="text" id="bq-edit-title" value="${escapeAttr(val)}" placeholder="${escapeAttr(_t('batchImportModal.queueTitleHint') || '')}" style="width:180px;" />
     </span>`;
     const inp = document.getElementById('bq-edit-title');
     if (inp) {
@@ -3313,8 +3325,8 @@ function startInlineEditRole() {
         const currentRole = queue.role || '';
         const roles = (Array.isArray(batchQueuesState.loadedRoles) ? batchQueuesState.loadedRoles : []).filter(r => r.name !== '默认' && r.enabled !== false).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
         const currentInList = !currentRole || roles.some(r => r.name === currentRole);
-        const orphanOpt = !currentInList ? `<option value="${escapeHtml(currentRole)}" selected>${escapeHtml(currentRole)} (${escapeHtml(_t('batchQueueDetailModal.roleNotFound') || '已移除')})</option>` : '';
-        const opts = roles.map(r => `<option value="${escapeHtml(r.name)}" ${r.name === currentRole ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
+        const orphanOpt = !currentInList ? `<option value="${escapeAttr(currentRole)}" selected>${escapeHtml(currentRole)} (${escapeHtml(_t('batchQueueDetailModal.roleNotFound') || '已移除')})</option>` : '';
+        const opts = roles.map(r => `<option value="${escapeAttr(r.name)}" ${r.name === currentRole ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
         container.innerHTML = `<span class="bq-inline-edit-controls">
             <select id="bq-edit-role">
                 <option value="">${escapeHtml(_t('batchImportModal.defaultRole'))}</option>
@@ -3542,7 +3554,7 @@ function startInlineEditSchedule() {
                 <option value="manual" ${!isCron ? 'selected' : ''}>${escapeHtml(_t('batchImportModal.scheduleModeManual'))}</option>
                 <option value="cron" ${isCron ? 'selected' : ''}>${escapeHtml(_t('batchImportModal.scheduleModeCron'))}</option>
             </select>
-            <input type="text" id="bq-edit-cron-expr" class="bq-edit-cron-expr" value="${escapeHtml(queue.cronExpr || '')}" placeholder="${_t('batchImportModal.cronExprPlaceholder', { interpolation: { escapeValue: false } })}" style="${!isCron ? 'display:none;' : ''}" />
+            <input type="text" id="bq-edit-cron-expr" class="bq-edit-cron-expr" value="${escapeAttr(queue.cronExpr || '')}" placeholder="${escapeAttr(_t('batchImportModal.cronExprPlaceholder', { interpolation: { escapeValue: false } }))}" style="${!isCron ? 'display:none;' : ''}" />
         </span>`;
         refreshBatchFormSelect('bq-edit-schedule-mode', { inline: true });
         let schedCancelled = false;

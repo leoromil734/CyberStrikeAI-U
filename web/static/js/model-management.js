@@ -163,9 +163,14 @@ async function testSavedAIChannels(forceAll = false) {
 // Pure import logic: same endpoint/key/model is skipped, distinct keys remain
 // independent channels, and normalization collisions receive unique suffixes.
 function buildAIModelImports(channels, source, models, prefix) {
+    const masked = value => String(value || '').trim() === '********';
+    if (masked(source?.api_key) || masked(source?.vision?.api_key)) {
+        throw new Error('已保存的密钥不会回显。批量创建新通道前，请重新填写主模型及独立视觉模型的 API Key，然后重新获取模型列表。');
+    }
     const next = cloneModelConfig(channels || {}), added = [];
     const endpoint = c => JSON.stringify([c.provider === 'claude' ? 'claude' : 'openai', String(c.base_url || '').trim().replace(/\/+$/, ''), String(c.api_key || '').trim(), String(c.model || '').trim()]);
-    const known = new Set(Object.values(next).map(endpoint));
+    // Identical masks do not establish that two saved channels share a key.
+    const known = new Set(Object.values(next).filter(c => !masked(c.api_key)).map(endpoint));
     for (const model of [...new Set(models.map(value => String(value).trim()).filter(Boolean))]) {
         const channel = {...cloneModelConfig(source), name:String(prefix || '') + model, model};
         const key = endpoint(channel);
@@ -182,7 +187,8 @@ function buildAIModelImports(channels, source, models, prefix) {
 
 async function fetchAIModelsForImport() {
     const request = ++aiModelImportRequest;
-    const source = readAIChannelFromMainForm(selectedAIChannelId);
+    const channelID = selectedAIChannelId;
+    const source = readAIChannelFromMainForm(channelID);
     const status = document.getElementById('ai-import-status');
     const manual = (document.getElementById('ai-import-manual')?.value || '').split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
     if (!source.api_key || !source.base_url) { if (status) status.textContent = '请先在连接信息中填写地址与密钥'; return; }
@@ -190,7 +196,7 @@ async function fetchAIModelsForImport() {
     try {
         let models = manual;
         if (!models.length) {
-            const response = await apiFetch('/api/config/list-models', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({provider:source.provider, base_url:source.base_url, api_key:source.api_key})});
+            const response = await apiFetch('/api/config/list-models', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({provider:source.provider, base_url:source.base_url, api_key:source.api_key, channel_id:channelID, credential_scope:'openai'})});
             const data = await response.json();
             if (!response.ok || !data.success) throw new Error(data.error || '获取模型失败，可手动粘贴型号列表');
             models = data.models || [];
@@ -241,8 +247,15 @@ function importSelectedAIModels() {
         showAIChannelSaveHint('连接信息已修改，请重新获取可导入模型', false);
         return;
     }
-    currentConfig.ai.channels[selectedAIChannelId] = current;
-    const result = buildAIModelImports(currentConfig.ai.channels, source, [...aiModelImportState.selected], document.getElementById('ai-import-prefix')?.value || '');
+    let result;
+    try {
+        // Validate before changing the drafts: a masked key cannot be copied
+        // into a new channel or treated as a reusable credential.
+        result = buildAIModelImports({...currentConfig.ai.channels, [selectedAIChannelId]:current}, source, [...aiModelImportState.selected], document.getElementById('ai-import-prefix')?.value || '');
+    } catch (error) {
+        showAIChannelSaveHint(error.message, false);
+        return;
+    }
     currentConfig.ai.channels = result.channels;
     if (result.added.length) {
         selectedAIChannelId = result.added[0];

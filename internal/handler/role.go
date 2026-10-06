@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/config"
@@ -23,6 +24,25 @@ type RoleHandler struct {
 	configPath string
 	logger     *zap.Logger
 	audit      *audit.Service
+	mu         sync.RWMutex
+}
+
+// validateRole also guards names that collapse to the same on-disk filename.
+// The caller holds h.mu while validating and saving the configuration.
+func (h *RoleHandler) validateRole(role config.RoleConfig) error {
+	if err := validateRoleName(role.Name); err != nil {
+		return err
+	}
+	for key, existing := range h.config.Roles {
+		name := existing.Name
+		if name == "" {
+			name = key
+		}
+		if name != role.Name && strings.EqualFold(sanitizeFileName(name), sanitizeFileName(role.Name)) {
+			return fmt.Errorf("角色名称与已有角色的文件名冲突")
+		}
+	}
+	return nil
 }
 
 // SetAudit wires platform audit logging.
@@ -41,9 +61,8 @@ func NewRoleHandler(cfg *config.Config, configPath string, logger *zap.Logger) *
 
 // GetRoles 获取所有角色
 func (h *RoleHandler) GetRoles(c *gin.Context) {
-	if h.config.Roles == nil {
-		h.config.Roles = make(map[string]config.RoleConfig)
-	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	roles := make([]config.RoleConfig, 0, len(h.config.Roles))
 	for key, role := range h.config.Roles {
@@ -61,6 +80,8 @@ func (h *RoleHandler) GetRoles(c *gin.Context) {
 
 // GetRole 获取单个角色
 func (h *RoleHandler) GetRole(c *gin.Context) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	roleName := c.Param("name")
 	if roleName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "角色名称不能为空"})
@@ -90,6 +111,8 @@ func (h *RoleHandler) GetRole(c *gin.Context) {
 
 // UpdateRole 更新角色
 func (h *RoleHandler) UpdateRole(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	roleName := c.Param("name")
 	if roleName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "角色名称不能为空"})
@@ -105,6 +128,16 @@ func (h *RoleHandler) UpdateRole(c *gin.Context) {
 	// 确保角色名称与请求中的name一致
 	if req.Name == "" {
 		req.Name = roleName
+	}
+	if err := h.validateRole(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Name != roleName {
+		if _, exists := h.config.Roles[req.Name]; exists {
+			c.JSON(http.StatusConflict, gin.H{"error": "角色已存在"})
+			return
+		}
 	}
 
 	// 初始化Roles map
@@ -192,14 +225,16 @@ func (h *RoleHandler) UpdateRole(c *gin.Context) {
 
 // CreateRole 创建新角色
 func (h *RoleHandler) CreateRole(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	var req config.RoleConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
 		return
 	}
 
-	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "角色名称不能为空"})
+	if err := h.validateRole(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -240,6 +275,8 @@ func (h *RoleHandler) CreateRole(c *gin.Context) {
 
 // DeleteRole 删除角色
 func (h *RoleHandler) DeleteRole(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	roleName := c.Param("name")
 	if roleName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "角色名称不能为空"})

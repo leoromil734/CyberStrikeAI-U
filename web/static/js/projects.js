@@ -332,12 +332,12 @@ function isSparseFactBody(category, factKey, body) {
 function formatFactBodyBadge(f) {
     if (!requiresAttackChainFact(f.category, f.fact_key)) {
         const hasBody = !!(f.body || '').trim();
-        return `<span class="projects-fact-badge projects-fact-badge--na" title="${escapeHtml(tp('projects.factBodyEnvTitle'))}">${hasBody ? escapeHtml(tp('projects.factBodyHasDetail')) : '—'}</span>`;
+        return `<span class="projects-fact-badge projects-fact-badge--na" title="${escapeAttr(tp('projects.factBodyEnvTitle'))}">${hasBody ? escapeHtml(tp('projects.factBodyHasDetail')) : '—'}</span>`;
     }
     if (isSparseFactBody(f.category, f.fact_key, f.body)) {
-        return `<span class="projects-fact-badge projects-fact-badge--warn" title="${escapeHtml(tp('projects.factBodySparseTitle'))}">${escapeHtml(tp('projects.factBodySparse'))}</span>`;
+        return `<span class="projects-fact-badge projects-fact-badge--warn" title="${escapeAttr(tp('projects.factBodySparseTitle'))}">${escapeHtml(tp('projects.factBodySparse'))}</span>`;
     }
-    return `<span class="projects-fact-badge projects-fact-badge--ok" title="${escapeHtml(tp('projects.factBodyReproducibleTitle'))}">${escapeHtml(tp('projects.factBodyReproducible'))}</span>`;
+    return `<span class="projects-fact-badge projects-fact-badge--ok" title="${escapeAttr(tp('projects.factBodyReproducibleTitle'))}">${escapeHtml(tp('projects.factBodyReproducible'))}</span>`;
 }
 
 function updateFactFormHints() {
@@ -728,13 +728,13 @@ function formatConfidenceBadge(confidence) {
 function renderProjectFactActions(keyEsc, idEsc, confidence) {
     const isDeprecated = (confidence || '').toLowerCase() === 'deprecated';
     const toggleBtn = isDeprecated
-        ? `<button type="button" class="projects-action-btn projects-action-btn--restore" data-fact-key="${keyEsc}" onclick="restoreProjectFactByKey(this.dataset.factKey)" title="${escapeHtml(tp('projects.restoreTitle'))}">${escapeHtml(tp('projects.restore'))}</button>`
-        : `<button type="button" class="projects-action-btn projects-action-btn--mute" data-fact-key="${keyEsc}" onclick="deprecateProjectFactByKey(this.dataset.factKey)" title="${escapeHtml(tp('projects.deprecateTitle'))}">${escapeHtml(tp('projects.deprecate'))}</button>`;
+        ? `<button type="button" class="projects-action-btn projects-action-btn--restore" data-fact-key="${keyEsc}" onclick="restoreProjectFactByKey(this.dataset.factKey)" title="${escapeAttr(tp('projects.restoreTitle'))}">${escapeHtml(tp('projects.restore'))}</button>`
+        : `<button type="button" class="projects-action-btn projects-action-btn--mute" data-fact-key="${keyEsc}" onclick="deprecateProjectFactByKey(this.dataset.factKey)" title="${escapeAttr(tp('projects.deprecateTitle'))}">${escapeHtml(tp('projects.deprecate'))}</button>`;
     return `<div class="projects-table-actions">
-        <button type="button" class="projects-action-btn projects-action-btn--edit" data-fact-key="${keyEsc}" onclick="showEditFactModal(this.dataset.factKey)" title="${escapeHtml(tp('projects.editTitle'))}">${escapeHtml(tp('common.edit'))}</button>
-        <button type="button" class="projects-action-btn projects-action-btn--view" data-fact-key="${keyEsc}" onclick="viewProjectFactBody(this.dataset.factKey)" title="${escapeHtml(tp('projects.viewBodyTitle'))}">${escapeHtml(tp('projects.details'))}</button>
+        <button type="button" class="projects-action-btn projects-action-btn--edit" data-fact-key="${keyEsc}" onclick="showEditFactModal(this.dataset.factKey)" title="${escapeAttr(tp('projects.editTitle'))}">${escapeHtml(tp('common.edit'))}</button>
+        <button type="button" class="projects-action-btn projects-action-btn--view" data-fact-key="${keyEsc}" onclick="viewProjectFactBody(this.dataset.factKey)" title="${escapeAttr(tp('projects.viewBodyTitle'))}">${escapeHtml(tp('projects.details'))}</button>
         ${toggleBtn}
-        <button type="button" class="projects-action-btn projects-action-btn--danger" data-fact-id="${idEsc}" onclick="deleteProjectFact(this.dataset.factId)" title="${escapeHtml(tp('projects.deleteForeverTitle'))}">${escapeHtml(tp('common.delete'))}</button>
+        <button type="button" class="projects-action-btn projects-action-btn--danger" data-fact-id="${idEsc}" onclick="deleteProjectFact(this.dataset.factId)" title="${escapeAttr(tp('projects.deleteForeverTitle'))}">${escapeHtml(tp('common.delete'))}</button>
     </div>`;
 }
 
@@ -854,9 +854,9 @@ function renderProjectsPagination() {
         <div class="sidebar-list-pagination-inner sidebar-list-pagination-inner--compact">
             <span class="pagination-info">${escapeHtml(infoText)}</span>
             <div class="pagination-controls">
-                <button type="button" class="btn-icon-pagination" onclick="goProjectsPage(${page - 1})" ${page <= 1 || navDisabled ? 'disabled' : ''} title="${escapeHtml(tp('projects.paginationPrev'))}" aria-label="${escapeHtml(tp('projects.paginationPrev'))}">‹</button>
+                <button type="button" class="btn-icon-pagination" onclick="goProjectsPage(${page - 1})" ${page <= 1 || navDisabled ? 'disabled' : ''} title="${escapeAttr(tp('projects.paginationPrev'))}" aria-label="${escapeAttr(tp('projects.paginationPrev'))}">‹</button>
                 <span class="pagination-page">${escapeHtml(pageText)}</span>
-                <button type="button" class="btn-icon-pagination" onclick="goProjectsPage(${page + 1})" ${page >= totalPages || navDisabled ? 'disabled' : ''} title="${escapeHtml(tp('projects.paginationNext'))}" aria-label="${escapeHtml(tp('projects.paginationNext'))}">›</button>
+                <button type="button" class="btn-icon-pagination" onclick="goProjectsPage(${page + 1})" ${page >= totalPages || navDisabled ? 'disabled' : ''} title="${escapeAttr(tp('projects.paginationNext'))}" aria-label="${escapeAttr(tp('projects.paginationNext'))}">›</button>
             </div>
             <label class="pagination-page-size">
                 ${escapeHtml(tp('projects.paginationPerPage'))}
@@ -897,12 +897,12 @@ function renderProjectsSidebar() {
             p.pinned ? `<span class="projects-list-item-badge">${escapeHtml(tp('projects.pinned'))}</span>` : '',
             p.status === 'archived' ? `<span class="projects-list-item-badge">${escapeHtml(tp('projects.archived'))}</span>` : '',
         ].join('');
-        return `<div class="projects-list-item${active}${archived}" data-id="${escapeHtml(p.id)}" onclick="selectProject('${escapeHtml(p.id)}')">
+        return `<div class="projects-list-item${active}${archived}" data-id="${escapeAttr(p.id)}" onclick="selectProject(${escapeJsStringAttr(p.id)})">
             <div class="projects-list-item-body">
                 <div class="projects-list-item-name">${escapeHtml(p.name)}${badges}</div>
                 <div class="projects-list-item-meta">${formatProjectTime(p.updated_at)}</div>
             </div>
-            <button type="button" class="projects-list-item-menu" title="${escapeHtml(tp('projects.projectActions'))}" aria-label="${escapeHtml(tp('projects.projectActions'))}" onclick="showProjectListActionMenu(event, '${escapeHtml(p.id)}')">⋯</button>
+            <button type="button" class="projects-list-item-menu" title="${escapeAttr(tp('projects.projectActions'))}" aria-label="${escapeAttr(tp('projects.projectActions'))}" onclick="showProjectListActionMenu(event, ${escapeJsStringAttr(p.id)})">⋯</button>
         </div>`;
     }).join('');
     updateProjectsDetailVisibility();
@@ -1096,13 +1096,13 @@ async function loadProjectAssets(page) {
         const updated = asset.last_seen_at ? new Date(asset.last_seen_at).toLocaleString() : '-';
         const status = asset.status === 'inactive' ? tpFmt('assets.statusInactive', '停用') : tpFmt('assets.statusActive', '活跃');
         return `<tr>
-            <td class="cell-summary"><button type="button" class="projects-asset-target" onclick="openProjectAssetDetail(${index})" title="${escapeHtml(target)}">${escapeHtml(target)}</button></td>
+            <td class="cell-summary"><button type="button" class="projects-asset-target" onclick="openProjectAssetDetail(${index})" title="${escapeAttr(target)}">${escapeHtml(target)}</button></td>
             <td><code>${escapeHtml(service)}</code></td>
-            <td class="cell-summary" title="${escapeHtml(fingerprint)}">${escapeHtml(fingerprint)}</td>
+            <td class="cell-summary" title="${escapeAttr(fingerprint)}">${escapeHtml(fingerprint)}</td>
             <td>${escapeHtml(asset.source || '-')}</td>
             <td>${escapeHtml(updated)}</td>
             <td><span class="asset-status asset-status--${escapeHtml(asset.status || 'active')}">${escapeHtml(status)}</span></td>
-            <td class="col-actions"><div class="projects-table-actions"><button type="button" class="projects-action-btn projects-action-btn--mute" data-require-permission="asset:write" onclick="unbindAssetFromProject(${index})" title="${escapeHtml(tp('projects.unbindProjectTitle'))}">${escapeHtml(tp('projects.unbind'))}</button></div></td>
+            <td class="col-actions"><div class="projects-table-actions"><button type="button" class="projects-action-btn projects-action-btn--mute" data-require-permission="asset:write" onclick="unbindAssetFromProject(${index})" title="${escapeAttr(tp('projects.unbindProjectTitle'))}">${escapeHtml(tp('projects.unbind'))}</button></div></td>
         </tr>`;
     }).join('');
     renderProjectAssetsPagination();
@@ -1324,12 +1324,12 @@ function renderGraphEdgesListHtml(factKey, graphData, selectedEdgeId) {
             const selected = e.id === selectedEdgeId ? ' is-selected' : '';
             const synthetic = isSyntheticGraphEdge(e);
             const deleteBtn = synthetic
-                ? `<span class="project-fact-graph-edge-synthetic" title="${escapeHtml(tp('projects.graphEdgeSynthetic'))}">—</span>`
-                : `<button type="button" class="project-fact-graph-edge-delete" data-edge-id="${escapeHtml(e.id)}" onclick="event.stopPropagation(); deleteProjectFactEdge(this.dataset.edgeId)" title="${escapeHtml(tp('projects.graphDeleteEdge'))}"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
-            return `<div class="project-fact-graph-edge-item${selected}" data-edge-id="${escapeHtml(e.id)}" onclick="focusProjectFactGraphEdge(${JSON.stringify(e.id)})">
+                ? `<span class="project-fact-graph-edge-synthetic" title="${escapeAttr(tp('projects.graphEdgeSynthetic'))}">—</span>`
+                : `<button type="button" class="project-fact-graph-edge-delete" data-edge-id="${escapeAttr(e.id)}" onclick="event.stopPropagation(); deleteProjectFactEdge(this.dataset.edgeId)" title="${escapeAttr(tp('projects.graphDeleteEdge'))}"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
+            return `<div class="project-fact-graph-edge-item${selected}" data-edge-id="${escapeAttr(e.id)}" onclick="focusProjectFactGraphEdge(${escapeJsStringAttr(e.id)})">
                 <span class="project-fact-graph-edge-dir">${escapeHtml(dirLabel)}</span>
                 <span class="project-fact-graph-edge-type">${escapeHtml(e.type || '')}</span>
-                <span class="project-fact-graph-edge-peer" title="${escapeHtml(src + ' → ' + tgt)}">${escapeHtml(src)} → ${escapeHtml(tgt)}</span>
+                <span class="project-fact-graph-edge-peer" title="${escapeAttr(src + ' → ' + tgt)}">${escapeHtml(src)} → ${escapeHtml(tgt)}</span>
                 ${deleteBtn}
             </div>`;
         })
@@ -1515,23 +1515,23 @@ async function loadProjectFacts() {
         return;
     }
     tbody.innerHTML = facts.map((f) => {
-        const keyEsc = escapeHtml(f.fact_key);
-        const idEsc = escapeHtml(f.id);
+        const keyEsc = escapeAttr(f.fact_key);
+        const idEsc = escapeAttr(f.id);
         const vulnLink = f.related_vulnerability_id
-            ? `<span class="projects-fact-vuln-link" title="${escapeHtml(tp('projects.relatedVulnIdTitle'))}">${escapeHtml(f.related_vulnerability_id.slice(0, 8))}…</span>`
+            ? `<span class="projects-fact-vuln-link" title="${escapeAttr(tp('projects.relatedVulnIdTitle'))}">${escapeHtml(f.related_vulnerability_id.slice(0, 8))}…</span>`
             : '';
         const pinBadge = f.pinned
-            ? `<span class="projects-list-item-badge" title="${escapeHtml(tp('projects.pinned'))}">${escapeHtml(tp('projects.pinned'))}</span>`
+            ? `<span class="projects-list-item-badge" title="${escapeAttr(tp('projects.pinned'))}">${escapeHtml(tp('projects.pinned'))}</span>`
             : '';
         const lc = f.link_counts || {};
         const linkBadge =
             lc.outgoing || lc.incoming
-                ? `<span class="projects-fact-link-badge" title="${escapeHtml(tp('projects.linkCountsTitle'))}">↑${lc.outgoing || 0} ↓${lc.incoming || 0}</span>`
+                ? `<span class="projects-fact-link-badge" title="${escapeAttr(tp('projects.linkCountsTitle'))}">↑${lc.outgoing || 0} ↓${lc.incoming || 0}</span>`
                 : '<span class="projects-fact-link-badge projects-fact-link-badge--empty">—</span>';
         return `<tr>
             <td class="cell-fact-key"><code class="projects-fact-key-chip" title="${keyEsc}">${keyEsc}</code>${pinBadge}${vulnLink}</td>
             <td class="cell-fact-category">${formatCategoryBadge(f.category)}</td>
-            <td class="cell-summary" title="${escapeHtml(f.summary)}">${escapeHtml(f.summary)}</td>
+            <td class="cell-summary" title="${escapeAttr(f.summary)}">${escapeHtml(f.summary)}</td>
             <td class="cell-fact-links">${linkBadge}</td>
             <td>${formatFactBodyBadge(f)}</td>
             <td>${formatConfidenceBadge(f.confidence)}</td>
@@ -1572,8 +1572,8 @@ async function loadProjectConversations() {
     tbody.innerHTML = items
         .map((conv) => {
             const id = conv.id;
-            const idEsc = escapeHtml(id);
-            const title = escapeHtml(conv.title || tp('projects.untitledConversation'));
+            const idEsc = escapeAttr(id);
+            const title = escapeAttr(conv.title || tp('projects.untitledConversation'));
             const updated = formatProjectTime(conv.updatedAt || conv.updated_at, conv.createdAt || conv.created_at);
             return `<tr>
             <td class="cell-summary" title="${title}">${title}</td>
@@ -1581,8 +1581,8 @@ async function loadProjectConversations() {
             <td class="col-actions">
                 <div class="projects-table-actions">
                     <button type="button" class="projects-action-btn projects-action-btn--view" data-conv-id="${idEsc}" onclick="openProjectConversation(this.dataset.convId)">${escapeHtml(tp('projects.open'))}</button>
-                    <button type="button" class="projects-action-btn" data-conv-id="${idEsc}" onclick="promoteConversationAttackChain(this.dataset.convId)" title="${escapeHtml(tp('projects.promoteAttackChainTitle'))}">${escapeHtml(tp('projects.promoteAttackChain'))}</button>
-                    <button type="button" class="projects-action-btn projects-action-btn--mute" data-conv-id="${idEsc}" onclick="unbindConversationFromProject(this.dataset.convId)" title="${escapeHtml(tp('projects.unbindProjectTitle'))}">${escapeHtml(tp('projects.unbind'))}</button>
+                    <button type="button" class="projects-action-btn" data-conv-id="${idEsc}" onclick="promoteConversationAttackChain(this.dataset.convId)" title="${escapeAttr(tp('projects.promoteAttackChainTitle'))}">${escapeHtml(tp('projects.promoteAttackChain'))}</button>
+                    <button type="button" class="projects-action-btn projects-action-btn--mute" data-conv-id="${idEsc}" onclick="unbindConversationFromProject(this.dataset.convId)" title="${escapeAttr(tp('projects.unbindProjectTitle'))}">${escapeHtml(tp('projects.unbind'))}</button>
                 </div>
             </td>
         </tr>`;
@@ -2005,15 +2005,15 @@ async function loadProjectVulnerabilities() {
         return;
     }
     tbody.innerHTML = items.map((v) => {
-        const idEsc = escapeHtml(v.id);
+        const idEsc = escapeAttr(v.id);
         return `<tr>
-            <td class="cell-summary" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</td>
+            <td class="cell-summary" title="${escapeAttr(v.title)}">${escapeHtml(v.title)}</td>
             <td>${formatSeverityBadge(v.severity)}</td>
             <td>${formatVulnStatusBadge(v.status)}</td>
             <td class="col-actions">
                 <div class="projects-table-actions">
                     <button type="button" class="projects-action-btn projects-action-btn--view" data-vuln-id="${idEsc}" onclick="openVulnerabilityDetail(this.dataset.vulnId)">${escapeHtml(tp('common.view'))}</button>
-                    <button type="button" class="projects-action-btn projects-action-btn--view" data-vuln-id="${idEsc}" onclick="viewFactsForVulnerability(this.dataset.vulnId)" title="${escapeHtml(tp('projects.viewRelatedFactsTitle'))}">${escapeHtml(tp('projects.facts'))}</button>
+                    <button type="button" class="projects-action-btn projects-action-btn--view" data-vuln-id="${idEsc}" onclick="viewFactsForVulnerability(this.dataset.vulnId)" title="${escapeAttr(tp('projects.viewRelatedFactsTitle'))}">${escapeHtml(tp('projects.facts'))}</button>
                 </div>
             </td>
         </tr>`;
@@ -2589,6 +2589,18 @@ function escapeHtml(s) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+function escapeAttr(s) {
+    return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsString(text) {
+    return JSON.stringify(String(text == null ? '' : text));
+}
+
+function escapeJsStringAttr(text) {
+    return escapeAttr(escapeJsString(text));
 }
 
 function getChatProjectSelection() {

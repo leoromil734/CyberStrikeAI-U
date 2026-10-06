@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -145,6 +146,25 @@ func (h *WorkflowHandler) save(c *gin.Context, pathID string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "工作流 id 和 name 不能为空"})
 		return
 	}
+	if pathID == "" && !validWorkflowID(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "工作流 ID 必须以字母或数字开头，仅含字母、数字、下划线、连字符，且不超过 128 字节"})
+		return
+	}
+	if pathID != "" {
+		if req.ID != "" && strings.TrimSpace(req.ID) != id {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "工作流 ID 不允许通过编辑更改"})
+			return
+		}
+		existing, err := h.db.GetWorkflowDefinition(id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if existing == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "工作流不存在"})
+			return
+		}
+	}
 	graph := req.Graph
 	if len(graph) == 0 {
 		graph = req.GraphJSON
@@ -177,7 +197,17 @@ func (h *WorkflowHandler) save(c *gin.Context, pathID string) {
 		GraphJSON:   string(graph),
 		Enabled:     enabled,
 	}
-	if err := h.db.UpsertWorkflowDefinition(wf); err != nil {
+	var saveErr error
+	if pathID == "" {
+		saveErr = h.db.CreateWorkflowDefinition(wf)
+	} else {
+		saveErr = h.db.UpsertWorkflowDefinition(wf)
+	}
+	if err := saveErr; err != nil {
+		if errors.Is(err, database.ErrWorkflowAlreadyExists) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		if h.logger != nil {
 			h.logger.Warn("保存工作流失败", zap.String("id", id), zap.Error(err))
 		}

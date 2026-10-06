@@ -72,6 +72,7 @@ func tcpBeaconCheckToken(expected, got string) bool {
 // handleTCPBeaconSession 处理已消费魔数 CSB1 之后的 TCP Beacon 会话（与 HTTP Beacon 相同的 AES-GCM + JSON 语义）。
 func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Reader) {
 	var writeMu sync.Mutex
+	var boundSessionID string
 	defer func() {
 		_ = conn.Close()
 	}()
@@ -144,6 +145,10 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 				l.logger.Warn("tcp beacon check_in", zap.Error(err))
 				return
 			}
+			if boundSessionID != "" && boundSessionID != session.ID {
+				return
+			}
+			boundSessionID = session.ID
 			queued, _ := l.manager.DB().ListC2Tasks(database.ListC2TasksFilter{
 				SessionID: session.ID,
 				Status:    string(TaskQueued),
@@ -163,7 +168,7 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 				return
 			}
 			var sessionID string
-			if err := json.Unmarshal(rawSID, &sessionID); err != nil || sessionID == "" {
+			if err := json.Unmarshal(rawSID, &sessionID); err != nil || sessionID == "" || sessionID != boundSessionID {
 				return
 			}
 			sess, err := l.manager.DB().GetC2Session(sessionID)
@@ -188,12 +193,22 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 			if err := json.Unmarshal(raw, &report); err != nil {
 				return
 			}
-			if err := l.manager.IngestTaskResult(report); err != nil {
+			if boundSessionID == "" {
+				return
+			}
+			if err := l.manager.IngestTaskResultFromListener(l.rec.ID, boundSessionID, report); err != nil {
 				return
 			}
 			resp = map[string]string{"ok": "1"}
 
 		case "upload":
+			if boundSessionID == "" {
+				return
+			}
+			sess, err := l.manager.DB().GetC2Session(boundSessionID)
+			if err != nil || sess == nil || sess.ListenerID != l.rec.ID {
+				return
+			}
 			raw, ok := env["upload"]
 			if !ok {
 				return
@@ -205,21 +220,34 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 			if err := json.Unmarshal(raw, &up); err != nil || up.TaskID == "" {
 				return
 			}
+			task, err := l.manager.DB().GetC2Task(up.TaskID)
+			if err != nil || task == nil || task.SessionID != boundSessionID {
+				return
+			}
 			plainFile, err := base64.StdEncoding.DecodeString(up.DataB64)
 			if err != nil {
 				return
 			}
-			dir := filepath.Join(l.manager.StorageDir(), "uploads")
+			dir, dst, err := uploadPathForTask(l.manager.StorageDir(), up.TaskID)
+			if err != nil {
+				return
+			}
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return
 			}
-			dst := filepath.Join(dir, up.TaskID+".bin")
 			if err := os.WriteFile(dst, plainFile, 0o644); err != nil {
 				return
 			}
 			resp = map[string]interface{}{"ok": 1, "size": len(plainFile)}
 
 		case "file":
+			if boundSessionID == "" {
+				return
+			}
+			sess, err := l.manager.DB().GetC2Session(boundSessionID)
+			if err != nil || sess == nil || sess.ListenerID != l.rec.ID {
+				return
+			}
 			raw, ok := env["file"]
 			if !ok {
 				return
@@ -231,6 +259,22 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 				return
 			}
 			if strings.Contains(fr.FileID, "/") || strings.Contains(fr.FileID, "\\") || strings.Contains(fr.FileID, "..") {
+				return
+			}
+			// Resolve the top-level file_id from task payloads, as on HTTP;
+			// a filename or task ID alone never grants access to a downstream file.
+			identities, err := l.manager.DB().C2HTTPFileIdentities(l.rec.ID, fr.FileID)
+			if err != nil {
+				return
+			}
+			allowed := false
+			for _, identity := range identities {
+				if identity == sess.ImplantUUID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
 				return
 			}
 			fpath := filepath.Join(l.manager.StorageDir(), "downstream", fr.FileID+".bin")

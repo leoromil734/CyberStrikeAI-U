@@ -11,6 +11,10 @@ function getAssetPageSize() {
 const assetPageState = { page: 1, pageSize: getAssetPageSize(), total: 0, totalPages: 1, items: [], projects: [], projectsLoaded: false, detailIndex: -1, editIndex: -1, detailAsset: null, editAsset: null, selected: new Map(), selectionQuery: '', allMatchingSelected: false, scanMode: 'chat', scanAssets: [], editorTags: [], editorDirty: false, editorBusy: false, editorReturnFocus: null, editorInteractionsReady: false, editorParsedTarget: '', importRows: [], importFileName: '', importBusy: false, importInteractionsReady: false, importReturnFocus: null };
 let assetOverviewDays = 30;
 
+function assetEscapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 const ASSET_CUSTOM_SELECT_IDS = [
     'asset-status-filter',
     'asset-project-filter',
@@ -345,7 +349,7 @@ function renderAssetImportPreview() {
         const result = row.error
             ? `<span class="asset-import-result asset-import-result--error">${escapeHtml(row.error)}</span>`
             : `<span class="asset-import-result asset-import-result--ok">${escapeHtml(assetT('assets.validationPassed', '通过'))}</span>`;
-        return `<tr class="${row.error ? 'has-error' : ''}"><td>${row.rowNumber}</td><td title="${escapeHtml(target)}">${escapeHtml(target)}</td><td>${escapeHtml(row.projectName || row.values.project || '-')}</td><td>${escapeHtml(asset.status || row.values.status || '-')}</td><td>${result}</td></tr>`;
+        return `<tr class="${row.error ? 'has-error' : ''}"><td>${row.rowNumber}</td><td title="${assetEscapeAttr(target)}">${escapeHtml(target)}</td><td>${escapeHtml(row.projectName || row.values.project || '-')}</td><td>${escapeHtml(asset.status || row.values.status || '-')}</td><td>${result}</td></tr>`;
     }).join('');
     const note = document.getElementById('asset-import-preview-note');
     if (note) note.textContent = rows.length > 100 ? assetT('assets.previewLimited', `仅展示前 100 行；提交时将处理全部 ${rows.length} 行`, { count: rows.length }) : '';
@@ -466,7 +470,7 @@ function renderAssetLineChart(rootId, summaryId, points, series) {
     const labelIndexes = [...new Set([0, Math.floor((data.length - 1) / 2), data.length - 1])];
     const labels = labelIndexes.map(index => `<text x="${x(index)}" y="${height - 7}" text-anchor="${index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'}">${escapeHtml(String(data[index].date || '').slice(5))}</text>`).join('');
     const aria = series.map((item, index) => `${item.label} ${totals[index]}`).join('，');
-    root.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(aria)}" preserveAspectRatio="none"><g class="asset-chart-grid">${grid}${labels}</g>${paths}</svg>`;
+    root.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${assetEscapeAttr(aria)}" preserveAspectRatio="none"><g class="asset-chart-grid">${grid}${labels}</g>${paths}</svg>`;
 }
 
 function renderAssetCoverage(coverage, total) {
@@ -612,7 +616,7 @@ function renderAssetSavedViews(selectedName) {
     const select = document.getElementById('asset-saved-view-select');
     if (!select) return;
     const views = readAssetSavedViews();
-    select.innerHTML = `<option value="">${escapeHtml(assetT('assets.savedViews', '保存的筛选视图'))}</option>` + views.map(view => `<option value="${escapeHtml(view.name)}">${escapeHtml(view.name)}</option>`).join('');
+    select.innerHTML = `<option value="">${escapeHtml(assetT('assets.savedViews', '保存的筛选视图'))}</option>` + views.map(view => `<option value="${assetEscapeAttr(view.name)}">${escapeHtml(view.name)}</option>`).join('');
     select.value = selectedName || '';
     syncAssetSelect(select);
 }
@@ -724,7 +728,7 @@ function assetOwnershipMarkup(asset) {
         department ? `${departmentLabel}: ${department}` : ''
     ].filter(Boolean).join(' · ');
     const primary = owner || department;
-    return `<div class="asset-ownership" title="${escapeHtml(title)}">
+    return `<div class="asset-ownership" title="${assetEscapeAttr(title)}">
         <span class="asset-ownership__primary">${escapeHtml(primary)}</span>
         ${owner && department ? `<span class="asset-ownership__secondary">${escapeHtml(department)}</span>` : ''}
     </div>`;
@@ -758,9 +762,9 @@ function renderAssetRows() {
         const risk = assetRiskPresentation(asset.risk_level);
         const statusLabel = asset.status === 'inactive' ? assetT('assets.statusInactive', '停用') : assetT('assets.statusActive', '活跃');
         return `<tr>
-            <td class="asset-check-cell"><input type="checkbox" class="theme-checkbox" ${assetPageState.selected.has(asset.id) ? 'checked' : ''} onchange="toggleAssetSelection(${index},this.checked)" aria-label="${escapeHtml(assetT('assets.selectAsset', '选择资产'))}"></td>
-            <td><button class="asset-target-link" title="${escapeHtml(targetHint)}" onclick="openAssetDetail(${index})">${escapeHtml(assetTargetLabel(asset))}</button></td>
-            <td><span class="asset-service" title="${escapeHtml(service)}">${escapeHtml(service)}</span></td>
+            <td class="asset-check-cell"><input type="checkbox" class="theme-checkbox" ${assetPageState.selected.has(asset.id) ? 'checked' : ''} onchange="toggleAssetSelection(${index},this.checked)" aria-label="${assetEscapeAttr(assetT('assets.selectAsset', '选择资产'))}"></td>
+            <td><button class="asset-target-link" title="${assetEscapeAttr(targetHint)}" onclick="openAssetDetail(${index})">${escapeHtml(assetTargetLabel(asset))}</button></td>
+            <td><span class="asset-service" title="${assetEscapeAttr(service)}">${escapeHtml(service)}</span></td>
             <td>${asset.project_name ? `<span class="asset-project-badge">${escapeHtml(asset.project_name)}</span>` : '<span class="muted">-</span>'}</td>
             <td>${assetOwnershipMarkup(asset)}</td>
             <td>${escapeHtml(lastScan)}</td><td>${vulnerabilityCount > 0 ? `<button class="asset-vulnerability-link" onclick="openAssetVulnerabilities(${index})">${vulnerabilityCount}</button>` : '<span class="muted">0</span>'}</td>
@@ -1224,14 +1228,14 @@ function populateAssetProjectSelects() {
         const el = document.getElementById(id);
         if (!el) return;
         const current = el.value;
-        el.innerHTML = `<option value="">${escapeHtml(emptyLabel)}</option>` + assetPageState.projects.map(project => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}${project.status === 'archived' ? ' · ' + escapeHtml(assetT('assets.archived', '已归档')) : ''}</option>`).join('');
+        el.innerHTML = `<option value="">${escapeHtml(emptyLabel)}</option>` + assetPageState.projects.map(project => `<option value="${assetEscapeAttr(project.id)}">${escapeHtml(project.name)}${project.status === 'archived' ? ' · ' + escapeHtml(assetT('assets.archived', '已归档')) : ''}</option>`).join('');
         el.value = current;
         syncAssetSelect(el);
     });
     const batch = document.getElementById('asset-batch-project');
     if (batch) {
         const current = batch.value;
-        batch.innerHTML = `<option value="" disabled hidden>${escapeHtml(assetT('assets.chooseProject', '请选择项目'))}</option>` + assetPageState.projects.map(project => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}${project.status === 'archived' ? ' · ' + escapeHtml(assetT('assets.archived', '已归档')) : ''}</option>`).join('');
+        batch.innerHTML = `<option value="" disabled hidden>${escapeHtml(assetT('assets.chooseProject', '请选择项目'))}</option>` + assetPageState.projects.map(project => `<option value="${assetEscapeAttr(project.id)}">${escapeHtml(project.name)}${project.status === 'archived' ? ' · ' + escapeHtml(assetT('assets.archived', '已归档')) : ''}</option>`).join('');
         batch.value = current;
         syncAssetSelect(batch);
     }

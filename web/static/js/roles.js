@@ -552,6 +552,18 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function escapeJsString(text) {
+    return JSON.stringify(String(text == null ? '' : text));
+}
+
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsStringAttr(text) {
+    return escapeAttr(escapeJsString(text));
+}
+
 // 刷新角色列表
 async function refreshRoles() {
     await loadRoles();
@@ -638,7 +650,7 @@ function renderRolesList() {
         <div class="role-card">
             <div class="role-card-header">
                 <h3 class="role-card-title">
-                    <span class="role-card-icon">${roleIcon}</span>
+                    <span class="role-card-icon">${escapeHtml(roleIcon)}</span>
                     ${escapeHtml(role.name)}
                 </h3>
                 <span class="role-card-badge ${role.enabled !== false ? 'enabled' : 'disabled'}">
@@ -651,8 +663,8 @@ function renderRolesList() {
                 <span class="role-card-tools-value">${toolsDisplay}</span>
             </div>
             <div class="role-card-actions">
-                <button class="btn-secondary btn-small" onclick="editRole('${escapeHtml(role.name)}')">${_t('common.edit')}</button>
-                ${role.name !== '默认' ? `<button class="btn-secondary btn-small btn-danger" onclick="deleteRole('${escapeHtml(role.name)}')">${_t('common.delete')}</button>` : ''}
+                <button class="btn-secondary btn-small" onclick="editRole(${escapeJsStringAttr(role.name)})">${_t('common.edit')}</button>
+                ${role.name !== '默认' ? `<button class="btn-secondary btn-small btn-danger" onclick="deleteRole(${escapeJsStringAttr(role.name)})">${_t('common.delete')}</button>` : ''}
             </div>
         </div>
     `;
@@ -924,7 +936,7 @@ function renderRoleToolsList() {
         return;
     }
 
-    const chkTitle = escapeHtml(_t('roleModal.checkboxLinkTitle'));
+    const chkTitle = escapeAttr(_t('roleModal.checkboxLinkTitle'));
     
     allRoleTools.forEach(tool => {
         const toolKey = getToolKey(tool);
@@ -947,20 +959,20 @@ function renderRoleToolsList() {
         if (toolState.is_external || tool.is_external) {
             const externalMcpName = toolState.external_mcp || tool.external_mcp || '';
             const badgeText = externalMcpName ? `外部 (${escapeHtml(externalMcpName)})` : '外部';
-            const badgeTitle = externalMcpName ? `外部MCP工具 - 来源：${escapeHtml(externalMcpName)}` : '外部MCP工具';
-            externalBadge = `<span class="external-tool-badge" title="${badgeTitle}">${badgeText}</span>`;
+            const badgeTitle = externalMcpName ? `外部MCP工具 - 来源：${externalMcpName}` : '外部MCP工具';
+            externalBadge = `<span class="external-tool-badge" title="${escapeAttr(badgeTitle)}">${badgeText}</span>`;
         }
         let mcpDisabledBadge = '';
         if (tool.enabled === false) {
-            mcpDisabledBadge = `<span class="role-tool-mcp-disabled-badge" title="${escapeHtml(_t('roleModal.mcpDisabledBadgeTitle'))}">${escapeHtml(_t('roleModal.mcpDisabledBadge'))}</span>`;
+            mcpDisabledBadge = `<span class="role-tool-mcp-disabled-badge" title="${escapeAttr(_t('roleModal.mcpDisabledBadgeTitle'))}">${escapeHtml(_t('roleModal.mcpDisabledBadge'))}</span>`;
         }
         // 生成唯一的checkbox id
-        const checkboxId = `role-tool-${escapeHtml(toolKey).replace(/::/g, '--')}`;
+        const checkboxId = `role-tool-${escapeAttr(toolKey).replace(/::/g, '--')}`;
         
         toolItem.innerHTML = `
             <input type="checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} 
                    title="${chkTitle}" aria-label="${chkTitle}"
-                   onchange="handleRoleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
+                   onchange="handleRoleToolCheckboxChange(${escapeJsStringAttr(toolKey)}, this.checked)" />
             <div class="role-tool-item-info">
                 <div class="role-tool-item-name">
                     ${escapeHtml(tool.name)}
@@ -1011,11 +1023,11 @@ function renderRoleToolsPagination() {
             </select>
         </div>
         <div class="pagination-controls">
-            <button class="btn-secondary" onclick="loadRoleTools(1, '${escapeHtml(roleToolsSearchKeyword)}')" ${page === 1 || navDisabled ? 'disabled' : ''}>${_t('roleModal.firstPage')}</button>
-            <button class="btn-secondary" onclick="loadRoleTools(${page - 1}, '${escapeHtml(roleToolsSearchKeyword)}')" ${page === 1 || navDisabled ? 'disabled' : ''}>${_t('roleModal.prevPage')}</button>
+            <button class="btn-secondary" onclick="loadRoleTools(1, ${escapeJsStringAttr(roleToolsSearchKeyword)})" ${page === 1 || navDisabled ? 'disabled' : ''}>${_t('roleModal.firstPage')}</button>
+            <button class="btn-secondary" onclick="loadRoleTools(${page - 1}, ${escapeJsStringAttr(roleToolsSearchKeyword)})" ${page === 1 || navDisabled ? 'disabled' : ''}>${_t('roleModal.prevPage')}</button>
             <span class="pagination-page">${_t('roleModal.pageOf', { page: page, total: totalPages })}</span>
-            <button class="btn-secondary" onclick="loadRoleTools(${page + 1}, '${escapeHtml(roleToolsSearchKeyword)}')" ${page === totalPages || navDisabled ? 'disabled' : ''}>${_t('roleModal.nextPage')}</button>
-            <button class="btn-secondary" onclick="loadRoleTools(${totalPages}, '${escapeHtml(roleToolsSearchKeyword)}')" ${page === totalPages || navDisabled ? 'disabled' : ''}>${_t('roleModal.lastPage')}</button>
+            <button class="btn-secondary" onclick="loadRoleTools(${page + 1}, ${escapeJsStringAttr(roleToolsSearchKeyword)})" ${page === totalPages || navDisabled ? 'disabled' : ''}>${_t('roleModal.nextPage')}</button>
+            <button class="btn-secondary" onclick="loadRoleTools(${totalPages}, ${escapeJsStringAttr(roleToolsSearchKeyword)})" ${page === totalPages || navDisabled ? 'disabled' : ''}>${_t('roleModal.lastPage')}</button>
         </div>
     `;
     
@@ -1183,10 +1195,10 @@ function updateRoleToolsStats() {
     if (roleUsesAllTools) {
         statsEl.innerHTML = `
             <div class="role-tools-stats-row">
-                <span title="${escapeHtml(_t('roleModal.statsPageLinkedTitle'))}">✅ ${_t('roleModal.statsPageLinked', { current: pageChecked, total: pageTotal })}</span>
+                <span title="${escapeAttr(_t('roleModal.statsPageLinkedTitle'))}">✅ ${_t('roleModal.statsPageLinked', { current: pageChecked, total: pageTotal })}</span>
             </div>
             <div class="role-tools-stats-row">
-                <span title="${escapeHtml(_t('roleModal.statsRoleUsesAllTitle'))}">📊 ${_t('roleModal.statsRoleUsesAll', { mcpOn: mcpOnMax, all: grandAll })}</span>
+                <span title="${escapeAttr(_t('roleModal.statsRoleUsesAllTitle'))}">📊 ${_t('roleModal.statsRoleUsesAll', { mcpOn: mcpOnMax, all: grandAll })}</span>
             </div>
             <div class="role-tools-stats-hint">📋 ${escapeHtml(scopeLine)}</div>
         `;
@@ -1216,12 +1228,12 @@ function updateRoleToolsStats() {
 
     const roleRow =
         mcpOnMax > 0
-            ? `<span title="${escapeHtml(_t('roleModal.statsRoleLinkedTitle'))}">📊 ${_t('roleModal.statsRoleLinked', { current: roleLinked, max: mcpOnMax })}</span>`
-            : `<span title="${escapeHtml(_t('roleModal.statsRoleLinkedNoMaxTitle'))}">📊 ${_t('roleModal.statsRoleLinkedNoMax', { current: roleLinked })}</span>`;
+            ? `<span title="${escapeAttr(_t('roleModal.statsRoleLinkedTitle'))}">📊 ${_t('roleModal.statsRoleLinked', { current: roleLinked, max: mcpOnMax })}</span>`
+            : `<span title="${escapeAttr(_t('roleModal.statsRoleLinkedNoMaxTitle'))}">📊 ${_t('roleModal.statsRoleLinkedNoMax', { current: roleLinked })}</span>`;
 
     statsEl.innerHTML = `
         <div class="role-tools-stats-row">
-            <span title="${escapeHtml(_t('roleModal.statsPageLinkedTitle'))}">✅ ${_t('roleModal.statsPageLinked', { current: pageChecked, total: pageTotal })}</span>
+            <span title="${escapeAttr(_t('roleModal.statsPageLinkedTitle'))}">✅ ${_t('roleModal.statsPageLinked', { current: pageChecked, total: pageTotal })}</span>
         </div>
         <div class="role-tools-stats-row">${roleRow}</div>
         <div class="role-tools-stats-hint">📋 ${escapeHtml(scopeLine)}</div>

@@ -378,7 +378,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		),
 	}
 
-	c.JSON(http.StatusOK, GetConfigResponse{
+	response, err := maskedConfigResponse(GetConfigResponse{
 		AI:         h.config.AI,
 		OpenAI:     h.config.OpenAI,
 		Vision:     h.config.Vision,
@@ -395,6 +395,12 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		Robots:     h.config.Robots,
 		MultiAgent: multiPub,
 	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "配置序列化失败"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, response)
 }
 
 // GetToolsResponse 获取工具列表响应（分页）
@@ -803,12 +809,16 @@ type ToolEnableStatus struct {
 func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 	var req UpdateConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := restoreConfigRequestSecrets(&req, h.config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	// 更新OpenAI配置
 	if req.AI != nil {
@@ -1161,7 +1171,7 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 	// 保存配置到文件
 	if err := h.saveConfig(); err != nil {
 		h.logger.Error("保存配置失败", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置失败"})
 		return
 	}
 
@@ -1173,20 +1183,30 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 
 // TestOpenAIRequest 测试OpenAI连接请求
 type TestOpenAIRequest struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Model    string `json:"model"`
+	CredentialScope string `json:"credential_scope,omitempty"`
+	ChannelID       string `json:"channel_id,omitempty"`
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
+	Model           string `json:"model"`
 }
 
 // TestOpenAI 测试OpenAI API连接是否可用
 func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 	var req TestOpenAIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 
+	h.mu.RLock()
+	resolvedKey, resolveErr := resolveProbeSecret(h.config, req.APIKey, req.ChannelID, req.Provider, req.BaseURL, req.CredentialScope)
+	h.mu.RUnlock()
+	if resolveErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": resolveErr.Error()})
+		return
+	}
+	req.APIKey = resolvedKey
 	if strings.TrimSpace(req.APIKey) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "API Key 不能为空"})
 		return
@@ -1221,7 +1241,8 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 		APIKey:   strings.TrimSpace(req.APIKey),
 		Model:    req.Model,
 	}
-	client := openai.NewClient(tmpCfg, nil, h.logger)
+	// Probe errors may echo Authorization; keep raw upstream bodies out of logs.
+	client := openai.NewClient(tmpCfg, credentialProbeHTTPClient(), zap.NewNop())
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -1245,14 +1266,14 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       fmt.Sprintf("API 返回错误 (HTTP %d)", apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "连接失败: " + err.Error(),
+			"error":   "连接失败，请检查目标地址及服务状态",
 		})
 		return
 	}
@@ -1282,16 +1303,18 @@ func (h *ConfigHandler) TestOpenAI(c *gin.Context) {
 
 // ListModelsRequest 获取模型列表请求（OpenAI 兼容 GET /models）。
 type ListModelsRequest struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
+	CredentialScope string `json:"credential_scope,omitempty"`
+	ChannelID       string `json:"channel_id,omitempty"`
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
 }
 
 // ListModels 代理调用上游 GET /models，返回可用模型 id 列表。
 func (h *ConfigHandler) ListModels(c *gin.Context) {
 	var req ListModelsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 
@@ -1308,6 +1331,14 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 		return
 	}
 
+	h.mu.RLock()
+	resolvedKey, resolveErr := resolveProbeSecret(h.config, req.APIKey, req.ChannelID, req.Provider, req.BaseURL, req.CredentialScope)
+	h.mu.RUnlock()
+	if resolveErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": resolveErr.Error()})
+		return
+	}
+	req.APIKey = resolvedKey
 	if strings.TrimSpace(req.APIKey) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "API Key 不能为空"})
 		return
@@ -1323,7 +1354,8 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 		BaseURL:  baseURL,
 		APIKey:   strings.TrimSpace(req.APIKey),
 	}
-	client := openai.NewClient(tmpCfg, nil, h.logger)
+	// Probe errors may echo Authorization; keep raw upstream bodies out of logs.
+	client := openai.NewClient(tmpCfg, credentialProbeHTTPClient(), zap.NewNop())
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -1334,14 +1366,14 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success":   false,
 				"supported": true,
-				"error":     fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":     fmt.Sprintf("API 返回错误 (HTTP %d)", apiErr.StatusCode),
 			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"success":   false,
 			"supported": true,
-			"error":     err.Error(),
+			"error":     "获取模型列表失败，请检查目标地址及服务状态",
 		})
 		return
 	}
@@ -1356,18 +1388,31 @@ func (h *ConfigHandler) ListModels(c *gin.Context) {
 
 // TestVisionRequest 测试 Vision 模型连接；vision.api_key/base_url 留空时可传 openai 段作回退。
 type TestVisionRequest struct {
-	Vision config.VisionConfig `json:"vision"`
-	OpenAI config.OpenAIConfig `json:"openai,omitempty"`
+	ChannelID string              `json:"channel_id,omitempty"`
+	Vision    config.VisionConfig `json:"vision"`
+	OpenAI    config.OpenAIConfig `json:"openai,omitempty"`
 }
 
 // TestVision 测试视觉模型 API 连接（最小 chat completion）。
 func (h *ConfigHandler) TestVision(c *gin.Context) {
 	var req TestVisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	oa := req.Vision.OpenAICfgEffective(req.OpenAI)
+	scope := "vision"
+	if strings.TrimSpace(req.Vision.APIKey) == "" {
+		scope = "openai"
+	}
+	h.mu.RLock()
+	resolvedKey, resolveErr := resolveProbeSecret(h.config, oa.APIKey, req.ChannelID, oa.Provider, oa.BaseURL, scope)
+	h.mu.RUnlock()
+	if resolveErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": resolveErr.Error()})
+		return
+	}
+	oa.APIKey = resolvedKey
 	if strings.TrimSpace(oa.APIKey) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "API Key 不能为空（可填写 vision.api_key 或 openai.api_key）"})
 		return
@@ -1400,7 +1445,8 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		APIKey:   strings.TrimSpace(oa.APIKey),
 		Model:    oa.Model,
 	}
-	client := openai.NewClient(tmpCfg, nil, h.logger)
+	// Probe errors may echo Authorization; keep raw upstream bodies out of logs.
+	client := openai.NewClient(tmpCfg, credentialProbeHTTPClient(), zap.NewNop())
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
@@ -1421,14 +1467,14 @@ func (h *ConfigHandler) TestVision(c *gin.Context) {
 		if apiErr, ok := err.(*openai.APIError); ok {
 			c.JSON(http.StatusOK, gin.H{
 				"success":     false,
-				"error":       fmt.Sprintf("API 返回错误 (HTTP %d): %s", apiErr.StatusCode, apiErr.Body),
+				"error":       fmt.Sprintf("API 返回错误 (HTTP %d)", apiErr.StatusCode),
 				"status_code": apiErr.StatusCode,
 			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "连接失败: " + err.Error(),
+			"error":   "连接失败，请检查目标地址及服务状态",
 		})
 		return
 	}
@@ -1462,20 +1508,22 @@ type TestEmbeddingRequest struct {
 func (h *ConfigHandler) TestEmbedding(c *gin.Context) {
 	var req TestEmbeddingRequest
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 
 	h.mu.RLock()
-	cfg := h.config
-	h.mu.RUnlock()
-	if cfg == nil {
+	if h.config == nil {
+		h.mu.RUnlock()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "服务器配置未加载"})
 		return
 	}
+	kc, main := h.config.Knowledge, h.config.OpenAI
+	savedEmbedding := embeddingProbeConfig(kc.Embedding, main)
+	h.mu.RUnlock()
 
-	// 以已保存的知识库配置为底，用请求字段覆盖
-	kc := cfg.Knowledge
+	// 以已保存的知识库配置为底，用请求字段覆盖。
+	// 未提交密钥也会使用已存密钥，必须同样验证最终的请求目标。
 	if v := strings.TrimSpace(req.Provider); v != "" {
 		kc.Embedding.Provider = v
 	}
@@ -1485,14 +1533,20 @@ func (h *ConfigHandler) TestEmbedding(c *gin.Context) {
 	if v := strings.TrimSpace(req.BaseURL); v != "" {
 		kc.Embedding.BaseURL = v
 	}
-	if v := strings.TrimSpace(req.APIKey); v != "" {
+	if v := strings.TrimSpace(req.APIKey); v != "" && v != maskedSecret {
 		kc.Embedding.APIKey = v
+	} else {
+		if !sameProbeTarget(savedEmbedding, embeddingProbeConfig(kc.Embedding, main)) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "测试目标与已保存凭据不匹配，请重新填写 API Key"})
+			return
+		}
+		kc.Embedding.APIKey = savedEmbedding.APIKey
+		if strings.TrimSpace(kc.Embedding.APIKey) == maskedSecret {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "没有已保存的 API Key，请填写新的值"})
+			return
+		}
 	}
-	// 连通性测试不应把限速等待和重试时间算进耗时，这里临时关闭
-	kc.Indexing.MaxRPM = 0
-	kc.Indexing.RateLimitDelayMs = 0
-	kc.Indexing.MaxRetries = 0
-	kc.Indexing.RetryDelayMs = 0
+	// The probe uses an isolated HTTP client; runtime indexing limits and retries remain unchanged.
 
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
@@ -1502,14 +1556,8 @@ func (h *ConfigHandler) TestEmbedding(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	embedder, err := knowledge.NewEmbedder(ctx, &kc, &cfg.OpenAI, h.logger)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
-		return
-	}
-
 	start := time.Now()
-	vec, err := embedder.EmbedText(ctx, text)
+	vec, embeddingModel, err := probeEmbedding(ctx, kc.Embedding, main, text)
 	latency := time.Since(start)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -1550,7 +1598,7 @@ func (h *ConfigHandler) TestEmbedding(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":        true,
-		"model":          embedder.EmbeddingModelName(),
+		"model":          embeddingModel,
 		"base_url":       strings.TrimSpace(kc.Embedding.BaseURL),
 		"dimension":      len(vec),
 		"latency_ms":     latency.Milliseconds(),

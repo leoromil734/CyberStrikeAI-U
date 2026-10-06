@@ -339,7 +339,8 @@ func NewWebShellHandler(logger *zap.Logger, db *database.DB) *WebShellHandler {
 	return &WebShellHandler{
 		logger: logger,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: webshellRejectRedirect,
 			Transport: &http.Transport{
 				DisableKeepAlives: false,
 				// WebShell 场景常见自签证书或 IP 访问（证书无 IP SAN）；默认跳过校验，与蚁剑等客户端一致。
@@ -385,12 +386,16 @@ func (h *WebShellHandler) ListConnections(c *gin.Context) {
 	session, _ := security.CurrentSession(c)
 	list, err := h.db.ListWebshellConnectionsForAccess(session.UserID, session.Scope, c.Query("project_id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	if list == nil {
 		list = []database.WebShellConnection{}
 	}
+	for i := range list {
+		list[i] = *publicWebshellConnection(&list[i])
+	}
+	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, list)
 }
 
@@ -402,7 +407,7 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 	}
 	var req CreateConnectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
@@ -426,6 +431,10 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 	shellType := strings.ToLower(strings.TrimSpace(req.Type))
 	if shellType == "" {
 		shellType = "php"
+	}
+	if strings.TrimSpace(req.Password) == maskedSecret {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新连接必须填写真实口令，不能保存掩码"})
+		return
 	}
 	conn := &database.WebShellConnection{
 		ID:        "ws_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
@@ -441,7 +450,7 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 		CreatedAt: time.Now(),
 	}
 	if err := h.db.CreateWebshellConnection(conn); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok {
@@ -457,7 +466,7 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 			"host": host, "type": shellType,
 		})
 	}
-	c.JSON(http.StatusOK, conn)
+	c.JSON(http.StatusOK, publicWebshellConnection(conn))
 }
 
 // UpdateConnection 更新 WebShell 连接（PUT /api/webshell/connections/:id）
@@ -473,7 +482,7 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 	}
 	var req UpdateConnectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
@@ -498,11 +507,24 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 	if shellType == "" {
 		shellType = "php"
 	}
+	password := strings.TrimSpace(req.Password)
+	if password == maskedSecret {
+		stored, ok := h.authorizedWebshellConnection(c, id, req.URL)
+		if !ok {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该连接或连接地址已更改，请填写新的口令"})
+			return
+		}
+		password = stored.Password
+		if strings.TrimSpace(password) == maskedSecret {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "已保存口令无效，请填写新的口令"})
+			return
+		}
+	}
 	conn := &database.WebShellConnection{
 		ID:        id,
 		ProjectID: projectID,
 		URL:       req.URL,
-		Password:  strings.TrimSpace(req.Password),
+		Password:  password,
 		Type:      shellType,
 		Method:    method,
 		CmdParam:  strings.TrimSpace(req.CmdParam),
@@ -515,14 +537,14 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	updated, _ := h.db.GetWebshellConnection(id)
 	if updated != nil {
-		c.JSON(http.StatusOK, updated)
+		c.JSON(http.StatusOK, publicWebshellConnection(updated))
 	} else {
-		c.JSON(http.StatusOK, conn)
+		c.JSON(http.StatusOK, publicWebshellConnection(conn))
 	}
 }
 
@@ -542,7 +564,7 @@ func (h *WebShellHandler) DeleteConnection(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	if h.audit != nil {
@@ -564,7 +586,7 @@ func (h *WebShellHandler) GetConnectionState(c *gin.Context) {
 	}
 	conn, err := h.db.GetWebshellConnection(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	if conn == nil {
@@ -573,7 +595,7 @@ func (h *WebShellHandler) GetConnectionState(c *gin.Context) {
 	}
 	stateJSON, err := h.db.GetWebshellConnectionState(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	var state interface{}
@@ -596,7 +618,7 @@ func (h *WebShellHandler) SaveConnectionState(c *gin.Context) {
 	}
 	conn, err := h.db.GetWebshellConnection(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	if conn == nil {
@@ -607,7 +629,7 @@ func (h *WebShellHandler) SaveConnectionState(c *gin.Context) {
 		State json.RawMessage `json:"state"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	raw := req.State
@@ -624,7 +646,7 @@ func (h *WebShellHandler) SaveConnectionState(c *gin.Context) {
 		return
 	}
 	if err := h.db.UpsertWebshellConnectionState(id, string(raw)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "连接配置操作失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -726,7 +748,7 @@ type FileOpResponse struct {
 func (h *WebShellHandler) Exec(c *gin.Context) {
 	var req ExecRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
@@ -752,6 +774,10 @@ func (h *WebShellHandler) Exec(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(req.Password) == maskedSecret {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请使用已保存连接或填写新的连接口令"})
+		return
+	}
 	parsed, err := url.Parse(req.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url: only http(s) allowed"})
@@ -770,19 +796,21 @@ func (h *WebShellHandler) Exec(c *gin.Context) {
 	} else {
 		body := h.buildExecBody(req.Type, req.Password, cmdParam, req.Command)
 		httpReq, err = http.NewRequest(http.MethodPost, req.URL, bytes.NewReader(body))
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err == nil {
+			httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 	}
 	if err != nil {
-		h.logger.Warn("webshell exec NewRequest", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, ExecResponse{OK: false, Error: err.Error()})
+		h.logger.Warn("webshell exec NewRequest: 请求地址无效")
+		c.JSON(http.StatusInternalServerError, ExecResponse{OK: false, Error: "连接请求失败，请检查目标地址及服务状态"})
 		return
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CyberStrikeAI-WebShell/1.0)")
 
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		h.logger.Warn("webshell exec Do", zap.String("url", req.URL), zap.Error(err))
-		c.JSON(http.StatusOK, ExecResponse{OK: false, Error: err.Error()})
+		h.logger.Warn("webshell exec Do: 连接请求失败")
+		c.JSON(http.StatusOK, ExecResponse{OK: false, Error: "连接请求失败，请检查目标地址及服务状态"})
 		return
 	}
 	defer resp.Body.Close()
@@ -835,7 +863,7 @@ func (h *WebShellHandler) execParams(shellType, password, cmdParam, command stri
 func (h *WebShellHandler) FileOp(c *gin.Context) {
 	var req FileOpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数"})
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
@@ -857,6 +885,10 @@ func (h *WebShellHandler) FileOp(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(req.Password) == maskedSecret {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请使用已保存连接或填写新的连接口令"})
+		return
+	}
 	parsed, err := url.Parse(req.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid url: only http(s) allowed"})
@@ -904,17 +936,19 @@ func (h *WebShellHandler) FileOp(c *gin.Context) {
 	} else {
 		body := h.buildExecBody(req.Type, req.Password, cmdParam, command)
 		httpReq, err = http.NewRequest(http.MethodPost, req.URL, bytes.NewReader(body))
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err == nil {
+			httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, FileOpResponse{OK: false, Error: err.Error()})
+		c.JSON(http.StatusInternalServerError, FileOpResponse{OK: false, Error: "连接请求失败，请检查目标地址及服务状态"})
 		return
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CyberStrikeAI-WebShell/1.0)")
 
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		c.JSON(http.StatusOK, FileOpResponse{OK: false, Error: err.Error()})
+		c.JSON(http.StatusOK, FileOpResponse{OK: false, Error: "连接请求失败，请检查目标地址及服务状态"})
 		return
 	}
 	defer resp.Body.Close()
@@ -974,6 +1008,9 @@ func (h *WebShellHandler) ExecWithConnection(conn *database.WebShellConnection, 
 	if conn == nil {
 		return "", false, "connection is nil"
 	}
+	if strings.TrimSpace(conn.Password) == maskedSecret {
+		return "", false, "请使用已保存连接或填写新的连接口令"
+	}
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return "", false, "command is required"
@@ -991,15 +1028,17 @@ func (h *WebShellHandler) ExecWithConnection(conn *database.WebShellConnection, 
 	} else {
 		body := h.buildExecBody(conn.Type, conn.Password, cmdParam, command)
 		httpReq, err = http.NewRequest(http.MethodPost, conn.URL, bytes.NewReader(body))
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err == nil {
+			httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 	}
 	if err != nil {
-		return "", false, err.Error()
+		return "", false, "连接请求失败，请检查目标地址及服务状态"
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CyberStrikeAI-WebShell/1.0)")
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		return "", false, err.Error()
+		return "", false, "连接请求失败，请检查目标地址及服务状态"
 	}
 	defer resp.Body.Close()
 	out, readErr := io.ReadAll(resp.Body)
@@ -1013,6 +1052,9 @@ func (h *WebShellHandler) ExecWithConnection(conn *database.WebShellConnection, 
 func (h *WebShellHandler) FileOpWithConnection(conn *database.WebShellConnection, action, path, content, targetPath string) (output string, ok bool, errMsg string) {
 	if conn == nil {
 		return "", false, "connection is nil"
+	}
+	if strings.TrimSpace(conn.Password) == maskedSecret {
+		return "", false, "请使用已保存连接或填写新的连接口令"
 	}
 	action = strings.ToLower(strings.TrimSpace(action))
 	// MCP 入口仅开放 list / read / write 三种动作，与工具文档的承诺保持一致
@@ -1060,15 +1102,17 @@ func (h *WebShellHandler) FileOpWithConnection(conn *database.WebShellConnection
 	} else {
 		body := h.buildExecBody(conn.Type, conn.Password, cmdParam, command)
 		httpReq, err = http.NewRequest(http.MethodPost, conn.URL, bytes.NewReader(body))
-		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err == nil {
+			httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 	}
 	if err != nil {
-		return "", false, err.Error()
+		return "", false, "连接请求失败，请检查目标地址及服务状态"
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CyberStrikeAI-WebShell/1.0)")
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
-		return "", false, err.Error()
+		return "", false, "连接请求失败，请检查目标地址及服务状态"
 	}
 	defer resp.Body.Close()
 	out, readErr := io.ReadAll(resp.Body)

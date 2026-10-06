@@ -21,6 +21,18 @@ function settingsT(key, fallback) {
     return fallback;
 }
 
+function settingsEscapeJsString(text) {
+    return JSON.stringify(String(text == null ? '' : text));
+}
+
+function settingsEscapeAttr(text) {
+    return escapeHtml(String(text == null ? '' : text)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function settingsEscapeJsStringAttr(text) {
+    return settingsEscapeAttr(settingsEscapeJsString(text));
+}
+
 const settingsCustomSelects = new Map();
 let settingsCustomSelectsDocBound = false;
 
@@ -1376,25 +1388,25 @@ function renderToolsList() {
         if (toolState.is_external || tool.is_external) {
             const externalMcpName = toolState.external_mcp || tool.external_mcp || '';
             const badgeText = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalFrom', { name: escapeHtml(externalMcpName) }) : `外部 (${escapeHtml(externalMcpName)})`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部');
-            const badgeTitle = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalToolFrom', { name: escapeHtml(externalMcpName) }) + ' — 点击跳转' : `外部MCP工具 - 来源：${escapeHtml(externalMcpName)} — 点击跳转`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部MCP工具');
+            const badgeTitle = externalMcpName ? (typeof window.t === 'function' ? window.t('mcp.externalToolFrom', { name: externalMcpName }) + ' — 点击跳转' : `外部MCP工具 - 来源：${externalMcpName} — 点击跳转`) : (typeof window.t === 'function' ? window.t('mcp.externalBadge') : '外部MCP工具');
             if (externalMcpName) {
-                externalBadge = `<span class="external-tool-badge clickable" onclick="scrollToExternalMCP('${escapeHtml(externalMcpName)}', event)" title="${badgeTitle}">${badgeText}</span>`;
+                externalBadge = `<span class="external-tool-badge clickable" onclick="scrollToExternalMCP(${settingsEscapeJsStringAttr(externalMcpName)}, event)" title="${settingsEscapeAttr(badgeTitle)}">${badgeText}</span>`;
             } else {
-                externalBadge = `<span class="external-tool-badge" title="${badgeTitle}">${badgeText}</span>`;
+                externalBadge = `<span class="external-tool-badge" title="${settingsEscapeAttr(badgeTitle)}">${badgeText}</span>`;
             }
         }
 
         // 生成唯一的checkbox id，使用工具唯一标识符
-        const checkboxId = `tool-${escapeHtml(toolKey).replace(/::/g, '--')}`;
+        const checkboxId = `tool-${settingsEscapeAttr(toolKey).replace(/::/g, '--')}`;
 
         toolItem.innerHTML = `
-            <input type="checkbox" class="theme-checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange('${escapeHtml(toolKey)}', this.checked)" />
+            <input type="checkbox" class="theme-checkbox" id="${checkboxId}" ${toolState.enabled ? 'checked' : ''} ${toolState.is_external || tool.is_external ? 'data-external="true"' : ''} onchange="handleToolCheckboxChange(${settingsEscapeJsStringAttr(toolKey)}, this.checked)" />
             <div class="tool-item-info">
                 <div class="tool-item-name">
                     ${escapeHtml(tool.name)}
                     ${externalBadge}
                     <label class="tool-resident-toggle" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleHint') : '始终常驻在 Tool Search 可见列表'}" onclick="event.stopPropagation()">
-                        <input type="checkbox" class="theme-checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange('${escapeHtml(toolKey)}', this.checked)" />
+                        <input type="checkbox" class="theme-checkbox" ${alwaysVisibleChecked ? 'checked' : ''} ${alwaysVisibleLocked ? 'disabled' : ''} onchange="handleToolAlwaysVisibleChange(${settingsEscapeJsStringAttr(toolKey)}, this.checked)" />
                         <span>${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleLabel') : '常驻'}</span>
                     </label>
                     ${alwaysVisibleLocked ? `<span class="external-tool-badge" title="${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinHint') : '后端内置工具默认常驻，不可关闭'}">${typeof window.t === 'function' ? window.t('mcp.alwaysVisibleBuiltinLabel') : '内置默认'}</span>` : ''}
@@ -1651,11 +1663,11 @@ function renderToolsPagination() {
             </select>
         </div>
         <div class="pagination-controls">
-            <button class="btn-secondary" onclick="loadToolsList(1, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>${t('mcp.firstPage')}</button>
-            <button class="btn-secondary" onclick="loadToolsList(${page - 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === 1 ? 'disabled' : ''}>${t('mcp.prevPage')}</button>
+            <button class="btn-secondary" onclick="loadToolsList(1, ${settingsEscapeJsStringAttr(toolsSearchKeyword)})" ${page === 1 ? 'disabled' : ''}>${t('mcp.firstPage')}</button>
+            <button class="btn-secondary" onclick="loadToolsList(${page - 1}, ${settingsEscapeJsStringAttr(toolsSearchKeyword)})" ${page === 1 ? 'disabled' : ''}>${t('mcp.prevPage')}</button>
             <span class="pagination-page">${paginationT('mcp.pageInfo', { page: page, total: totalPages })}</span>
-            <button class="btn-secondary" onclick="loadToolsList(${page + 1}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>${t('mcp.nextPage')}</button>
-            <button class="btn-secondary" onclick="loadToolsList(${totalPages}, '${escapeHtml(toolsSearchKeyword)}')" ${page === totalPages ? 'disabled' : ''}>${t('mcp.lastPage')}</button>
+            <button class="btn-secondary" onclick="loadToolsList(${page + 1}, ${settingsEscapeJsStringAttr(toolsSearchKeyword)})" ${page === totalPages ? 'disabled' : ''}>${t('mcp.nextPage')}</button>
+            <button class="btn-secondary" onclick="loadToolsList(${totalPages}, ${settingsEscapeJsStringAttr(toolsSearchKeyword)})" ${page === totalPages ? 'disabled' : ''}>${t('mcp.lastPage')}</button>
         </div>
     `;
     
@@ -3007,7 +3019,12 @@ function copyAIChannelFromForm() {
     currentConfig.ai = ensureAIConfigShape(currentConfig);
     const source = readAIChannelFromMainForm(selectedAIChannelId || currentConfig.ai.default_channel);
     const id = uniqueAIChannelId((source.name || selectedAIChannelId || 'channel') + '-copy');
-    currentConfig.ai.channels[id] = { ...source, name: (source.name || id) + ' Copy' };
+    currentConfig.ai.channels[id] = {
+        ...source,
+        name: (source.name || id) + ' Copy',
+        api_key: source.api_key === '********' ? '' : source.api_key,
+        ...(source.vision ? { vision: { ...source.vision, api_key: source.vision.api_key === '********' ? '' : source.vision.api_key } } : {})
+    };
     selectedAIChannelId = id;
     renderAIChannelSelect();
     writeAIChannelToMainForm(id);
@@ -3177,6 +3194,16 @@ function bindModelSelect(scope) {
     });
 }
 
+function bindModelCredentialScope(scope, credentials) {
+    const keyInputByScope = { vision: 'vision-api-key', hitlAudit: 'hitl-audit-model-api-key', knowledgeEmbedding: 'knowledge-embedding-api-key' };
+    const keyInput = keyInputByScope[scope];
+    // A blank scoped key inherits the currently selected channel, not an
+    // unrelated scoped credential still stored on the server.
+    credentials.credential_scope = keyInput && document.getElementById(keyInput)?.value.trim() ? scope : 'openai';
+    credentials.channel_id = selectedAIChannelId;
+    return credentials;
+}
+
 function resolveModelListCredentials(scope) {
     if (scope === 'vision') {
         const vp = (document.getElementById('vision-provider')?.value || '').trim();
@@ -3185,7 +3212,7 @@ function resolveModelListCredentials(scope) {
             || (document.getElementById('openai-base-url')?.value || '').trim();
         const apiKey = (document.getElementById('vision-api-key')?.value || '').trim()
             || (document.getElementById('openai-api-key')?.value || '').trim();
-        return { provider, base_url: baseUrl, api_key: apiKey };
+        return bindModelCredentialScope(scope, { provider, base_url: baseUrl, api_key: apiKey });
     }
     if (scope === 'hitlAudit') {
         const hp = (document.getElementById('hitl-audit-model-provider')?.value || '').trim();
@@ -3194,7 +3221,7 @@ function resolveModelListCredentials(scope) {
             || (document.getElementById('openai-base-url')?.value || '').trim();
         const apiKey = (document.getElementById('hitl-audit-model-api-key')?.value || '').trim()
             || (document.getElementById('openai-api-key')?.value || '').trim();
-        return { provider, base_url: baseUrl, api_key: apiKey };
+        return bindModelCredentialScope(scope, { provider, base_url: baseUrl, api_key: apiKey });
     }
     if (scope === 'knowledgeEmbedding') {
         const kp = (document.getElementById('knowledge-embedding-provider')?.value || '').trim();
@@ -3203,13 +3230,13 @@ function resolveModelListCredentials(scope) {
             || (document.getElementById('openai-base-url')?.value || '').trim();
         const apiKey = (document.getElementById('knowledge-embedding-api-key')?.value || '').trim()
             || (document.getElementById('openai-api-key')?.value || '').trim();
-        return { provider, base_url: baseUrl, api_key: apiKey };
+        return bindModelCredentialScope(scope, { provider, base_url: baseUrl, api_key: apiKey });
     }
-    return {
+    return bindModelCredentialScope('openai', {
         provider: document.getElementById('openai-provider')?.value || 'openai',
         base_url: (document.getElementById('openai-base-url')?.value || '').trim(),
         api_key: (document.getElementById('openai-api-key')?.value || '').trim()
-    };
+    });
 }
 
 function syncModelListFetchButtons() {
@@ -3530,7 +3557,7 @@ async function testVisionConnection() {
         const response = await apiFetch('/api/config/test-vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vision: vision, openai: openai })
+            body: JSON.stringify({ vision: vision, openai: openai, channel_id: selectedAIChannelId })
         });
         const result = await response.json();
         if (result.success) {
@@ -3566,7 +3593,7 @@ function collectHitlAuditModelEffectiveConfig() {
 async function testHitlAuditModelConnection() {
     const btn = document.getElementById('test-hitl-audit-model-btn');
     const resultEl = document.getElementById('test-hitl-audit-model-result');
-    const cfg = collectHitlAuditModelEffectiveConfig();
+    const cfg = bindModelCredentialScope('hitlAudit', collectHitlAuditModelEffectiveConfig());
 
     if (!cfg.api_key || !cfg.model) {
         if (resultEl) {
@@ -3672,6 +3699,8 @@ async function testOpenAIConnection() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 provider: provider,
+                credential_scope: 'openai',
+                channel_id: selectedAIChannelId,
                 base_url: baseUrl,
                 api_key: apiKey,
                 model: model
@@ -4042,13 +4071,13 @@ function renderExternalMCPList(servers) {
         
         const hasTools = server.tool_count !== undefined && server.tool_count > 0;
         const cardClickTitle = hasTools
-            ? escapeHtml(statusT('mcp.clickToViewTools', { name }))
+            ? statusT('mcp.clickToViewTools', { name })
             : '';
         const cardClass = hasTools ? 'external-mcp-item clickable' : 'external-mcp-item';
         const selectedClass = toolsExternalMcpFilter === name ? ' selected' : '';
 
         html += `
-            <div class="${cardClass}${selectedClass}" data-mcp-name="${escapeHtml(name)}"${hasTools ? ` onclick="scrollToExternalMCPTools('${escapeHtml(name)}', event)" title="${cardClickTitle}"` : ''}>
+            <div class="${cardClass}${selectedClass}" data-mcp-name="${settingsEscapeAttr(name)}"${hasTools ? ` onclick="scrollToExternalMCPTools(${settingsEscapeJsStringAttr(name)}, event)" title="${settingsEscapeAttr(cardClickTitle)}"` : ''}>
                 <div class="external-mcp-item-header">
                     <div class="external-mcp-item-info">
                         <h4>${transportIcon} ${escapeHtml(name)}${server.tool_count !== undefined && server.tool_count > 0 ? `<span class="tool-count-badge" title="${escapeHtml(statusT('mcp.toolCount'))}">🔧 ${server.tool_count}</span>` : ''}</h4>
@@ -4056,15 +4085,15 @@ function renderExternalMCPList(servers) {
                     </div>
                     <div class="external-mcp-item-actions">
                         ${status === 'connected' || status === 'disconnected' || status === 'error' || status === 'disabled' ?
-                            `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" onclick="toggleExternalMCP('${escapeHtml(name)}', '${status}')" title="${status === 'connected' ? statusT('mcp.stopConnection') : statusT('mcp.startConnection')}">
+                            `<button class="btn-small" id="btn-toggle-${settingsEscapeAttr(name)}" onclick="toggleExternalMCP(${settingsEscapeJsStringAttr(name)}, ${settingsEscapeJsStringAttr(status)})" title="${settingsEscapeAttr(status === 'connected' ? statusT('mcp.stopConnection') : statusT('mcp.startConnection'))}">
                                 ${status === 'connected' ? '⏸ ' + statusT('mcp.stop') : '▶ ' + statusT('mcp.start')}
                             </button>` :
                             status === 'connecting' ?
-                            `<button class="btn-small" id="btn-toggle-${escapeHtml(name)}" disabled style="opacity: 0.6; cursor: not-allowed;">
+                            `<button class="btn-small" id="btn-toggle-${settingsEscapeAttr(name)}" disabled style="opacity: 0.6; cursor: not-allowed;">
                                 ⏳ ${statusT('mcp.connecting')}
                             </button>` : ''}
-                        <button class="btn-small" onclick="editExternalMCP('${escapeHtml(name)}')" title="${statusT('mcp.editConfig')}" ${status === 'connecting' ? 'disabled' : ''}>✏️ ${statusT('common.edit')}</button>
-                        <button class="btn-small btn-danger" onclick="deleteExternalMCP('${escapeHtml(name)}')" title="${statusT('mcp.deleteConfig')}" ${status === 'connecting' ? 'disabled' : ''}>🗑 ${statusT('common.delete')}</button>
+                        <button class="btn-small" onclick="editExternalMCP(${settingsEscapeJsStringAttr(name)})" title="${settingsEscapeAttr(statusT('mcp.editConfig'))}" ${status === 'connecting' ? 'disabled' : ''}>✏️ ${statusT('common.edit')}</button>
+                        <button class="btn-small btn-danger" onclick="deleteExternalMCP(${settingsEscapeJsStringAttr(name)})" title="${settingsEscapeAttr(statusT('mcp.deleteConfig'))}" ${status === 'connecting' ? 'disabled' : ''}>🗑 ${statusT('common.delete')}</button>
                     </div>
                 </div>
                 ${(status === 'error' || status === 'disconnected') && server.error ? `

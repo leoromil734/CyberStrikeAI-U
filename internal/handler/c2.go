@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -641,6 +642,10 @@ func (h *C2Handler) CreateTask(c *gin.Context) {
 // CancelTask 取消任务
 func (h *C2Handler) CancelTask(c *gin.Context) {
 	id := c.Param("id")
+	if !h.c2ResourceAllowed(c, "c2_task", id) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+		return
+	}
 	if err := h.mgr().CancelTask(id); err != nil {
 		code := http.StatusInternalServerError
 		if e, ok := err.(*c2.CommonError); ok {
@@ -658,6 +663,10 @@ func (h *C2Handler) CancelTask(c *gin.Context) {
 // WaitTask 等待任务完成
 func (h *C2Handler) WaitTask(c *gin.Context) {
 	id := c.Param("id")
+	if !h.c2ResourceAllowed(c, "c2_task", id) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+		return
+	}
 	timeout := 60 * time.Second
 	if t := c.Query("timeout"); t != "" {
 		if n, err := strconv.Atoi(t); err == nil && n > 0 {
@@ -731,11 +740,15 @@ func (h *C2Handler) PayloadOneliner(c *gin.Context) {
 		return
 	}
 
+	scheme := "http"
+	if listener.Type == "https_beacon" {
+		scheme = "https"
+	}
 	input := c2.OnelinerInput{
 		Kind:         kind,
 		Host:         host,
 		Port:         listener.BindPort,
-		HTTPBaseURL:  fmt.Sprintf("http://%s:%d", host, listener.BindPort),
+		HTTPBaseURL:  fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, strconv.Itoa(listener.BindPort))),
 		ImplantToken: listener.ImplantToken,
 	}
 

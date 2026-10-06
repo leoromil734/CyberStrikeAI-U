@@ -5233,6 +5233,7 @@ function testWebshellConnection() {
             cmd_param: cmdParam || '',
             encoding: encoding,
             os: osTag,
+            connection_id: password === '********' ? (document.getElementById('webshell-edit-id')?.value || '') : '',
             command: buildWebshellProbeCommand(probeToken)
         })
     })

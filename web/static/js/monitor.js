@@ -699,6 +699,18 @@ function escapeHtmlLocal(text) {
     return div.innerHTML;
 }
 
+function escapeJsString(text) {
+    return JSON.stringify(String(text == null ? '' : text));
+}
+
+function escapeAttrLocal(text) {
+    return escapeHtmlLocal(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeJsStringAttr(text) {
+    return escapeAttrLocal(escapeJsString(text));
+}
+
 function formatTimelinePlainTextHtml(text) {
     return '<pre class="timeline-plain-text">' + escapeHtml(text == null ? '' : String(text)) + '</pre>';
 }
@@ -5579,8 +5591,8 @@ function renderTaskItemIntoContainer(task, container, openActiveTaskConversation
         <div class="active-task-info">
             <span class="active-task-status">${statusText}</span>
             ${modeLabel ? `<span class="active-task-mode">${escapeHtml(modeLabel)}</span>` : ''}
-            <span class="active-task-channel" title="${escapeHtml(channelTitle)}">${escapeHtml(channelName)}</span>
-            <span class="active-task-model" title="${escapeHtml(modelTitle)}">${escapeHtml(modelName)}</span>
+            <span class="active-task-channel" title="${escapeAttrLocal(channelTitle)}">${escapeHtml(channelName)}</span>
+            <span class="active-task-model" title="${escapeAttrLocal(modelTitle)}">${escapeHtml(modelName)}</span>
             <span class="active-task-message">${escapeHtml(taskDisplayName)}</span>
         </div>
         <div class="active-task-actions">
@@ -6247,7 +6259,7 @@ function buildMcpTimelineSvg(points, rangeKey) {
         const isPeak = c.i === peakIdx && (c.p.total || 0) > 0;
         const dotClass = 'mcp-stats-timeline-dot' + (isPeak ? ' mcp-stats-timeline-dot--peak' : '');
         return `<circle class="${dotClass}" cx="${c.x.toFixed(2)}" cy="${c.y.toFixed(2)}" r="${isPeak ? 2 : 1.5}"
-            data-time="${escapeHtml(tipTime)}"
+            data-time="${escapeAttrLocal(tipTime)}"
             data-total="${c.p.total || 0}"
             data-failed="${c.p.failed || 0}" />`;
     }).join('');
@@ -6261,9 +6273,9 @@ function buildMcpTimelineSvg(points, rangeKey) {
         const tipTime = formatMcpTimelineLabel(c.p.t, rangeKey, locale);
         return `<g class="mcp-stats-timeline-bar-group">
             <rect class="mcp-stats-timeline-bar${total > 0 ? ' is-active' : ''}" x="${(c.x - barW / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${h.toFixed(2)}" rx="1.6"
-                data-time="${escapeHtml(tipTime)}" data-total="${total}" data-failed="${failed}" />
+                data-time="${escapeAttrLocal(tipTime)}" data-total="${total}" data-failed="${failed}" />
             ${failedH > 0 ? `<rect class="mcp-stats-timeline-bar-fail" x="${(c.x - barW / 2).toFixed(2)}" y="${(baseY - failedH).toFixed(2)}" width="${barW.toFixed(2)}" height="${failedH.toFixed(2)}" rx="1.6"
-                data-time="${escapeHtml(tipTime)}" data-total="${total}" data-failed="${failed}" />` : ''}
+                data-time="${escapeAttrLocal(tipTime)}" data-total="${total}" data-failed="${failed}" />` : ''}
         </g>`;
     }).join('');
 
@@ -6423,14 +6435,14 @@ function renderMcpTimelineActiveMoments(points, rangeKey) {
         const time = formatMcpTimelineLabel(p.t, rangeKey, locale);
         const failed = p.failed || 0;
         const failedLabel = mcpMonitorT('failedCount', { n: failed }) || `失败 ${failed}`;
-        return `<span class="mcp-stats-timeline-moment" title="${escapeHtml(time)}">
+        return `<span class="mcp-stats-timeline-moment" title="${escapeAttrLocal(time)}">
             <span class="mcp-stats-timeline-moment__time">${escapeHtml(time)}</span>
             <span class="mcp-stats-timeline-moment__count">${p.total || 0}</span>
             ${failed > 0 ? `<span class="mcp-stats-timeline-moment__fail">${escapeHtml(failedLabel)}</span>` : ''}
         </span>`;
     }).join('');
     const moreChip = hiddenCount > 0
-        ? `<span class="mcp-stats-timeline-moment mcp-stats-timeline-moment--more" title="${escapeHtml(mcpMonitorT('timelineMoreMomentsTitle', { n: hiddenCount }) || `还有 ${hiddenCount} 个活跃时段`)}">${escapeHtml(moreLabel)}</span>`
+        ? `<span class="mcp-stats-timeline-moment mcp-stats-timeline-moment--more" title="${escapeAttrLocal(mcpMonitorT('timelineMoreMomentsTitle', { n: hiddenCount }) || `还有 ${hiddenCount} 个活跃时段`)}">${escapeHtml(moreLabel)}</span>`
         : '';
     return `<div class="mcp-stats-timeline-moments">
         <span class="mcp-stats-timeline-moments__label">${escapeHtml(label)}</span>
@@ -6534,14 +6546,14 @@ function renderMcpStatsCombinedSection(topTools, totals, activeToolFilter, timel
 
     const filterChipLabel = activeToolFilter ? formatMonitorToolName(activeToolFilter) : '';
     const filterChip = activeToolFilter
-        ? `<span class="mcp-stats-filter-chip" title="${escapeHtml(mcpMonitorT('filterByToolTitle', { tool: filterChipLabel }) || filterChipLabel)}">
+        ? `<span class="mcp-stats-filter-chip" title="${escapeAttrLocal(mcpMonitorT('filterByToolTitle', { tool: filterChipLabel }) || filterChipLabel)}">
             <span class="mcp-stats-filter-chip__label">${escapeHtml(mcpMonitorT('filterActive', { tool: filterChipLabel }) || `已筛选：${filterChipLabel}`)}</span>
-            <button type="button" class="mcp-stats-filter-chip__clear mcp-stats-clear-filter" aria-label="${escapeHtml(mcpMonitorT('clearToolFilter') || '清除工具筛选')}">×</button>
+            <button type="button" class="mcp-stats-filter-chip__clear mcp-stats-clear-filter" aria-label="${escapeAttrLocal(mcpMonitorT('clearToolFilter') || '清除工具筛选')}">×</button>
         </span>`
         : '';
 
     const rangeButtons = showTimeline
-        ? `<div class="mcp-stats-timeline__ranges" role="group" aria-label="${escapeHtml(timelineTitle)}">${renderMcpStatsTimelineRangeButtons()}</div>`
+        ? `<div class="mcp-stats-timeline__ranges" role="group" aria-label="${escapeAttrLocal(timelineTitle)}">${renderMcpStatsTimelineRangeButtons()}</div>`
         : '';
 
     const panelTitle = showTimeline && hasTools
@@ -6568,7 +6580,7 @@ function renderMcpStatsCombinedSection(topTools, totals, activeToolFilter, timel
         : '';
 
     return `
-        <section class="mcp-stats-combined" aria-label="${escapeHtml(panelTitle)}">
+        <section class="mcp-stats-combined" aria-label="${escapeAttrLocal(panelTitle)}">
             <header class="mcp-stats-combined__head">
                 <div class="mcp-stats-combined__head-text">
                     <h4 class="mcp-stats-combined__title">${escapeHtml(panelTitle)}</h4>
@@ -6649,7 +6661,7 @@ function renderMcpStatsToolVolumeBar(total, success, failed, maxTotal) {
     const failPct = total > 0 ? (failed / total) * 100 : 0;
     const legend = mcpMonitorT('barVolumeLegend') || '条长表示相对调用量';
     const volumeTitle = `${total} / ${maxTotal}`;
-    return `<div class="mcp-stats-tool-bar-track" title="${escapeHtml(legend)} · ${escapeHtml(volumeTitle)}">
+    return `<div class="mcp-stats-tool-bar-track" title="${escapeAttrLocal(legend)} · ${escapeHtml(volumeTitle)}">
         <div class="mcp-stats-tool-bar-fill" style="width:${volumePct.toFixed(2)}%">
             <div class="mcp-stats-tool-bar-inner">
                 <span class="mcp-stats-tool-bar-seg mcp-stats-tool-bar-seg--success" style="width:${successPct.toFixed(2)}%"></span>
@@ -6873,20 +6885,20 @@ function renderMcpStatsInsightPanel(topTools, totals, activeToolFilter = '', opt
         const isActive = !s.isOthers && activeToolFilter && activeToolFilter === s.name;
         const inner = `
             <span class="mcp-stats-dist-swatch" style="--swatch-color:${s.color}"></span>
-            <span class="mcp-stats-dist-legend-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+            <span class="mcp-stats-dist-legend-name" title="${escapeAttrLocal(s.name)}">${escapeHtml(s.name)}</span>
             <span class="mcp-stats-dist-legend-pct">${s.pct}%</span>`;
         if (s.isOthers) {
-            return `<li class="mcp-stats-dist-legend-item is-others" title="${escapeHtml(distOthersTitle)}" data-is-others="1">${inner}</li>`;
+            return `<li class="mcp-stats-dist-legend-item is-others" title="${escapeAttrLocal(distOthersTitle)}" data-is-others="1">${inner}</li>`;
         }
         const rowAria = mcpMonitorT('toolRowAriaLabel', { name: s.name, total: s.calls, rate: s.pct })
             || `${s.name}，${s.calls} 次调用，占 ${s.pct}%`;
         return `<li class="mcp-stats-dist-legend-item-wrap">
             <button type="button" class="mcp-stats-dist-legend-item${isActive ? ' is-active' : ''}"
-                data-tool-name="${escapeHtml(s.name)}"
+                data-tool-name="${escapeAttrLocal(s.name)}"
                 data-pct="${s.pct}"
                 data-calls="${s.calls}"
                 data-is-others="0"
-                aria-label="${escapeHtml(rowAria)}"
+                aria-label="${escapeAttrLocal(rowAria)}"
                 aria-pressed="${isActive ? 'true' : 'false'}">${inner}</button>
         </li>`;
     }).join('');
@@ -6913,15 +6925,15 @@ function renderMcpStatsInsightPanel(topTools, totals, activeToolFilter = '', opt
             </div>`;
 
     return `
-        <div class="mcp-stats-dist-panel${embedded ? ' mcp-stats-dist-panel--embedded' : ''}" aria-label="${escapeHtml(distTitle)}"
-            data-center-label="${escapeHtml(centerLabel)}"
+        <div class="mcp-stats-dist-panel${embedded ? ' mcp-stats-dist-panel--embedded' : ''}" aria-label="${escapeAttrLocal(distTitle)}"
+            data-center-label="${escapeAttrLocal(centerLabel)}"
             data-center-value="${top6SharePct}"
             data-center-suffix="%">
             ${headerHtml}
             <div class="${bodyClass}">
                 <div class="mcp-stats-dist-chart-stage">
                     <div class="mcp-stats-dist-chart-wrap">
-                        <svg class="mcp-stats-dist-svg" viewBox="0 0 100 100" role="img" aria-label="${escapeHtml(top6ShareLabel)} ${top6SharePct}%">
+                        <svg class="mcp-stats-dist-svg" viewBox="0 0 100 100" role="img" aria-label="${escapeAttrLocal(top6ShareLabel)} ${top6SharePct}%">
                             <g class="mcp-stats-dist-segments">${segmentPathsHtml}</g>
                         </svg>
                         <div class="mcp-stats-dist-donut-hole" aria-hidden="true">
@@ -7068,7 +7080,7 @@ function renderMcpStatsMetricsBar(totals, successRate, rateTone, rateSubText, la
         : '';
 
     return `
-        <div class="mcp-stats-kpi" role="group" aria-label="${escapeHtml(totalCallsLabel)}">
+        <div class="mcp-stats-kpi" role="group" aria-label="${escapeAttrLocal(totalCallsLabel)}">
             <article class="mcp-stats-kpi__item mcp-stats-kpi__item--calls">
                 <span class="mcp-stats-kpi__accent" aria-hidden="true"></span>
                 <div class="mcp-stats-kpi__content">
@@ -7125,13 +7137,13 @@ function renderMcpStatsToolTable(topTools, totals, activeToolFilter = '') {
             || `${name}，${total} 次调用，成功率 ${toolRate}%`;
         rowsHtml += `
             <tr class="mcp-stats-tool-row${isActive ? ' is-active' : ''}"
-                data-tool-name="${escapeHtml(rawName)}"
+                data-tool-name="${escapeAttrLocal(rawName)}"
                 tabindex="0"
                 role="button"
-                aria-label="${escapeHtml(rowAria)}"
+                aria-label="${escapeAttrLocal(rowAria)}"
                 aria-pressed="${isActive ? 'true' : 'false'}">
                 <td class="col-rank"><span class="mcp-stats-rank${rankClass}">${index + 1}</span></td>
-                <td class="col-tool" title="${escapeHtml(name)}">
+                <td class="col-tool" title="${escapeAttrLocal(name)}">
                     <span class="mcp-stats-tool-dot" style="background:${dotColor}" aria-hidden="true"></span>
                     <span class="mcp-stats-tool-label">${escapeHtml(name)}</span>
                 </td>
@@ -7175,14 +7187,14 @@ function renderMcpStatsToolsPanel(topTools, totals, activeToolFilter = '') {
         const title = `${displayName} · ${s.pct}% · ${s.calls}`;
         if (s.isOthers) {
             return `<span class="mcp-stats-proportion-seg is-others" data-is-others="1" role="presentation"
-                style="flex:${s.pctNum} 1 0;background:${s.color}" title="${escapeHtml(title)}"></span>`;
+                style="flex:${s.pctNum} 1 0;background:${s.color}" title="${escapeAttrLocal(title)}"></span>`;
         }
         const segAria = mcpMonitorT('distSegmentAria', { name: displayName, pct: s.pct, calls: s.calls })
             || `${displayName}，占 ${s.pct}%，${s.calls} 次`;
         return `<span class="mcp-stats-proportion-seg${isActive ? ' is-active' : ''}"
-            data-tool-name="${escapeHtml(s.name)}" data-pct="${s.pct}" data-calls="${s.calls}" data-is-others="0"
-            role="button" tabindex="0" aria-label="${escapeHtml(segAria)}"
-            style="flex:${s.pctNum} 1 0;background:${s.color}" title="${escapeHtml(title)}"></span>`;
+            data-tool-name="${escapeAttrLocal(s.name)}" data-pct="${s.pct}" data-calls="${s.calls}" data-is-others="0"
+            role="button" tabindex="0" aria-label="${escapeAttrLocal(segAria)}"
+            style="flex:${s.pctNum} 1 0;background:${s.color}" title="${escapeAttrLocal(title)}"></span>`;
     }).join('');
 
     const maxCalls = Math.max(1, ...topTools.map((t) => t.totalCalls || 0));
@@ -7209,12 +7221,12 @@ function renderMcpStatsToolsPanel(topTools, totals, activeToolFilter = '') {
         const successLabel = mcpMonitorT('successCount', { n: success }) || `成功 ${success}`;
         const failedLabel = mcpMonitorT('failedCount', { n: failed }) || `失败 ${failed}`;
         return `<li class="mcp-stats-tool-item${isActive ? ' is-active' : ''}"
-            data-tool-name="${escapeHtml(rawName)}" tabindex="0" role="button"
-            aria-label="${escapeHtml(rowAria)}" aria-pressed="${isActive ? 'true' : 'false'}">
+            data-tool-name="${escapeAttrLocal(rawName)}" tabindex="0" role="button"
+            aria-label="${escapeAttrLocal(rowAria)}" aria-pressed="${isActive ? 'true' : 'false'}">
             <div class="mcp-stats-tool-item__top">
                 <span class="mcp-stats-tool-item__rank mcp-stats-rank${rankClass}">${index + 1}</span>
                 <span class="mcp-stats-tool-item__dot" style="background:${color}" aria-hidden="true"></span>
-                <span class="mcp-stats-tool-item__name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                <span class="mcp-stats-tool-item__name" title="${escapeAttrLocal(name)}">${escapeHtml(name)}</span>
                 <span class="mcp-stats-tool-item__share">${sharePct}%</span>
             </div>
             <div class="mcp-stats-tool-item__middle">
@@ -7233,9 +7245,9 @@ function renderMcpStatsToolsPanel(topTools, totals, activeToolFilter = '') {
     }).join('');
 
     return `
-        <div class="mcp-stats-tools-panel" role="region" aria-label="${escapeHtml(mcpMonitorT('toolStatsTitle') || '工具统计')}">
+        <div class="mcp-stats-tools-panel" role="region" aria-label="${escapeAttrLocal(mcpMonitorT('toolStatsTitle') || '工具统计')}">
             <div class="mcp-stats-tools-panel__hero">
-                <div class="mcp-stats-proportion-bar" role="img" aria-label="${escapeHtml(distAria)}">${stackedHtml}</div>
+                <div class="mcp-stats-proportion-bar" role="img" aria-label="${escapeAttrLocal(distAria)}">${stackedHtml}</div>
                 <p class="mcp-stats-tools-panel__caption">
                     <span class="mcp-stats-scope-badge mcp-stats-scope-badge--cumulative mcp-stats-scope-badge--inline">${escapeHtml(mcpMonitorT('scopeCumulative') || '累计')}</span>
                     ${escapeHtml(caption)}
@@ -7274,13 +7286,13 @@ function renderMcpStatsChartAside(topTools, totals, activeToolFilter = '') {
 
     return `
         <div class="mcp-stats-dist-panel mcp-stats-dist-panel--compact"
-            aria-label="${escapeHtml(distTitle)}"
-            data-center-label="${escapeHtml(centerLabel)}"
+            aria-label="${escapeAttrLocal(distTitle)}"
+            data-center-label="${escapeAttrLocal(centerLabel)}"
             data-center-value="${top6SharePct}"
             data-center-suffix="%">
             <p class="mcp-stats-panel__aside-title">${escapeHtml(distTitle)}</p>
             <div class="mcp-stats-panel__chart">
-                <svg class="mcp-stats-dist-svg" viewBox="0 0 100 100" role="img" aria-label="${escapeHtml(top6ShareLabel)} ${top6SharePct}%">
+                <svg class="mcp-stats-dist-svg" viewBox="0 0 100 100" role="img" aria-label="${escapeAttrLocal(top6ShareLabel)} ${top6SharePct}%">
                     <g class="mcp-stats-dist-segments">${segmentPathsHtml}</g>
                 </svg>
                 <div class="mcp-stats-dist-donut-hole" aria-hidden="true">
@@ -7429,18 +7441,18 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
     const rowEntries = executions
         .map(exec => {
             const status = (exec.status || 'unknown').toLowerCase();
-            const statusClass = `monitor-status-chip ${status}`;
+            const statusClass = `monitor-status-chip ${escapeAttrLocal(status)}`;
             const statusKey = statusKeyMap[status];
             const statusLabel = (typeof window.t === 'function' && statusKey) ? window.t('mcpMonitor.' + statusKey) : getStatusText(status);
             const startTime = exec.startTime ? (new Date(exec.startTime).toLocaleString ? new Date(exec.startTime).toLocaleString(locale || 'en-US') : String(exec.startTime)) : unknownLabel;
             const duration = formatExecutionDuration(exec.startTime, exec.endTime);
             const toolName = escapeHtml(formatMonitorToolName(exec.toolName) || unknownToolLabel);
             const rawExecId = exec.id || '';
-            const executionId = escapeHtml(rawExecId);
+            const executionId = escapeAttrLocal(rawExecId);
+            const jsExecId = escapeJsStringAttr(rawExecId);
             const terminateBtn = status === 'running'
-                ? `<button type="button" class="btn-secondary btn-monitor-abort" data-require-permission="monitor:write" onclick="cancelMCPToolExecution('${rawExecId.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">${escapeHtml(terminateLabel)}</button>`
+                ? `<button type="button" class="btn-secondary btn-monitor-abort" data-require-permission="monitor:write" onclick="cancelMCPToolExecution(${jsExecId})">${escapeHtml(terminateLabel)}</button>`
                 : '';
-            const jsExecId = rawExecId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const isSelected = monitorState.selectedExecutions.has(rawExecId);
             const rowKey = monitorRenderKey([exec, isSelected, locale || 'en-US']);
             return {
@@ -7449,7 +7461,7 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
                 html: `
                 <tr data-execution-id="${executionId}">
                     <td>
-                        <input type="checkbox" class="monitor-execution-checkbox theme-checkbox" value="${executionId}" ${isSelected ? 'checked' : ''} onchange="toggleExecutionSelection('${jsExecId}', this.checked)" />
+                        <input type="checkbox" class="monitor-execution-checkbox theme-checkbox" value="${executionId}" ${isSelected ? 'checked' : ''} onchange="toggleExecutionSelection(${jsExecId}, this.checked)" />
                     </td>
                     <td>${toolName}</td>
                     <td><span class="${statusClass}">${escapeHtml(statusLabel)}</span></td>
@@ -7457,9 +7469,9 @@ function renderMonitorExecutions(executions = [], statusFilter = 'all') {
                     <td class="monitor-execution-duration">${escapeHtml(duration)}</td>
                     <td>
                         <div class="monitor-execution-actions">
-                            <button class="btn-secondary" onclick="showMCPDetail('${executionId}')">${escapeHtml(viewDetailLabel)}</button>
+                            <button class="btn-secondary" onclick="showMCPDetail(${jsExecId})">${escapeHtml(viewDetailLabel)}</button>
                             ${terminateBtn}
-                            <button class="btn-secondary btn-delete" data-require-permission="monitor:delete" onclick="deleteExecution('${executionId}')" title="${escapeHtml(deleteExecTitle)}">${escapeHtml(deleteLabel)}</button>
+                            <button class="btn-secondary btn-delete" data-require-permission="monitor:delete" onclick="deleteExecution(${jsExecId})" title="${escapeAttrLocal(deleteExecTitle)}">${escapeHtml(deleteLabel)}</button>
                         </div>
                     </td>
                 </tr>
