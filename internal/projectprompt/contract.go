@@ -84,7 +84,8 @@ func ExecutionCoverageSection() string {
 
 - 用户通常只给一个域名。该域名及其子域，加上有关联证据的疑似域名和 IP 都要测：同注册域、证书 SAN、解析到该域、或页面/标题/主体指向同一运营方。品牌扩测限任务范围，解析 IP 逐项分类并存 CNAME/ASN/服务证据。Cloudflare/Akamai 等已证实 CDN 边缘 IP 不扩裸 IP，域名业务仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务和入口。支付、验证码、社交、统计挂件和纯静态资源不是关联资产。CDN unknown 留 gap/blocked；共享 IP/ASN 不证明品牌归属，不扫供应商网段或无关租户，也不因名称相似把其他公司算进来。
 - 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 登录做一次简单弱口令尝试，侦察角色识别后交接验证。用已知/产品默认身份与精简字典；每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒，用户更严预算优先。命中/验证码/MFA/锁定/429/异常即停；不枚举号段、不全量笛卡尔积、不以“未爆破”跳过。协议不支持口令可凭证据 N/A，缺身份/策略阻断记 blocked；保存实际次数、字典 hash、停止原因，未测不写安全；方法见 credential-stuffing。
-- JS 必须双通道：katana/gau 发现，按授权下载→jsluice 静态分析本地 JS+全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg；补 fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并 recon/endpoint/*。记URL/hash、命令、raw/unique/incremental；secrets 始终 tentative。工具零结果不替代源码检索，字符串命中不等于完整或可达；缺任一路留 gap/blocked。`
+- JS 必须双通道：katana/gau 发现，按授权下载→jsluice 静态分析本地 JS+全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg；补 fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并 recon/endpoint/*。记URL/hash、命令、raw/unique/incremental；secrets 始终 tentative。工具零结果不替代源码检索，字符串命中不等于完整或可达；缺任一路留 gap/blocked。
+- 扫描类工具跑满时限再停。nuclei、dirsearch、ffuf、katana 不要在数分钟后自行取消，也不要把总时限降到默认以下。目录和模板扫描默认至少 15 分钟；平台单次工具时限内仍无结论就继续等。未跑完只记 gap，不能当零发现。`
 }
 
 // EvidenceLoopSection 将发现过程约束为可审计的状态循环。

@@ -69,13 +69,13 @@ func (w *ShellInactivityWatch) Stop() {
 	}
 }
 
-// ResolveShellNoOutputTimeoutSeconds：0=默认 300（5 分钟）；-1=关闭；>0=自定义。
+// ResolveShellNoOutputTimeoutSeconds：0=默认 900（15 分钟）；-1=关闭；>0=自定义。
 func ResolveShellNoOutputTimeoutSeconds(sec int) int {
 	if sec < 0 {
 		return 0
 	}
 	if sec == 0 {
-		return 300
+		return 900
 	}
 	return sec
 }

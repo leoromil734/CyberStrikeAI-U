@@ -12,7 +12,7 @@ description: |
 
   **执行纪律：**
   - 先对同一认证态的 2–3 个随机不存在路径建立 catch-all（不存在路径也返回统一页面）基线，比较状态、长度、正文特征与重定向
-  - 默认 20 线程、最多 50 请求/秒、单请求超时 10 秒、单次扫描最多 300 秒；用户更严预算优先。429、持续挑战或健康异常时停止该轮，记录剩余范围
+  - 默认 20 线程、最多 50 请求/秒、单请求超时 10 秒、单次扫描最多 900 秒；不要把总时限改短。用户更严预算优先。429、持续挑战或健康异常时停止该轮，记录剩余范围
   - 优先经确认存在的小字典和技术栈相关扩展名；省略 wordlist 使用 dirsearch 自带字典，仍受时间/速率预算约束。extensions 默认只替换字典中的 %EXT%；小字典无占位符且确需补扩展名时才开启 force_extensions
   - 默认不递归；已确认目录需要补枚举时才开启 recursive，并设置 max_recursion_depth（默认 2）；不无界递归
   - 稳定统一页按实测 exclude_sizes、exclude_text、exclude_regex 或 exclude_response 过滤；exclude_response 填已验证随机不存在页面的站内路径，不是本地文件。不要猜过滤值，不一概排除 401/403/405/500，不用统一页面批量否定真实 JS/API
@@ -71,12 +71,12 @@ parameters:
     default: 10
   - name: "max_time"
     type: "int"
-    description: "单次扫描总时限（秒）；默认 300，必须为正数；到时未完成的候选集保留 gap/blocked"
+    description: "单次扫描总时限（秒）；默认 900，必须为正数；不要自行改短。到时未完成的候选集保留 gap/blocked"
     required: false
     minimum: 1
     flag: "--max-time"
     format: "flag"
-    default: 300
+    default: 900
   - name: "recursive"
     type: "bool"
     description: "对已确认需要补枚举的目录启用递归；配合 max_recursion_depth 与 max_time 限制范围"

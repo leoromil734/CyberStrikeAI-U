@@ -75,7 +75,7 @@ func TestDirectoryDiscoveryReferencesDoNotEquateToolSuccessWithCoverage(t *testi
 		{"attack-surface-recon/references/comprehensive-recon.md", []string{
 			"## 3.1", "未链接路径尚未覆盖", "单接口验证", "同一 origin", "认证态", "字典/扩展名及过滤条件",
 			"execution_id", "ffuf", "不为调用次数", "不同部署", "catch-all", "exclude_response", "不是本地文件",
-			"50 请求/秒", "总时限 300 秒", "429", "用户更严预算优先", "force_extensions", "hash/候选数",
+			"50 请求/秒", "总时限 900 秒", "429", "用户更严预算优先", "force_extensions", "hash/候选数",
 			"covered", "完成所选候选集", "即使进程返回成功也不能写全覆盖", "not-applicable", "续跑只补剩余候选",
 		}},
 		{"attack-surface-recon/references/recon-fact-schema.md", []string{
@@ -83,7 +83,7 @@ func TestDirectoryDiscoveryReferencesDoNotEquateToolSuccessWithCoverage(t *testi
 		}},
 		{"src-hunting/references/recon-methodology.md", []string{
 			"目录、文件和扩展名枚举优先 `dirsearch`", "参数、虚拟主机和自定义请求模糊测试优先 `ffuf`",
-			"引用复用", "仅爬取/JS 提取不算目录覆盖", "catch-all", "--max-rate 50 --timeout 10 --max-time 300",
+			"引用复用", "仅爬取/JS 提取不算目录覆盖", "catch-all", "--max-rate 50 --timeout 10 --max-time 900",
 			"超时/限流/中断未完成留 gap/blocked", "执行/原件引用",
 		}},
 	}

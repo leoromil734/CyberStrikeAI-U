@@ -88,6 +88,28 @@ func TestLedgerMappingDoesNotRenewStagnationButNewEvidenceDoes(t *testing.T) {
 	}
 }
 
+func TestVerificationExecutionResetsStagnationButLedgerDoesNot(t *testing.T) {
+	s := &finalizationContinuationState{}
+	d := coverageDecision(1, "still unfinished")
+	d.CoverageEvidenceExecutions = 4
+	d.VerificationExecutions = 12
+	for i := 0; i < finalizationCoverageStagnationLimit-1; i++ {
+		if !observeFinalizationContinuation(d, s) {
+			t.Fatalf("stopped before a new verification: %+v", s)
+		}
+		s.recordContinuation(d)
+	}
+	d.CoverageValidFacts = 900
+	if !observeFinalizationContinuation(d, s) {
+		t.Fatal("ledger-only segment should still be inside the stagnation window")
+	}
+	s.recordContinuation(d)
+	d.VerificationExecutions = 13
+	if !observeFinalizationContinuation(d, s) || s.CoverageNoProgress != 0 || s.VerificationHighWater != 13 {
+		t.Fatalf("completed vulnerability verification did not renew the run: %+v", s)
+	}
+}
+
 func TestStopSummaryNeverCopiesPhaseReport(t *testing.T) {
 	report := "# 阶段报告（评估未完成）\n\n" + strings.Repeat("证据与未测范围。", 200)
 	d := agentfinalizer.Decision{

@@ -30,7 +30,7 @@ func TestDiscoveryToolParameterContracts(t *testing.T) {
 				flag  string
 				value int
 			}
-			bounds := map[string]bound{"max_time": {maxTimeFlag, 300}}
+			bounds := map[string]bound{"max_time": {maxTimeFlag, 900}}
 			if name == "dirsearch" {
 				bounds["threads"] = bound{"-t", 20}
 				bounds["rate_limit"] = bound{"--max-rate", 50}

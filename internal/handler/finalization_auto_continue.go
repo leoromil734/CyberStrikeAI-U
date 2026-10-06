@@ -42,6 +42,7 @@ type finalizationContinuationState struct {
 	CoverageValidFactsHighWater int
 	CoverageEvidenceHighWater   int
 	CoverageMappedHighWater     int
+	VerificationHighWater       int
 	CoverageNoProgress          int
 	// WorkMode changes the next action, never the coverage proof or task scope.
 	WorkMode            string
@@ -124,8 +125,10 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			// not investigation. Reclassify within scope and verify real work.
 			state.WorkMode = "classify_and_verify"
 		}
-		// Ledger rows do not renew the run. Only a new real execution does.
-		progress := d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater
+		// Ledger rows do not renew the run. A new recon source or a new completed
+		// vulnerability-verification tool does. Fact writes and file reads do not.
+		progress := (d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater) ||
+			d.VerificationExecutions > state.VerificationHighWater
 		if state.CoverageObserved {
 			if progress {
 				state.CoverageNoProgress = 0
@@ -143,11 +146,14 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 		if d.CoverageValidFacts > state.CoverageValidFactsHighWater {
 			state.CoverageValidFactsHighWater = d.CoverageValidFacts
 		}
+		if d.VerificationExecutions > state.VerificationHighWater {
+			state.VerificationHighWater = d.VerificationExecutions
+		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
 			state.WorkMode = "classify_and_verify"
 		}
 		if state.CoverageNoProgress >= finalizationCoverageStagnationLimit {
-			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展。停止续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，不视为已验证安全", state.CoverageNoProgress)
+			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展，新的漏洞验证执行会重新起算。停止续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，不视为已验证安全", state.CoverageNoProgress)
 			return false
 		}
 	} else {
@@ -441,6 +447,7 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。本段是分类与验证，不是账本补写。\n")
 	fmt.Fprintf(&b, "【分类与验证续跑】独立候选 %d 组，已关联处置 %d 组，未处置 %d 组，可核验执行 %d 个，计数是否完整核实=%t。第三方主机、平台 JS 和纯静态资源保留为未覆盖限制，不要逐条写端点事实，不要查询或补写发现组绑定，不要打开覆盖检查文件，不要把未测地址写成 N/A、negated 或已安全。\n", d.CoverageInventoryGroups, d.CoverageMappedGroups, d.CoverageUnresolvedGroups, d.CoverageEvidenceExecutions, d.CoverageProgressKnown)
 	b.WriteString("先测用户所给域名下还没测过的关联资产：子域、同注册域、证书或同一运营主体指向的域名，以及这些域名解析到的非 CDN 源站 IP。支付、验证码、社交、统计挂件和纯静态资源不是关联资产，不要为它们扩测。关联域名或源站 IP 尚未测试、也没有证据 blocked 时，不要交卷。\n")
+	b.WriteString("nuclei、dirsearch、ffuf、katana 跑到工具自身时限或平台单次工具时限再停。不要在几分钟后取消，也不要把目录扫描总时限改短。未跑完只能记缺口，不能当零发现。\n")
 	b.WriteString("然后再验证仍可能造成实际危害的认证、越权、注入、敏感数据或后台入口，确认危害后立即记录漏洞。关联资产已测完或已 blocked，且没有新的可验证危害，再交付完整报告，并写明未处置组仍未覆盖。\n")
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")

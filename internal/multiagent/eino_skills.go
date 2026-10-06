@@ -188,17 +188,17 @@ func agentToolWaitTimeoutSeconds(cfg *config.Config) int {
 	return cfg.Agent.ToolWaitTimeoutSeconds
 }
 
-// agentShellNoOutputTimeoutSeconds：0=默认 300s（5 分钟）；-1=关闭；>0=自定义秒数。
+// agentShellNoOutputTimeoutSeconds：0=默认 900s（15 分钟）；-1=关闭；>0=自定义秒数。
 func agentShellNoOutputTimeoutSeconds(cfg *config.Config) int {
 	if cfg == nil {
-		return 300
+		return 900
 	}
 	v := cfg.Agent.ShellNoOutputTimeoutSeconds
 	if v < 0 {
 		return 0
 	}
 	if v == 0 {
-		return 300
+		return 900
 	}
 	return v
 }

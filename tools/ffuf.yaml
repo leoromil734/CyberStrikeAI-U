@@ -25,7 +25,7 @@ description: |
   - 默认启用自动校准并匹配全部状态码，避免漏掉 405/500 等高价值差分
   - 优先小字典快速覆盖；只有发现技术栈、命名规律或高价值入口后才升级大字典
   - 仅作为目录发现替代时可省略 wordlist，执行器自动选择已有路径字典；参数/虚拟主机/自定义请求任务必须传入真实且适配该维度的字典，收到字典回退提示后须确认语义，不能把目录字典结果当参数覆盖
-  - 单次扫描默认最多 300 秒；显式设定范围、候选集与速率，超时/限流/中断未完成留 gap/blocked，不按进程成功或零新增宣称全覆盖
+  - 单次扫描默认最多 900 秒；不要把总时限改短。显式设定范围、候选集与速率，超时/限流/中断未完成留 gap/blocked，不按进程成功或零新增宣称全覆盖
 parameters:
   - name: "url"
     type: "string"
@@ -92,10 +92,10 @@ parameters:
     format: "flag"
   - name: "max_time"
     type: "int"
-    description: "单次扫描总时限（秒）；默认 300，必须为正数；超时未完成不能写全覆盖"
+    description: "单次扫描总时限（秒）；默认 900，必须为正数；不要自行改短。超时未完成不能写全覆盖"
     required: false
     minimum: 1
-    default: 300
+    default: 900
     flag: "-maxtime"
     format: "flag"
   - name: "filter_size"

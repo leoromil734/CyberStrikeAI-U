@@ -61,7 +61,7 @@ func TestNewShellInactivityWatch(t *testing.T) {
 }
 
 func TestResolveShellNoOutputTimeoutSeconds(t *testing.T) {
-	if ResolveShellNoOutputTimeoutSeconds(0) != 300 {
+	if ResolveShellNoOutputTimeoutSeconds(0) != 900 {
 		t.Fatal("zero should default to 300")
 	}
 	if ResolveShellNoOutputTimeoutSeconds(-1) != 0 {

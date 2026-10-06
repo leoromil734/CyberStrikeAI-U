@@ -77,15 +77,19 @@ type Decision struct {
 	CandidateResponseLen int      `json:"candidateResponseLen,omitempty"`
 	// CoverageValidFacts is retained for compatibility/diagnostics only. Fact
 	// writes must never be used as evidence of assessment progress.
-	CoverageValidFacts         int      `json:"coverageValidFacts,omitempty"`
-	CoverageProgressKnown      bool     `json:"coverageProgressKnown"`
-	CoverageInventoryGroups    int      `json:"coverageInventoryGroups"`
-	CoverageUnresolvedGroups   int      `json:"coverageUnresolvedGroups"`
-	CoverageMappedGroups       int      `json:"coverageMappedGroups"`
-	CoverageEvidenceExecutions int      `json:"coverageEvidenceExecutions"`
-	CoverageRepairBlocked      bool     `json:"coverageRepairBlocked"`
-	Outcome                    string   `json:"outcome,omitempty"`
-	CoverageBlockers           []string `json:"coverageBlockers,omitempty"`
+	CoverageValidFacts         int  `json:"coverageValidFacts,omitempty"`
+	CoverageProgressKnown      bool `json:"coverageProgressKnown"`
+	CoverageInventoryGroups    int  `json:"coverageInventoryGroups"`
+	CoverageUnresolvedGroups   int  `json:"coverageUnresolvedGroups"`
+	CoverageMappedGroups       int  `json:"coverageMappedGroups"`
+	CoverageEvidenceExecutions int  `json:"coverageEvidenceExecutions"`
+	// VerificationExecutions counts completed target-facing tool runs in this
+	// conversation. Ledger reads and fact writes are excluded. A new completed
+	// verification renews continuation; bookkeeping does not.
+	VerificationExecutions int      `json:"verificationExecutions"`
+	CoverageRepairBlocked  bool     `json:"coverageRepairBlocked"`
+	Outcome                string   `json:"outcome,omitempty"`
+	CoverageBlockers       []string `json:"coverageBlockers,omitempty"`
 }
 
 // Input 判定输入。Response 为候选文本，其余为运行时状态与策略。
@@ -254,6 +258,7 @@ func Decide(db *database.DB, in Input) Decision {
 	coverage := coverageForDelivery(db, in)
 	d.CoverageValidFacts = coverage.ValidFacts
 	d.setCoverageProgress(coverage.Progress)
+	d.VerificationExecutions = countVerificationExecutions(db, in.ConversationID)
 
 	// 文本非空但明显是半截话（「接下来我去看 X」或缺少句末标点）：不能交付，交给自动续跑再跑一段。
 	if why := incompleteCandidateReason(text); why != "" {

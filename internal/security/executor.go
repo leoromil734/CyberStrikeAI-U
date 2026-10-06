@@ -40,7 +40,7 @@ type Executor struct {
 	toolIndex               map[string]*config.ToolConfig // 工具索引，用于 O(1) 查找
 	mcpServer               *mcp.Server
 	logger                  *zap.Logger
-	shellNoOutputTimeoutSec int // execute/exec 无新输出空闲秒数；0=默认 300；-1=关闭（见 SetShellNoOutputTimeoutSeconds）
+	shellNoOutputTimeoutSec int // execute/exec 无新输出空闲秒数；0=默认 900；-1=关闭（见 SetShellNoOutputTimeoutSeconds）
 	toolOutputMaxBytes      int
 	spillRootDir            string
 	budget                  *ToolBudget
