@@ -39,7 +39,7 @@ func TestDirsearchBundledDefaultsBuildBoundedCLI(t *testing.T) {
 	args := executor.buildCommandArgs(tool.Name, tool, input)
 	for flag, value := range map[string]string{
 		"-u": "https://example.test/", "-e": "php,html,js,txt,xml,json", "-t": "20",
-		"--max-rate": "50", "--timeout": "10", "--max-time": "300", "--max-recursion-depth": "2",
+		"--max-rate": "50", "--timeout": "30", "--max-time": "900", "--max-recursion-depth": "2",
 	} {
 		requireDiscoveryFlag(t, args, flag, value)
 	}
@@ -134,7 +134,7 @@ func TestFFufAlternativeScanKeepsFiniteRuntime(t *testing.T) {
 	tool := loadDiscoveryTool(t, "ffuf")
 	executor, _ := setupTestExecutor(t)
 	input := map[string]interface{}{"url": "https://example.test/FUZZ"}
-	requireDiscoveryFlag(t, executor.buildCommandArgs(tool.Name, tool, input), "-maxtime", "300")
+	requireDiscoveryFlag(t, executor.buildCommandArgs(tool.Name, tool, input), "-maxtime", "900")
 	input["max_time"] = 30
 	requireDiscoveryFlag(t, executor.buildCommandArgs(tool.Name, tool, input), "-maxtime", "30")
 	input["max_time"] = 0

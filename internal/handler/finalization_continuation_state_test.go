@@ -172,7 +172,7 @@ func TestClassifyAndVerifyPromptOmitsLedgerDispositionQueue(t *testing.T) {
 			t.Fatalf("classify prompt still queues ledger repair via %q: %s", banned, message)
 		}
 	}
-	if !strings.Contains(message, "关联域名或源站 IP 尚未测试") || !strings.Contains(message, "source claim has no matching") || !strings.Contains(message, "未处置 36 组") {
+	if !strings.Contains(message, "只验证已有可疑入口和线索，不补台账") || !strings.Contains(message, "source claim has no matching") || !strings.Contains(message, "未处置 36 组") {
 		t.Fatalf("classify prompt lost the real check or the uncovered total: %s", message)
 	}
 }

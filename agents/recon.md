@@ -29,6 +29,7 @@ tools:
   - interactsh-client
   - dnslog
   - fofa_search
+  - crtsh_search
   - zoomeye_search
   - quake_search
   - shodan_search
@@ -83,6 +84,7 @@ max_iterations: 0
 
 - 初始线上信息收集必须先实际调用 `fofa_search`，再做子域/DNS/HTTP/端口。锁面只查当前host/IP，自由跳只查当前一种子；上游本轮同范围有效调用证据可复用，离线审阅不新开查询。成功零结果留原件，缺工具/key/配额或失败记blocked与替代证据，其他来源不冒充FOFA、不用N/A跳过；细节见 `skills/recon-osint-playbook/references/fofa-first.md`。
 
+- 域名侦察尽早调用 `crtsh_search` 使用 crt.sh 补充历史/通配证书中的候选名称，与 subfinder/oneforall 合并去重并记录新增量；上游本轮同范围证据可复用。证书不证明当前存活或授权归属，跨域 SAN 不扩范围，后续 dnsx/httpx 核实。失败/限流/截断留错误与缺口，换异构来源，不循环查 crt.sh。
 - 根域 Quick 可使用单一被动来源；Standard 至少组合两个异构来源；Deep/全面必须执行 `subfinder`、`oneforall`、`dnsx`，并按可用性补 `amass`、证书/历史或空间测绘来源。逐工具记录 raw、去重后与新增数量；失败记 blocked 并换同类来源，不以空结果宣称完整。
 - 每个来源立即 `upsert_project_fact`：`fact_key=recon/source/{tool}/{target_slug}`，body 含 status/raw/unique/incremental/error/alt_tried（见 `attack-surface-recon/references/recon-fact-schema.md`）。缺 Source Coverage 表或强制 source fact 时不得宣称侦察完成。
 - 逐个解析 IP 分类：已证实 Cloudflare/Akamai 等 CDN 边缘只排除裸 IP 扩测，业务域名仍测；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立服务/入口补缺。unknown 留 gap/blocked；品牌关联保留官网/证书/解析/主体证据，共享 IP/ASN 不单独证明归属，不扩供应商网段或无关租户。分类模板见 comprehensive-recon.md §2.1。

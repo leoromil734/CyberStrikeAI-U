@@ -74,7 +74,10 @@ function loadFunction(source, name) {
 for (const name of ['normalizeChatAIChannelId', 'resolveChatAIChannelId', 'populateChatAIChannelSelect', 'conversationAIChannelLabel', 'updateConversationAIChannelBadge', 'refreshConversationAILabels', 'appendConversationAIBadges', 'createConversationListItemWithMenu']) {
     loadFunction(chat, name);
 }
-for (const name of ['getActiveTaskDisplayName', 'renderActiveTasks', 'renderTaskItemIntoContainer']) loadFunction(monitor, name);
+// The minimal DOM does not serialize textContent; supply that primitive while
+// loading the real attribute escaper used by the current task renderer.
+global.escapeHtmlLocal = global.escapeHtml;
+for (const name of ['escapeAttrLocal', 'getActiveTaskDisplayName', 'renderActiveTasks', 'renderTaskItemIntoContainer']) loadFunction(monitor, name);
 const findClass = (node, className) => node.className.split(' ').includes(className) ? node : node.children.map(child => findClass(child, className)).find(Boolean);
 // Sidebar can load before channel configuration; initially show the recorded ID.
 const first = createConversationListItemWithMenu({id:'one', title:'first', aiModel:'model-one', aiChannelId:'channel_a'}, false);

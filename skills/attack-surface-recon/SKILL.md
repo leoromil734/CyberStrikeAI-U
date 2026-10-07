@@ -9,7 +9,7 @@ description: >-
   「攻击面」「资产清单」「覆盖率」时优先加载（可与 recon-osint-playbook 联用）。
   已有 SRC、漏洞赏金、挖集团/品牌上下文时以 `src-hunting` 为领域入口，本 skill 仅在
   独立侦察/覆盖账本阶段加载；不用于深度漏洞确认；测试深度由 pentest-scan-quick/standard/deep 选择。
-allowed-tools: exec subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
+allowed-tools: exec subfinder amass oneforall dnsx httpx naabu nmap masscan fofa_search crtsh_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice arjun x8 ffuf gobuster dirsearch feroxbuster nuclei fscan upsert_project_fact list_project_facts search_project_facts
 metadata:
   tags: [渗透测试, penetration-testing, recon, osint, information-gathering]
   source_augment: Hi-FullHouse/CyberSecurity-Skills
@@ -17,7 +17,7 @@ metadata:
 
 # 攻击面测绘（增强版）
 
-输入必须包含目标类型、in-scope 边界、已完成来源和扫描模式。先读 Do-Not-Repeat；上游本轮已有真实 FOFA 证据时复用，不重复查询，缺来源时先补首步。
+输入含目标、in-scope、来源与模式。先读 Do-Not-Repeat，复用本轮 FOFA 证据，缺来源才补。
 
 - 完整矩阵、资产评分与 JS/API：`references/comprehensive-recon.md`
 - 来源/端点 fact 与退出门禁：`references/recon-fact-schema.md`（Deep 必读）
@@ -26,8 +26,8 @@ metadata:
 
 ## 工具流水线（MCP 名 = 实际调用名）
 
-0. 初始线上信息收集必须先实际调用 `fofa_search`；范围、零结果、阻断、原件与续跑复用按`recon-osint-playbook` 的 FOFA 起手规则。锁面只查当前 host/IP，不搜全集团；其他引擎只能补充，缺工具/key/配额留 blocked，不冒充成功。
-1. 根域：Quick=`subfinder`+CT；Standard=`subfinder`+异构来源+`dnsx`；Deep=`subfinder` + `oneforall` + 补 amass/CT/历史/空间测绘，逐项记 raw/增量。
+0. 线上初始侦察先实际调用 `fofa_search`；范围/原件/失败/复用见`recon-osint-playbook` 的 FOFA 起手规则。锁面只查当前host/IP，其他引擎仅补充；缺工具/key/配额记blocked，不冒充成功。
+1. 根域：Quick=`subfinder`+crt.sh；Standard再加异构来源+`dnsx`；Deep=`subfinder` + `oneforall`+补源。尽早调`crtsh_search`，复用本轮证据；历史/通配证书仅候选，不证明存活/归属授权，不扩跨域SAN。去重后DNS/HTTP核实；partial/限流/失败记缺口，换来源，不循环查。
 2. `dnsx` 清洗与通配基线；逐 IP 记录 CDN/范围证据，已证实 CDN 边缘不扩裸 IP；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，共享 IP 不推定归属。细节见 comprehensive-recon.md §2.1。
 3. `httpx` 指纹；`naabu` 重点端口；高价值 `nmap -sCV`；Deep 补长尾端口。`shodan_search`/`zoomeye_search`/`quake_search` 按可用性补缺，不替代首步 FOFA。
 4. Web：`katana`/`gau`/`waybackurls` + JS/`jsluice` + 实际 `grep/rg` 检索全部原源码 → 合并 `recon/endpoint/*`；命令与两路证据见 comprehensive-recon.md §4。
@@ -49,7 +49,7 @@ metadata:
 
 ### 触发衔接
 
-- 纯命令/语法/OSINT 百科 → `skill recon-osint-playbook`。
+- 命令速查 → `skill recon-osint-playbook`。
 - 进入验证 → `web-attack-methods` / `api-security-testing` + `pentest-verification`。
 - 每步成功或 blocked → 立即 fact；结案前核对缺口。
 

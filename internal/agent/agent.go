@@ -326,7 +326,9 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 		// 如果指定了角色工具列表，只添加在列表中的工具
 		if len(roleToolSet) > 0 {
 			toolKey := mcpTool.Name // 内置工具使用工具名称作为key
-			if !roleToolSet[toolKey] {
+			// The receive-only mailbox utility is shared across roles. Its runtime
+			// authorizer still requires permission and exact conversation ownership.
+			if !roleToolSet[toolKey] && toolKey != builtin.ToolTemporaryEmail {
 				continue // 不在角色工具列表中，跳过
 			}
 		}

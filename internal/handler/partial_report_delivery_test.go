@@ -45,7 +45,7 @@ func TestSubmittedReportRequestsContinuationUntilChecksPass(t *testing.T) {
 		if state.Attempts != 1 || state.WorkMode != "classify_and_verify" || len(history) == 0 || history[0].Content != "scope must survive" {
 			t.Fatalf("report bypassed continuation: submitted=%v state=%+v", submitted, state)
 		}
-		if !strings.Contains(message, "停止逐条抄写事实不等于停止实际测试") || !strings.Contains(message, "20000") || result.SubmittedReport != report {
+		if !strings.Contains(message, "只验证已有可疑入口和线索，不补台账") || !strings.Contains(message, "20000") || result.SubmittedReport != report {
 			t.Fatalf("lost classification instructions or candidate: %s", message)
 		}
 	}

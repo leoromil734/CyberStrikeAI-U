@@ -5,7 +5,7 @@ user_prompt: |
 
   ## 流程
   1) 确认根域名/IP 与 in-scope，然后必须先实际调用 `fofa_search`；锁面只查当前host/IP，自由跳只查当前一种子。成功零结果留原件；缺工具/key/配额或调用失败记blocked与替代证据，其他来源不冒充FOFA；本轮上游有效调用证据可复用，离线审阅不新开查询。细节见 skills/recon-osint-playbook/references/fofa-first.md
-  2) 子域：subfinder 快速首轮；深度/完整侦察或结果不足时 OneForAll 第二阶段补齐；amass 按需补源；跳过 OneForAll 必须写 recon/source 的 blocked 原因
+  2) 子域：尽早调用 crtsh_search 查询当前范围域名的 crt.sh 证书，和 subfinder 首轮结果合并去重；历史证书也留候选，剔除跨域SAN，证书不证明存活/归属授权。随后 dnsx/httpx 核实，记录来源与新增量；crt.sh 超时/限流/部分结果保留错误/缺口，改用异构来源，不循环查询。本轮已有同范围证据直接复用。深度/完整侦察仍用 OneForAll 第二阶段补齐、amass 按需补源，跳过 OneForAll 记 blocked 原因。
   3) DNS 清洗：dnsx → 存活与指纹：httpx；端口：naabu top-ports → nmap 精扫（或 masscan/rustscan）
   4) 标注 CDN/WAF（cloudflare/`cf-ray` 等），逐 IP 分类：已证实 CDN 边缘不扩裸 IP，业务域名仍测；Hetzner 等托管商不是 CDN，范围内非 CDN IP 独立补服务/入口，unknown 留 gap/blocked，不扫共享 IP 无关租户。分类见 comprehensive-recon.md §2.1；稳定浏览器/脚本差分交 Verify 诊断
   5) URL：katana / gau / waybackurls；JS：先按授权下载保存，再用 jsluice（本地静态分析，不联网，secrets 始终 tentative） + grep/rg 双通道检索全部下载源码，合并端点及调用上下文；目录、文件和扩展名枚举优先 dirsearch；参数、虚拟主机和自定义请求模糊测试优先 ffuf，隐藏参数可用 arjun/x8/paramspider。未链接路径尚未覆盖或发现需继续枚举的目录时做有界目录发现；同范围、认证态和候选集已有充分有效证据可引用复用，不重复扫描
@@ -53,6 +53,7 @@ tools:
   - arjun
   - x8
   - fofa_search
+  - crtsh_search
   - zoomeye_search
   - quake_search
   - shodan_search

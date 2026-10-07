@@ -11,7 +11,7 @@ description: >-
   已有 SRC、漏洞赏金、挖集团/品牌上下文时优先 `src-hunting`，再按其路由索引读取
   侦察方法；本包只用于独立 OSINT 阶段。提供可执行 MCP 工具顺序与多源交叉验证；
   覆盖账本/退出门禁叠加 attack-surface-recon。
-allowed-tools: subfinder amass oneforall dnsx dnsenum fierce httpx naabu nmap masscan rustscan fofa_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice nuclei fscan exec upsert_project_fact
+allowed-tools: subfinder amass oneforall dnsx dnsenum fierce httpx naabu nmap masscan rustscan fofa_search crtsh_search shodan_search zoomeye_search quake_search waybackurls gau katana jsluice nuclei fscan exec upsert_project_fact
 metadata:
   tags:
     - penetration-testing
@@ -40,7 +40,7 @@ metadata:
 ```
 
 0. **FOFA 必调**：初始线上信息收集（Quick/Standard/Deep、SRC 锁面/自由跳）先实际调用 `fofa_search`，规则读 `references/fofa-first.md`。成功零结果留 covered 原件；缺工具/key/配额或失败留 blocked 与替代证据，不用其他引擎冒充 FOFA；上游本轮有效证据可复用，离线审阅不新开查询。
-1. **被动**：Google/Bing/Baidu dork、WHOIS、证书 CT、GitHub 泄露关键字（可用 `exec` 调 dig/curl/whois；无专用工具时不要空跑）。
+1. **被动**：域名侦察尽早调用 `crtsh_search` 查 crt.sh，复用本轮同范围证据；历史/通配证书仅作候选，跨域 SAN 不扩范围，证书不证明存活/归属授权。与 subfinder/oneforall 合并去重后交 dnsx/httpx，保留来源/证书与 raw/unique/incremental。限流/超时/partial留缺口并换来源，不循环查询。Google/Bing/Baidu dork、WHOIS、GitHub 等作异构补充。
 2. **子域**：至少两个异构来源，禁止单工具宣称完整。
 3. **DNS**：`dnsx`/`dnsenum`/`fierce` 验证 A/AAAA/CNAME/MX/TXT；识别通配。
 4. **空间引擎补充**：首步 `fofa_search` 后，`shodan_search` / `zoomeye_search` / `quake_search` 只补当前范围缺口，不替代 FOFA 必调。

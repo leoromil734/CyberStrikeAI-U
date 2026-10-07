@@ -1,0 +1,66 @@
+name: "crtsh_search"
+command: "python3"
+args: ["/opt/cyberstrike-tool-runtime/scripts/crtsh-recon.py"]
+enabled: true
+short_description: "crt.sh 证书透明度被动发现：限定域名、去重候选、证书追溯，含历史证书"
+description: |
+  以明确域名查询固定 https://crt.sh/ JSON 服务，先查域名本身，再查其子域证书。
+  无需 API key；仅访问 crt.sh，不解析候选 DNS、不请求目标、不探测存活、不递归扩展关联域。
+  domain 仅接受一个 DNS 域名；拒绝 URL、IP、端口、通配符和查询表达式。支持 IDNA2003，输出小写 ASCII 域名。
+  拆分 name_value 多行、CN/SAN 列表，去重后严格保留查询域及其子域；无关 SAN 不进入库存。
+  证书通配符仅归一为域名后缀候选并保留 wildcard 标记，不证明该具体主机存在。
+  历史/过期证书也参与发现，保留证书 ID、条目时间、有效期、原始匹配名和证书链接。
+  全部 candidate_only=true、verification=unverified；证书不证明当前归属、存活或授权，后续须单独确认范围及验证。
+  stdout 是完整 csai.crtsh.v1 JSON 原件，不是预览或路径清单；应通过现有原件机制登记为 json。
+  输出包含 query_domain、queries（固定上游 URL/状态/尝试次数/响应 hash）、counts、records、reasons。
+  records 按 host 唯一，certificates 保存追溯元数据；库存位置可回读原件，不把证书信息伪装成已验证服务。
+  status=success 仅表示本次有界查询/提取成功，不表示完整覆盖。coverage_complete 永远 false，coverage=unknown。
+  超时、429/5xx、网络故障只作有界重试；重定向和代理环境禁用，HTML/非 JSON/错误对象不得当作成功零结果。
+  partial/truncated/reasons 显式说明响应、证书、名称、记录、证书引用或输出预算限制；上游无法证明穷尽。
+  默认两次查询共用60秒预算，在读取块和重试之间检查；socket等待最多20秒，非操作系统级硬超时。
+  重试退避最多5秒，最多额外重试3次。响应hash明确区分完整响应与captured_prefix截断前缀。
+  固定上限：20000条证书、200000个名称、每主机64条证书引用、32MiB输出。参数只能缩小或在硬上限内调整。
+  若失败或截断，记录 blocked/gap 和实际保留原件，不把零结果、过期证书或 suffix 匹配当 full coverage。
+parameters:
+  - name: "domain"
+    type: "string"
+    description: "明确域名，如 example.com 或 api.example.com；不要传 URL/IP/*.example.com。仅查询该域及子域，不上溯根域。"
+    required: true
+    flag: "--domain"
+    format: "flag"
+  - name: "timeout_seconds"
+    type: "int"
+    description: "两次查询与退避共用时间预算，1–180秒，默认60；单次阻塞读取另受最多20秒socket等待限制。"
+    required: false
+    default: 60
+    minimum: 1
+    maximum: 180
+    flag: "--timeout-seconds"
+    format: "flag"
+  - name: "max_retries"
+    type: "int"
+    description: "每次查询遇429/5xx或网络瞬时故障的额外重试次数，0–3，默认2。"
+    required: false
+    default: 2
+    minimum: 0
+    maximum: 3
+    flag: "--max-retries"
+    format: "flag"
+  - name: "max_response_bytes"
+    type: "int"
+    description: "两个查询保留响应的累计字节预算，1024–33554432，默认8388608；超限只保留先前完整解析结果并标partial/truncated。"
+    required: false
+    default: 8388608
+    minimum: 1024
+    maximum: 33554432
+    flag: "--max-response-bytes"
+    format: "flag"
+  - name: "max_records"
+    type: "int"
+    description: "唯一域名候选上限，1–50000，默认10000；触限标partial/truncated，不宣称结果全量。"
+    required: false
+    default: 10000
+    minimum: 1
+    maximum: 50000
+    flag: "--max-records"
+    format: "flag"

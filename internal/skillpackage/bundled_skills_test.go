@@ -493,7 +493,7 @@ func TestSrcAndDeepShareBoundedIdentityPreparation(t *testing.T) {
 		t.Error("SRC and Deep identity preparation rules differ")
 	}
 	for _, required := range []string{
-		"受控邮箱/手机号", "A/B", "最多新建两个测试账号", "一次正常提交",
+		"受控邮箱/手机号", "A/B", "temporary_email 创建受控收件身份", "敏感读或关键写线索", "不为付费文章准备双账号", "最多新建两个测试账号", "一次正常提交",
 		"最多一次同条件重试", "最多 5 分钟", "用户更严格限制优先",
 		"验证码", "滑块", "短信费用", "人工审批", "不破解挑战", "不无限注册",
 		"保护用户现有账户", "不登出/注销/吊销", "不改密/改绑/触发找回",

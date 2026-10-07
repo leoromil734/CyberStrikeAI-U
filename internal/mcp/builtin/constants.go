@@ -41,6 +41,9 @@ const (
 	ToolListKnowledgeRiskTypes = "list_knowledge_risk_types"
 	ToolSearchKnowledgeBase    = "search_knowledge_base"
 
+	// 会话隔离的全局临时邮箱（服务端密钥，不暴露供应商全局邮箱列表）
+	ToolTemporaryEmail = "temporary_email"
+
 	// 视觉分析（本地图片 → VL 模型 → 文本摘要）
 	ToolAnalyzeImage = "analyze_image"
 
@@ -116,6 +119,7 @@ func IsBuiltinTool(toolName string) bool {
 		ToolListKnowledgeRiskTypes,
 		ToolSearchKnowledgeBase,
 		ToolAnalyzeImage,
+		ToolTemporaryEmail,
 		ToolGetToolExecution,
 		ToolWaitToolExecution,
 		ToolCancelToolExecution,
@@ -184,6 +188,7 @@ func GetAllBuiltinTools() []string {
 		ToolListKnowledgeRiskTypes,
 		ToolSearchKnowledgeBase,
 		ToolAnalyzeImage,
+		ToolTemporaryEmail,
 		ToolGetToolExecution,
 		ToolWaitToolExecution,
 		ToolCancelToolExecution,

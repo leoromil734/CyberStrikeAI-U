@@ -13,11 +13,11 @@ user_prompt: |
   1) 收集 base URL、路径前缀、OpenAPI/Swagger/GraphQL introspection
   2) CDN/`cf-ray` 只标注，不切客户端；若标准客户端持续停在边缘而同条件浏览器到业务层，先对齐 Cookie/认证/方法/请求体并排除 JS/限流/IP，再做 curl_cffi 单请求诊断；确认后才复用
   3) 先用 katana/gau 发现 JS URL 并按授权下载，再用 jsluice 静态分析本地文件（保留来源 URL/hash，secrets 始终 tentative，不直接 record_vulnerability），结合 grep/rg 对原源码展开逐端点 method/path，再以 api-schema-analyzer / graphql-scanner / arjun / httpx 映射参数；仅确认 TLS 指纹拦截后在受影响请求中使用 curl_cffi
-  4) 按 `pentest-scan-deep` §4 的范围/预算/挑战阻断条件准备受控 A/B，保护用户现有账户；缺第二身份只阻断对应单元，不记安全/否定/N/A。匿名 vs 低权 vs 可行高权：同 ID 授权、批量赋值 role/isAdmin（同一客户端 Session）
+  4) 需邮箱进入认证业务面时用 temporary_email 创建受控邮箱并按 `pentest-scan-deep` §4 预算正常注册；已有身份先复用。A/B 只用于已有敏感读或关键写线索，保护用户现有账户，缺身份只阻断依赖单元，不记安全/否定/N/A；不为付费文章铺开对照。
   5) JWT：jwt-analyzer（none/弱密钥/声明篡改）仅在有证据时 record
   6) 注入：sqlmap/手测；入口须已证明非边缘误拦
   7) 每个确认端点与 finding 写 fact；区分 edge_block 与 app_403
-  8) 登录/短信口令/密码接口按 credential-stuffing 做一次有界撞库；进号才 record，类型写撞库。低价值面不测：CORS、安全头、弱 TLS、无会话开放重定向、打不到他人会话的 XSS、只有标题摘要的越权、没动钱和审核的逻辑与并发、无密钥敏感路径
+  8) 手机号身份的撞库验证只用用户提供的受控账号与授权凭据，遵守 credential-stuffing 预算，实际进号且证明新增权限才记录；不做邮箱撞库或号段枚举。先按 `pentest-verification/references/impact-selection.md` 筛选：付费文章全文、普通下载、邮箱枚举、浏览统计不测不记；文件须解析正文核实敏感性，具体升级或利用链线索保留验证。同根因同边界合并，不重复造洞。
 
   ## 禁止
   未复现不 record_vulnerability；不把 CDN/TLS 拦截当成「无接口」；不把 401/403 本身当高危除非可绕过。

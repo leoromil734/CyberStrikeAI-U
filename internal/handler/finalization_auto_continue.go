@@ -444,10 +444,8 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。本段只验证可疑入口和线索，不补台账。\n")
-	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组。不要逐 URL 请求，不要写端点事实，不要打开覆盖检查文件，不要把未测地址写成 N/A、negated 或已安全。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
-	b.WriteString("只验证已有线索里能造成命令执行、可解析上传、SQL 注入、手机号等敏感信息、未授权、越权或手机号撞库的入口。付费文章、无敏感信息的下载、邮箱或用户名枚举不测也不记。下载文件必须先核实含手机号等敏感信息。能升级或串成利用链的继续验证，不能升级的立即停。\n")
-	b.WriteString("http-framework-test 只打一个已选入口的对照请求，不遍历接口。确认危害后立即记录漏洞。没有新的可疑线索时，提交已确认结果和未测缺口，然后停止。\n")
+	b.WriteString(coverageContinuationHeader)
+	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组。不要写端点事实，不要打开覆盖检查文件；按已有证据选择高价值线索，原始库存数量不等于需逐一测试的业务单元。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
 		for _, check := range actionable {
@@ -469,7 +467,7 @@ func coverageContinuationMessage(checks []string, opts tooloutput.SpillOpts) (me
 	}
 	var b strings.Builder
 	b.WriteString(coverageContinuationHeader)
-	fmt.Fprintf(&b, "检查缺口共 %d 条，文件只供抽看：%s\n不要通读，不要逐条补事实或把未测地址写成不适用。下面最多 5 条用来挑选可能造成实际危害的验证；其余保持未测缺口。\n", len(checks), file)
+	fmt.Fprintf(&b, "检查缺口共 %d 条，全部缺口保留在原件：%s\n仅对所选高价值候选用 read_file 按需抽看，不要通读，不要逐条补事实或把未测地址写成不适用。下面最多 5 条用来挑选可能造成实际危害的验证；其余保持未测缺口。\n", len(checks), file)
 	for i, check := range checks {
 		if i >= 5 {
 			break

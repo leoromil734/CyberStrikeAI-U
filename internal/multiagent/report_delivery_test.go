@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"cyberstrike-ai/internal/projectprompt"
+
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -72,19 +74,30 @@ func TestFinalReportAfterCoverageRepair(t *testing.T) {
 	}
 }
 
-func TestCoverageContinuationRequiresInventoryAndPersistedEvidence(t *testing.T) {
+func TestCoverageContinuationSharesImpactPolicyAndDelivery(t *testing.T) {
+	if CoverageContinuationHeader != CoverageWorkContinuationHeader {
+		t.Fatal("legacy and active continuation paths must not diverge")
+	}
+	if strings.Count(CoverageWorkContinuationHeader, projectprompt.HighImpactFindingPolicy) != 1 {
+		t.Fatal("continuation must use the shared impact policy exactly once")
+	}
 	for _, required := range []string{
 		"只验证已有可疑入口和线索", "不补台账", "不要逐 URL 请求",
 		"SQL 注入", "手机号撞库", "http-framework-test 只用于一个已选入口",
+		"完整最终报告", "阶段报告", "exit.final_result", "保留用户排除项",
 	} {
-		if !strings.Contains(CoverageContinuationHeader, required) {
+		if !strings.Contains(CoverageWorkContinuationHeader, required) {
 			t.Errorf("continuation lost actionable evidence guidance: %s", required)
 		}
 	}
 	// Retain the stable prefix so old saved repair segments remain recoverable.
-	if !isReportRecoveryInstruction("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。旧版诊断") ||
-		!isReportRecoveryInstruction(CoverageContinuationHeader) {
-		t.Fatal("coverage repair instruction compatibility lost")
+	for _, instruction := range []string{
+		"【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。旧版诊断",
+		CoverageContinuationHeader, CoverageWorkContinuationHeader,
+	} {
+		if !isReportRecoveryInstruction(instruction) {
+			t.Fatal("coverage repair instruction compatibility lost")
+		}
 	}
 }
 

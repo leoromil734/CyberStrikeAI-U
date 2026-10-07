@@ -38,7 +38,7 @@ func resultFormat(tool string, args map[string]interface{}) string {
 	tool = recon.CanonicalTool(tool)
 	fields := resultArgumentTokens(args)
 	switch tool {
-	case "fofa":
+	case "fofa", "crtsh":
 		return "json"
 	case "jsapiscan", "jsluice":
 		// Adapter stdout is a summary, never the private JSONL/CSV original.

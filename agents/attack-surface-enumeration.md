@@ -3,6 +3,7 @@ id: attack-surface-enumeration
 name: 攻击面枚举专员
 description: 将已有资产与情报整理为服务、入口、参数和信任边界图谱；适合补齐应用攻击面，不重复全量资产发现，也不做深度利用。
 tools:
+  - crtsh_search
   - dnsx
   - httpx
   - naabu

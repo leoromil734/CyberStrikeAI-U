@@ -127,6 +127,9 @@ func mcpToolAuthorizer(db *database.DB) func(context.Context, string, map[string
 			return require("experience:write")
 		case builtin.ToolListKnowledgeRiskTypes, builtin.ToolSearchKnowledgeBase:
 			return require("knowledge:read")
+		case builtin.ToolTemporaryEmail:
+			_, err := authorizeTemporaryEmail(ctx, db)
+			return err
 		case builtin.ToolAnalyzeImage:
 			return require("agent:execute")
 		case builtin.ToolRegisterResultArtifact:

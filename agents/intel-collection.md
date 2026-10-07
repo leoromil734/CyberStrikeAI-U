@@ -12,6 +12,7 @@ tools:
   - gau
   - waybackurls
   - fofa_search
+  - crtsh_search
   - zoomeye_search
   - quake_search
   - shodan_search

@@ -5,27 +5,23 @@ import (
 	"regexp"
 	"strings"
 
+	"cyberstrike-ai/internal/projectprompt"
+
 	"github.com/cloudwego/eino/schema"
 )
 
-// CoverageContinuationHeader identifies an internal repair segment, not a new
-// user request. Keep this shared with the handler that creates the instruction.
-const CoverageContinuationHeader = coverageRepairInstructionPrefix + "只补本轮少量缺口，保留用户排除项，不重复、不扩范围。读 pentest-blackboard/references/coverage-contract.md；blocked/N/A 须原始证据，未测不能算覆盖。\n" +
-	"原始 URL 明细保留在库存和工件，不得分派逐行抄写 fact、禁止网络只写账本的长任务。若需要大量新建端点/风险事实，停止补写并报告未完成范围、库存数量和需要的分类/范围决策；不能把未知候选统一写成 N/A、negated 或已安全。\n" +
-	"实际工作尚未执行就先做或委派，再用 upsert_project_fact.body_fields 写 recon/phase/*；报告不代替落库，未执行不得 passed。\n" +
-	"从本轮 recon/source/* 取真实 execution_id，query_recon_inventory(execution_id, grouped=true, offset=0) 分页取 key 填 inventory_group_key。discovery-* 是数据库标识，勿 glob/grep 盲找或编造。原件用 list_result_artifacts/read_result_artifact；库存候选本身不证明已测试。\n" +
-	"常驻工具按当前 schema 调用，搜索空不证明缺失；工具缺失记配置阻断并继续可执行项。\n" +
-	"get_project_fact/list_project_facts 回读核实。缺口解决再交完整最终报告：结论、覆盖、发现、负结果、限制。\n"
-
 const coverageRepairInstructionPrefix = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。"
 
-// CoverageWorkContinuationHeader requests substantive work rather than merely
-// filling a ledger. Keep the prefix so historical report provenance survives.
-const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明。本段只验证已有可疑入口和线索，不补台账。\n" +
+// CoverageWorkContinuationHeader selects verification work without turning an
+// incomplete inventory into a bookkeeping loop or a successful assessment.
+const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明。本段只验证已有可疑入口和线索，不补台账。保留用户排除项，不重复、不扩范围。\n" +
 	"不要逐 URL 请求，不要为库存写 fact，不要把未测地址写成 N/A、negated 或已覆盖。未测范围保留为缺口。\n" +
-	"从已有侦察、JS、目录、nuclei 和管理入口里挑选有线索的目标。只验证命令执行、上传后可解析或执行、SQL 注入、未授权或越权读到手机号等敏感信息或改他人数据、手机号撞库进号。\n" +
-	"付费文章读取、A/B 只读到标题摘要、无敏感信息的文件下载、邮箱枚举和普通用户名枚举不测也不记。下载文件必须先核实正文含手机号等敏感信息。能升级或串成利用链的继续验证，不能升级的立即停。\n" +
-	"http-framework-test 只用于一个已选入口的对照，不用于遍历接口。确认危害后立即 record_vulnerability。没有新的可疑线索时提交现有结果和未测缺口，然后停止。\n"
+	projectprompt.HighImpactFindingPolicy + "\n" +
+	"http-framework-test 只用于一个已选入口的对照，不用于遍历接口。符合筛选且确认危害后 record_vulnerability。没有新的可疑线索或预算耗尽时交完整最终报告：成果、执行/原件引用、负结果、未测缺口与限制，然后停止；覆盖不完整只能交阶段报告。Deep/Supervisor 根角色用 exit.final_result 提交报告全文。\n"
+
+// CoverageContinuationHeader remains an alias for existing callers and saved
+// traces; both paths must use the same finding selection and stop conditions.
+const CoverageContinuationHeader = CoverageWorkContinuationHeader
 
 var assessmentHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+\S`)
 

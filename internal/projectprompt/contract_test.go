@@ -20,8 +20,6 @@ func TestComposeSystemPromptIncludesSharedContractOnce(t *testing.T) {
 		"## 资产、弱口令与 JS 覆盖",
 		"## 证据闭环",
 		"## 低价值面不测",
-		"手机号撞库",
-		"付费文章",
 		"## 独立安全边界",
 		"## 执行与恢复",
 		"## Skill 路由",

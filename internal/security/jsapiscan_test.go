@@ -31,8 +31,8 @@ func readJSAPIscanTool(t *testing.T) config.ToolConfig {
 
 func TestJSAPIscanBundledYAMLBuildsVerifiedCLI(t *testing.T) {
 	tool := readJSAPIscanTool(t)
-	if tool.Name != "jsapiscan" || tool.Command != "/usr/local/bin/jsapiscan" || !tool.Enabled {
-		t.Fatalf("unexpected tool registration: %+v", tool)
+	if tool.Name != "jsapiscan" || tool.Command != "/usr/local/bin/jsapiscan" || tool.Enabled {
+		t.Fatalf("legacy jsapiscan must stay registered but disabled by default: name=%s command=%s enabled=%v", tool.Name, tool.Command, tool.Enabled)
 	}
 	executor, _ := setupTestExecutor(t)
 	args := executor.buildCommandArgs(tool.Name, &tool, map[string]interface{}{"target": "https://app.example.test"})

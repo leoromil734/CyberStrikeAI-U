@@ -61,6 +61,10 @@ subfinder -d target.com -o subdomains.txt
 amass enum -passive -d target.com
 
 # Certsh (certificate transparency):
+# Prefer the registered crtsh_search tool with domain="target.com". It records
+# certificate provenance, rejects cross-domain SANs and reports partial results.
+# Historical/wildcard names are candidates only; verify scope, DNS and liveness.
+# Reuse this run's evidence; use another source after bounded upstream failures.
 curl -s "https://crt.sh/?q=%.target.com&output=json" | jq -r '.[].name_value' | sort -u
 
 # SecurityTrails API, Shodan:

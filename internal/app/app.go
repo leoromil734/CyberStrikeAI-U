@@ -189,6 +189,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	registerAssetTools(mcpServer, db, log.Logger)
 	registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 	registerVisionTools(mcpServer, cfg, log.Logger)
+	temporaryMail, err := newTemporaryEmailService(db)
+	if err != nil {
+		return nil, err
+	}
+	registerTemporaryEmailTool(mcpServer, temporaryMail)
 
 	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
 	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
@@ -501,6 +506,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		registerAssetTools(mcpServer, db, log.Logger)
 		registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 		registerVisionTools(mcpServer, cfg, log.Logger)
+		registerTemporaryEmailTool(mcpServer, temporaryMail)
 		return nil
 	}
 	configHandler.SetVulnerabilityToolRegistrar(vulnerabilityRegistrar)

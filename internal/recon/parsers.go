@@ -72,6 +72,8 @@ func CanonicalTool(tool string) string {
 	switch tool {
 	case "fofa_search", "fofa_query":
 		return "fofa"
+	case "crtsh_search":
+		return "crtsh"
 	case "one_for_all", "oneforall_run":
 		return "oneforall"
 	case "jsluice_run", "csai-jsluice":
@@ -97,6 +99,8 @@ func Parse(ctx context.Context, tool, format string, reader io.Reader, limits Li
 		err = parseNmap(ctx, limited, c)
 	case tool == "fofa" && format == "json":
 		err = parseFOFA(limited, c)
+	case tool == "crtsh" && format == "json":
+		err = parseCRTSh(limited, c)
 	case (tool == "fofa" || tool == "oneforall" || tool == "jsapiscan") && format == "csv":
 		err = parseCSV(tool, limited, c)
 	case supportsLines(tool, format):
