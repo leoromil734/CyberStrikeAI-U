@@ -67,17 +67,15 @@ func TestFinalReportAfterCoverageRepair(t *testing.T) {
 	if !repairOnly || !strings.HasPrefix(got, report) || !strings.HasSuffix(got, notice) || !strings.Contains(got, "## 最终覆盖检查补充") {
 		t.Fatalf("report lost after two repair segments: %q (repair=%v)", got, repairOnly)
 	}
-	if !strings.Contains(CoverageContinuationHeader, "完整最终报告") {
+	if !strings.Contains(CoverageContinuationHeader, "然后停止") {
 		t.Fatal("repair instruction must request the complete final deliverable")
 	}
 }
 
 func TestCoverageContinuationRequiresInventoryAndPersistedEvidence(t *testing.T) {
 	for _, required := range []string{
-		"实际工作尚未执行", "upsert_project_fact", "body_fields", "recon/phase/*",
-		"recon/source/*", "execution_id", "query_recon_inventory(execution_id, grouped=true, offset=0)",
-		"inventory_group_key", "discovery-* 是数据库标识", "list_result_artifacts", "read_result_artifact",
-		"库存候选本身不证明已测试", "未执行不得 passed", "回读核实", "完整最终报告",
+		"只验证已有可疑入口和线索", "不补台账", "不要逐 URL 请求",
+		"SQL 注入", "手机号撞库", "http-framework-test 只用于一个已选入口",
 	} {
 		if !strings.Contains(CoverageContinuationHeader, required) {
 			t.Errorf("continuation lost actionable evidence guidance: %s", required)

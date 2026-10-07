@@ -444,11 +444,10 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。本段是分类与验证，不是账本补写。\n")
-	fmt.Fprintf(&b, "【分类与验证续跑】独立候选 %d 组，已关联处置 %d 组，未处置 %d 组，可核验执行 %d 个，计数是否完整核实=%t。第三方主机、平台 JS 和纯静态资源保留为未覆盖限制，不要逐条写端点事实，不要查询或补写发现组绑定，不要打开覆盖检查文件，不要把未测地址写成 N/A、negated 或已安全。\n", d.CoverageInventoryGroups, d.CoverageMappedGroups, d.CoverageUnresolvedGroups, d.CoverageEvidenceExecutions, d.CoverageProgressKnown)
-	b.WriteString("先测用户所给域名下还没测过的关联资产：子域、同注册域、证书或同一运营主体指向的域名，以及这些域名解析到的非 CDN 源站 IP。支付、验证码、社交、统计挂件和纯静态资源不是关联资产，不要为它们扩测。关联域名或源站 IP 尚未测试、也没有证据 blocked 时，不要交卷。\n")
-	b.WriteString("nuclei、dirsearch、ffuf、katana 跑到工具自身时限或平台单次工具时限再停。不要在几分钟后取消，也不要把目录扫描总时限改短。未跑完只能记缺口，不能当零发现。\n")
-	b.WriteString("然后再验证仍可能造成实际危害的认证、越权、注入、敏感数据或后台入口，确认危害后立即记录漏洞。关联资产已测完或已 blocked，且没有新的可验证危害，再交付完整报告，并写明未处置组仍未覆盖。\n")
+	b.WriteString("【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。本段只验证可疑入口和线索，不补台账。\n")
+	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组。不要逐 URL 请求，不要写端点事实，不要打开覆盖检查文件，不要把未测地址写成 N/A、negated 或已安全。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
+	b.WriteString("只验证已有线索里能造成命令执行、可解析上传、SQL 注入、手机号等敏感信息、未授权、越权或手机号撞库的入口。付费文章、无敏感信息的下载、邮箱或用户名枚举不测也不记。下载文件必须先核实含手机号等敏感信息。能升级或串成利用链的继续验证，不能升级的立即停。\n")
+	b.WriteString("http-framework-test 只打一个已选入口的对照请求，不遍历接口。确认危害后立即记录漏洞。没有新的可疑线索时，提交已确认结果和未测缺口，然后停止。\n")
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
 		for _, check := range actionable {
