@@ -38,6 +38,11 @@ type CoverageProgress struct {
 	// parsed, complete, non-expired actual recon_source; multiple originals
 	// for one execution count once. This is not a count of fact/tool rows.
 	EvidenceExecutions int
+	// HTTPExecutions counts distinct completed target-facing executions whose
+	// captured HTTP exchange was verified against a trusted original (the
+	// model's own `curl -q -sSi <url>` runs). A new verified exchange is
+	// auditable testing progress; ledger writes and file reads are not.
+	HTTPExecutions int
 	// RepairBlocked prevents automatic bookkeeping repair when progress is
 	// unknown or UnresolvedGroups > MaxAutomaticCoverageRepairGroups. It is
 	// never a waiver of missing checks or permission to finalize with gaps.
@@ -159,7 +164,7 @@ func inventoryDispositionFacts(facts []coverage.Fact, assessmentID string, sourc
 			continue
 		}
 		units, _ := e.fields["risk_units"].([]any)
-		valid, substantive := len(units) > 0, false
+		valid, substantive, attested := len(units) > 0, false, false
 		for _, raw := range units {
 			unit, ok := raw.(string)
 			risk, exists := entries[strings.TrimSpace(unit)]
@@ -185,14 +190,21 @@ func inventoryDispositionFacts(facts []coverage.Fact, assessmentID string, sourc
 					}
 					riskFields[name] = e.fields[name]
 				}
+				// 处置凭据 = 至少一个 covered 且被 HTTP 原件佐证的基线/响应单元。
+				// 其他真实风险单元（SQLi、授权、弱口令等）只说明测试更深入，
+				// 不得反过来使已成立的基线处置失效；未终结的单元仍保持未处置。
 				family := fieldText(risk.fields, "risk_family")
-				valid = valid && fieldText(risk.fields, "status") == "covered" && (family == "http-baseline" || family == "http-response") && sources.corroborates(riskFields)
+				if fieldText(risk.fields, "status") == "covered" &&
+					(family == "http-baseline" || family == "http-response") &&
+					sources.corroborates(riskFields) {
+					attested = true
+				}
 				substantive = true
 			default:
 				valid = false
 			}
 		}
-		if valid && substantive {
+		if valid && substantive && attested {
 			out = append(out, e.fact)
 		}
 	}
@@ -205,5 +217,6 @@ func (d *Decision) setCoverageProgress(progress CoverageProgress) {
 	d.CoverageUnresolvedGroups = progress.UnresolvedGroups
 	d.CoverageMappedGroups = progress.MappedGroups
 	d.CoverageEvidenceExecutions = progress.EvidenceExecutions
+	d.CoverageHTTPExecutions = progress.HTTPExecutions
 	d.CoverageRepairBlocked = progress.RepairBlocked
 }

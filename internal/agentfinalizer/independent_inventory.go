@@ -52,6 +52,10 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 		report.Missing = append(report.Missing, originalsErr.Error())
 	}
 	progress.EvidenceExecutions = len(index.byExecution)
+	// Verified target-facing HTTP exchanges (e.g. the model's own
+	// `curl -q -sSi` runs against assessed hosts) are auditable testing
+	// progress. They renew the continuation clock; ledger writes never do.
+	progress.HTTPExecutions = len(index.http)
 	progress.Known = ingestionComplete && groupsErr == nil && !capped && sourcesErr == nil && originalsErr == nil
 	if groupsErr == nil {
 		// Do not confuse a copied endpoint+risk=N/A fact with an evidenced
@@ -66,9 +70,16 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 	}
 	progress.RepairBlocked = !progress.Known || progress.UnresolvedGroups > MaxAutomaticCoverageRepairGroups
 	if progress.RepairBlocked {
-		// Put the stop instruction before sample gaps so bounded consumers do
-		// not accidentally turn those samples into another repair work queue.
-		report.Missing = append([]string{coverageRepairBlockedFeedback(progress)}, report.Missing...)
+		feedback := coverageRepairBlockedFeedback(progress)
+		if progress.Known {
+			// 大规模原始候选库存不再阻断交付：以明确限制披露。原始候选
+			// 是工具输出的片段而不是业务单元，不要求也不允许逐 URL 记账；
+			// 处置证据（基线单元+原件）仍然认可，只是不作为交付门槛。
+			report.Blocked = append([]string{feedback}, report.Blocked...)
+		} else {
+			// 读取失败或入库未完成是真实的数据完整性缺口，保留阻断。
+			report.Missing = append([]string{feedback}, report.Missing...)
+		}
 	}
 	if sourcesErr != nil {
 		return progress
@@ -157,6 +168,9 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 	return progress
 }
 
+// appendIndependentInventoryChecks 把仍未处置的原始候选作为明确限制披露，
+// 而不是阻断交付的缺口。原始候选是工具输出的片段，不是业务测试单元；
+// 总数与来源全部保留，绝不把未测写成安全。
 func appendIndependentInventoryChecks(report *coverage.Report, progress CoverageProgress, missing []string) {
 	if len(missing) == 0 {
 		return
@@ -165,12 +179,12 @@ func appendIndependentInventoryChecks(report *coverage.Report, progress Coverage
 	if !progress.Known {
 		label = "observed (full total unknown)"
 	}
-	report.Missing = append(report.Missing, fmt.Sprintf("independent discovery inventory: %s=%d, mapped=%d, unresolved=%d; raw candidates are not confirmed business test units; a URL match or N/A-only risk facts are not an evidenced disposition", label, progress.InventoryGroups, progress.MappedGroups, progress.UnresolvedGroups))
+	report.Blocked = append(report.Blocked, fmt.Sprintf("independent discovery inventory: %s=%d, mapped=%d, unresolved=%d; untested/unclassified raw candidates are disclosed as explicit limitations, not safety evidence and not a per-URL repair queue", label, progress.InventoryGroups, progress.MappedGroups, progress.UnresolvedGroups))
 	if len(missing) > independentInventorySampleLimit {
-		report.Missing = append(report.Missing, missing[:independentInventorySampleLimit]...)
-		report.Missing = append(report.Missing, fmt.Sprintf("%d additional independent discovery groups lack evidenced dispositions; the displayed groups are diagnostic samples, not a per-URL repair queue", len(missing)-independentInventorySampleLimit))
+		report.Blocked = append(report.Blocked, missing[:independentInventorySampleLimit]...)
+		report.Blocked = append(report.Blocked, fmt.Sprintf("%d additional independent discovery groups remain unresolved; samples above are diagnostic samples, not a per-URL work queue", len(missing)-independentInventorySampleLimit))
 	} else {
-		report.Missing = append(report.Missing, missing...)
+		report.Blocked = append(report.Blocked, missing...)
 	}
 }
 
@@ -179,7 +193,7 @@ func coverageRepairBlockedFeedback(progress CoverageProgress) string {
 	if !progress.Known {
 		detail = "independent inventory/source progress is unknown or incomplete; zero remaining work must not be inferred"
 	}
-	return "automatic coverage repair blocked: " + detail + "; mechanical bookkeeping is paused, not substantive investigation. Continue auditable classification by authorized scope, freshness and business templates, then perform feasible independent verification while retaining original inventory totals and provenance. Pending/failed ingestion is an evidence-pipeline gap, never target safety evidence; eventual delivery must retain verified results and explicit untested/pending-classification limitations. Do not generate per-URL N/A, negated or safe facts, truncate the inventory, lower totals, or skip validation to claim completion. 停止机械补写不等于停止实际测试；先分类去重、核实范围，再执行可行验证。保留未测/待入库限制，最终必须交付包含真实成果与证据的报告。"
+	return "independent coverage inventory disclosure: " + detail + "; mechanical per-URL bookkeeping is not required and unresolved raw candidates are disclosed as explicit limitations, never as safety evidence. Continue auditable classification by authorized scope, freshness and business templates and prioritize real high-value verification; retain verified results and untested/pending-classification limitations in the final delivery. Do not generate per-URL N/A, negated or safe facts, truncate the inventory, lower totals, or skip validation to claim completion. 原始库存按未覆盖披露、不阻断交付；停止机械补写不等于停止实际测试，先分类去重、核实范围，再执行可行验证。"
 }
 
 func fieldText(fields map[string]any, key string) string {

@@ -2,6 +2,7 @@ package agentfinalizer
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,5 +154,47 @@ func TestCoverageStaticJSOnlyCountsDiscovery(t *testing.T) {
 		if got := inventoryDispositionFacts(progressFacts(0, "covered", "execution:static-execution"), "run-a", index); len(got) != 0 {
 			t.Fatalf("%s risk promoted", tool)
 		}
+	}
+}
+
+// Deeper real-world risk units (SQLi, authorization, weak passwords) document
+// more testing; they must never invalidate an evidenced baseline disposition.
+// Only the evidenced covered baseline unit itself may dispose the candidate.
+func TestCoverageBoundHTTPObservationKeepsBaselineWithDeeperRiskUnits(t *testing.T) {
+	observation := boundHTTPFixture(t)
+	index := completeCoverageSources(nil, time.Now().UnixMilli())
+	index.addHTTP(observation)
+
+	facts := progressFacts(0, "covered", "execution:http-execution")
+	facts[1].Body = strings.ReplaceAll(facts[1].Body, "access-control", "http-baseline")
+
+	endpointID, _ := coverage.EndpointKey("https://inventory.invalid/item/0", "GET")
+	endpointKey := "recon/endpoint/run-a/" + endpointID
+	sqliKey := "recon/risk/run-a/item-0-sqli"
+	sqli, _ := json.Marshal(map[string]any{
+		"assessment_id": "run-a", "endpoint_key": endpointKey, "risk_family": "sqli", "identity": "anonymous",
+		"status": "negated", "evidence": "boolean and time probes show no differential",
+	})
+	var endpoint map[string]any
+	if err := json.Unmarshal([]byte(facts[0].Body), &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	endpoint["risk_units"] = []string{facts[1].Key, sqliKey}
+	body, err := json.Marshal(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts[0].Body = string(body)
+	facts = append(facts, coverage.Fact{Key: sqliKey, Body: string(sqli)})
+
+	if got := inventoryDispositionFacts(facts, "run-a", index); len(got) != 1 {
+		t.Fatalf("evidenced baseline invalidated by deeper risk units: mapped=%d want=1", len(got))
+	}
+
+	// Without any evidenced baseline unit the endpoint stays unresolved even
+	// when other terminal risk units exist.
+	facts[1].Body = strings.ReplaceAll(facts[1].Body, "http-baseline", "access-control")
+	if got := inventoryDispositionFacts(facts, "run-a", index); len(got) != 0 {
+		t.Fatalf("baseline-free endpoint was disposed: mapped=%d want=0", len(got))
 	}
 }

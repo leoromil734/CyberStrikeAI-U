@@ -49,6 +49,9 @@ TOOLS_BIN_DIR="${TOOLS_BIN_DIR:-/usr/local/bin}"
 # Official CLI uses cgo/tree-sitter; pin the upstream Go module revision.
 JSLUICE_VERSION="${JSLUICE_VERSION:-v0.0.0-20240110145140-0ddfab153e06}"
 ONEFORALL_HOME="${ONEFORALL_HOME:-/opt/OneForAll}"
+# BBOT（OSINT/攻击面侦察）：pipx 安装进已挂载的 /opt/pipx，模块依赖预装到该只读运行目录
+BBOT_HOME="${BBOT_HOME:-/opt/bbot-home}"
+BBOT_PRESETS="${BBOT_PRESETS:-subdomain-enum web spider}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=21
@@ -199,6 +202,8 @@ TOOLS_CORE_EXTRA=(
   "zsteg|zsteg|script|install_zsteg"
   # 子域深度收集（YAML: tools/oneforall.yaml）；与 subfinder 互补
   "oneforall|oneforall|script|install_oneforall"
+  # 攻击面侦察框架（YAML: tools/bbot.yaml）；沙箱托管启动器 csai-bbot
+  "bbot|bbot|script|install_bbot"
   # JS 端点提取（YAML: tools/jsluice.yaml）；katana 后展开 recon/endpoint
   "jsluice|jsluice|script|install_jsluice"
   # API skill 常用：OpenAPI lint + GraphQL 扫描（YAML: api-schema-analyzer / graphql-scanner）
@@ -1213,6 +1218,54 @@ install_oneforall() {
     mark_ok "$name → ${TOOLS_BIN_DIR}/oneforall (只读安装目录；每执行独立状态)"
   else
     mark_fail "$name" "只读运行适配失败；请检查源版本、massdns架构/权限及准备脚本说明"
+  fi
+}
+
+# BBOT: OSINT/attack-surface framework. pipx installs it into the mounted
+# /opt/pipx runtime, module dependencies are prepared at install time in
+# $BBOT_HOME and mounted read-only. Scans therefore never install anything, and
+# the managed launcher (csai-bbot) keeps every scan inside the workspace
+# sandbox: no target is contacted here (dependency preparation uses --dry-run).
+install_bbot() {
+  local name="bbot" home="$BBOT_HOME" launcher="${TOOLS_BIN_DIR}/csai-bbot"
+  local runner="$SCRIPT_DIR/scripts/recon/bbot_runner.py"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    info "[dry-run] BBOT → PIPX_HOME=/opt/pipx pipx install bbot；依赖预装到 $home；发布 $launcher"
+    mark_ok "$name"; return 0
+  fi
+  if [[ ! -f "$runner" ]]; then
+    mark_fail "$name" "缺少 scripts/recon/bbot_runner.py"; return 0
+  fi
+  if ! command -v pipx >/dev/null 2>&1; then
+    mark_fail "$name" "pipx 不可用"; return 0
+  fi
+  # 已有安装不重装（--force 时重新安装）；但每次都会刷新托管启动器与依赖预装
+  if [[ "$FORCE_REINSTALL" -eq 1 || ! -x /opt/pipx/venvs/bbot/bin/bbot ]]; then
+    if ! run_cmd env PIPX_HOME=/opt/pipx PIPX_BIN_DIR="$TOOLS_BIN_DIR" pipx install --force bbot; then
+      mark_fail "$name" "pipx 安装失败"; return 0
+    fi
+  fi
+  mkdir -p /opt/cyberstrike-tool-runtime/scripts/recon
+  if ! cp -f "$runner" /opt/cyberstrike-tool-runtime/scripts/recon/bbot_runner.py; then
+    mark_fail "$name" "启动器发布失败"; return 0
+  fi
+  chmod 0644 /opt/cyberstrike-tool-runtime/scripts/recon/bbot_runner.py
+  cat > "$launcher" <<'EOF'
+#!/bin/sh
+# CyberStrikeAI managed BBOT launcher: workspace sandbox only, prepared runtime
+exec /opt/pipx/venvs/bbot/bin/python3 -B /opt/cyberstrike-tool-runtime/scripts/recon/bbot_runner.py "$@"
+EOF
+  chmod 0755 "$launcher"
+  mkdir -p "$home"
+  # shellcheck disable=SC2086  # BBOT_PRESETS 故意按空格拆成多个预设
+  if ! run_cmd env bbot -t example.com -p $BBOT_PRESETS --dry-run -y -c "home=$home"; then
+    warn "BBOT 依赖预装未完成；运行期以 --no-deps 运行，缺依赖模块会自行报错（可稍后重跑本函数）"
+  fi
+  chmod -R a+rX "$home" 2>/dev/null || true
+  if "$launcher" --check-runtime >/dev/null 2>&1; then
+    mark_ok "$name → $launcher（预装 home: $home；只读运行）"
+  else
+    mark_fail "$name" "托管启动器自检失败：$launcher --check-runtime"
   fi
 }
 

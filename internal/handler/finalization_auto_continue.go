@@ -51,6 +51,7 @@ type finalizationContinuationState struct {
 	CoverageObserved            bool
 	CoverageValidFactsHighWater int
 	CoverageEvidenceHighWater   int
+	CoverageHTTPHighWater       int
 	CoverageMappedHighWater     int
 	VerificationHighWater       int
 	CoverageInventoryHighWater  int
@@ -112,13 +113,16 @@ func (s *finalizationContinuationState) shouldAutoContinue(d agentfinalizer.Deci
 	return shouldAutoContinueWithinLimit(d, attempt, s.continuationLimit(d))
 }
 
+// finalizationNeedsCoverageWork reports whether the next segment should repair
+// real, checkable gaps. Unresolved raw candidate inventory is disclosed as a
+// limitation and no longer keeps the run in a bookkeeping loop; only actual
+// coverage / missing-evidence / pending-tool reasons select coverage work.
 func finalizationNeedsCoverageWork(d agentfinalizer.Decision) bool {
 	switch d.CompletionReason {
 	case agentfinalizer.ReasonCoverageIncomplete, agentfinalizer.ReasonMissingEvidence, agentfinalizer.ReasonPendingTools:
 		return true
 	}
-	// An empty/short candidate must not hide still executable inventory work.
-	return d.CoverageRepairBlocked || d.CoverageUnresolvedGroups > 0
+	return false
 }
 
 func finalizationContinuationLimit(d agentfinalizer.Decision) int {
@@ -208,10 +212,12 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		if state.LastProgressAt.IsZero() {
 			state.StartedAt, state.LastProgressAt = now, now
 		}
-		// Ledger rows do not renew the clock. A new recon source, a new completed
-		// vulnerability-verification tool, or newly discovered test surface does.
-		// Fact writes and file reads do not.
+		// Ledger rows do not renew the clock. A new recon source, a new verified
+		// target-facing HTTP exchange, a new completed vulnerability-verification
+		// tool, or newly discovered test surface does. Fact writes and file
+		// reads do not.
 		progress := (d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater) ||
+			(d.CoverageProgressKnown && d.CoverageHTTPExecutions > state.CoverageHTTPHighWater) ||
 			d.VerificationExecutions > state.VerificationHighWater ||
 			(d.CoverageProgressKnown && d.CoverageInventoryGroups > state.CoverageInventoryHighWater)
 		if state.CoverageObserved {
@@ -242,6 +248,9 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		}
 		if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
 			state.CoverageEvidenceHighWater = d.CoverageEvidenceExecutions
+		}
+		if d.CoverageProgressKnown && d.CoverageHTTPExecutions > state.CoverageHTTPHighWater {
+			state.CoverageHTTPHighWater = d.CoverageHTTPExecutions
 		}
 		if d.CoverageProgressKnown && d.CoverageMappedGroups > state.CoverageMappedHighWater {
 			state.CoverageMappedHighWater = d.CoverageMappedGroups
@@ -598,7 +607,8 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 	}
 	var b strings.Builder
 	b.WriteString(coverageContinuationHeader)
-	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组。不要写端点事实，不要打开覆盖检查文件；按已有证据选择高价值线索，原始库存数量不等于需逐一测试的业务单元。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
+	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组：不要为库存写端点/N-A 型事实，不要打开覆盖检查文件；原始库存数量不等于需逐一测试的业务单元，未处置部分按未覆盖披露。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
+	b.WriteString("优先对已发现但未验证的高价值入口继续做实际测试（认证/授权边界、注入、上传、管理入口与开放服务）；对目标做 HTTP 测试时用 `curl -q -sSi <URL>`，可核对的原件会计为真实进展。\n")
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
 		for _, check := range actionable {

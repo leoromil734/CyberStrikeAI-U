@@ -146,14 +146,16 @@ func TestStopSummaryNeverCopiesPhaseReport(t *testing.T) {
 	}
 }
 
-func TestShortCandidateWithOpenInventoryStaysInWorkPhase(t *testing.T) {
-	s := &finalizationContinuationState{Attempts: 12, WorkAttempts: 12, DeliveryAttempts: finalizationAutoContinueMaxAttempts}
+// 回归护栏：未处置原始候选按披露处理。短报告不再因为它被误当「可执行的覆盖工作」
+// 拉回账本循环，而是走报告收尾自己的预算。
+func TestShortCandidateWithOpenInventoryUsesReportBudgetNotBookkeepingLoop(t *testing.T) {
+	s := &finalizationContinuationState{}
 	d := coverageDecision(5, "candidate is brief but tools can still progress")
 	d.CompletionReason = agentfinalizer.ReasonIncompleteCandidate
 	d.CoverageUnresolvedGroups = 200
 	d.CoverageRepairBlocked = true
 	d.CoverageEvidenceExecutions = 4
-	if !observeFinalizationContinuation(d, s) || s.WorkMode != "classify_and_verify" {
-		t.Fatalf("short prose hid executable work: %+v", s)
+	if !observeFinalizationContinuation(d, s) || s.WorkMode != "deliver_report" {
+		t.Fatalf("disclosed inventory re-entered a bookkeeping work phase: %+v", s)
 	}
 }

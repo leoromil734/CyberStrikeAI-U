@@ -69,7 +69,7 @@ func TestFinalReportAfterCoverageRepair(t *testing.T) {
 	if !repairOnly || !strings.HasPrefix(got, report) || !strings.HasSuffix(got, notice) || !strings.Contains(got, "## 最终覆盖检查补充") {
 		t.Fatalf("report lost after two repair segments: %q (repair=%v)", got, repairOnly)
 	}
-	if !strings.Contains(CoverageContinuationHeader, "然后停止") {
+	if !strings.Contains(CoverageContinuationHeader, "完整最终报告") {
 		t.Fatal("repair instruction must request the complete final deliverable")
 	}
 }
@@ -82,7 +82,8 @@ func TestCoverageContinuationSharesImpactPolicyAndDelivery(t *testing.T) {
 		t.Fatal("continuation must use the shared impact policy exactly once")
 	}
 	for _, required := range []string{
-		"只验证已有可疑入口和线索", "不补台账", "不要逐 URL 请求",
+		"优先对已发现的高价值面继续做实际验证", "不补台账", "不要无选择地遍历 URL",
+		"curl -q -sSi", "允许且鼓励",
 		"SQL 注入", "手机号撞库", "http-framework-test 只用于一个已选入口",
 		"完整最终报告", "阶段报告", "exit.final_result", "保留用户排除项",
 	} {

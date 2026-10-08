@@ -83,6 +83,10 @@ type Decision struct {
 	CoverageUnresolvedGroups   int  `json:"coverageUnresolvedGroups"`
 	CoverageMappedGroups       int  `json:"coverageMappedGroups"`
 	CoverageEvidenceExecutions int  `json:"coverageEvidenceExecutions"`
+	// CoverageHTTPExecutions counts verified target-facing HTTP exchanges in
+	// this conversation; a new one renews the continuation clock even when no
+	// new ledger row or recon source appears.
+	CoverageHTTPExecutions int `json:"coverageHttpExecutions"`
 	// VerificationExecutions counts completed target-facing tool runs in this
 	// conversation. Ledger reads and fact writes are excluded. A new completed
 	// verification renews continuation; bookkeeping does not.
@@ -259,6 +263,9 @@ func Decide(db *database.DB, in Input) Decision {
 	d.CoverageValidFacts = coverage.ValidFacts
 	d.setCoverageProgress(coverage.Progress)
 	d.VerificationExecutions = countVerificationExecutions(db, in.ConversationID)
+	// 限制披露必须随每一个判定分支返回，包括仍有真实缺口而阻断的分支；
+	// 未处置的原始候选库存是披露项，不是阻断项。
+	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)
 
 	// 文本非空但明显是半截话（「接下来我去看 X」或缺少句末标点）：不能交付，交给自动续跑再跑一段。
 	if why := incompleteCandidateReason(text); why != "" {
@@ -294,7 +301,6 @@ func Decide(db *database.DB, in Input) Decision {
 		return d
 	}
 	d.EvidenceRefs = append(d.EvidenceRefs, coverage.EvidenceRefs...)
-	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)
 	if (in.RequireCoverageEvidence || coverage.Active) && !multiagent.HasAssessmentReportBody(text) {
 		d.Status, d.CompletionReason = StatusInProgress, ReasonIncompleteCandidate
 		d.EvidenceVerified = false
@@ -349,6 +355,7 @@ func ResponsePayload(d Decision, extra map[string]interface{}) map[string]interf
 		"coverageUnresolvedGroups":   d.CoverageUnresolvedGroups,
 		"coverageMappedGroups":       d.CoverageMappedGroups,
 		"coverageEvidenceExecutions": d.CoverageEvidenceExecutions,
+		"coverageHttpExecutions":     d.CoverageHTTPExecutions,
 		"coverageRepairBlocked":      d.CoverageRepairBlocked,
 	}
 	if !d.Finalizable {

@@ -517,7 +517,7 @@ sudo ./install-tools-ubuntu24.sh --list          # 查看本 profile 会装什�
 | Profile | 覆盖（与 skill 常用工具对齐） |
 | --- | --- |
 | minimal | nmap/masscan/sqlmap/ffuf/nuclei/subfinder/httpx-pd 等基线 |
-| core | + amass/oneforall/jsluice/dnsx/naabu/katana/dalfox/arjun/netexec/impacket/**spectral**/ **graphqlmap**/fscan/feroxbuster/trivy… |
+| core | + amass/oneforall/jsluice/dnsx/naabu/katana/dalfox/arjun/netexec/impacket/**spectral**/ **graphqlmap**/fscan/feroxbuster/trivy/**bbot**… |
 | full | + prowler/pacu/kube-*/ **responder**/scoutsuite/cloudmapper/dotdotpwn/linpeas… |
 
 需 API Key 的空间引擎（fofa/shodan/zoomeye/quake）YAML 默认 `enabled: false`，配好密钥后再开。

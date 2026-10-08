@@ -13,11 +13,14 @@ import (
 const coverageRepairInstructionPrefix = "【系统自动续跑 / Auto resume】\n结构化覆盖检查尚未通过。"
 
 // CoverageWorkContinuationHeader selects verification work without turning an
-// incomplete inventory into a bookkeeping loop or a successful assessment.
-const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明。本段只验证已有可疑入口和线索，不补台账。保留用户排除项，不重复、不扩范围。\n" +
-	"不要逐 URL 请求，不要为库存写 fact，不要把未测地址写成 N/A、negated 或已覆盖。未测范围保留为缺口。\n" +
+// incomplete inventory into a bookkeeping loop. Chosen high-value surface tests
+// are explicitly allowed; only mechanical URL walking and fabricated facts are
+// forbidden. Verified `curl -q -sSi` exchanges renew the work budget.
+const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明。本段优先对已发现的高价值面继续做实际验证，不补台账。保留用户排除项，不重复、不扩范围。\n" +
+	"不要为库存机械补写 fact、不要把未测地址写成 N/A/negated/已覆盖、不要无选择地遍历 URL；对未测的高价值入口做有选择的基线/深入测试是允许且鼓励的。\n" +
+	"对目标做 HTTP 测试时优先用 `curl -q -sSi <URL>`（单次直连、-i 保留响应头）：这类可核对的原件会计为真实进展并自动续期工作预算，python 脚本请求与管道组合不会被记录。\n" +
 	projectprompt.HighImpactFindingPolicy + "\n" +
-	"http-framework-test 只用于一个已选入口的对照，不用于遍历接口。符合筛选且确认危害后 record_vulnerability。没有新的可疑线索或预算耗尽时交完整最终报告：成果、执行/原件引用、负结果、未测缺口与限制，然后停止；覆盖不完整只能交阶段报告。Deep/Supervisor 根角色用 exit.final_result 提交报告全文。\n"
+	"http-framework-test 只用于一个已选入口的对照，不用于遍历接口。符合筛选且确认危害后 record_vulnerability。没有可推进的高价值面或预算耗尽时交完整最终报告：成果、执行/原件引用、负结果、未测缺口与限制；覆盖不完整只能交阶段报告。Deep/Supervisor 根角色用 exit.final_result 提交报告全文。\n"
 
 // CoverageContinuationHeader remains an alias for existing callers and saved
 // traces; both paths must use the same finding selection and stop conditions.

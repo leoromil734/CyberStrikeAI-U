@@ -174,7 +174,7 @@ func stoppedGapLabel(check string) string {
 		return "仍有人工审批相关限制，需先核对审批和授权状态。"
 	case strings.Contains(check, "original ingestion"), strings.Contains(check, "partial/unsupported source"):
 		return "原始结果入库、解析或完整性仍有缺口，需核对对应执行及来源。"
-	case strings.Contains(check, "independent"), strings.Contains(check, "discovery inventory"), strings.Contains(check, "automatic coverage repair blocked"):
+	case strings.Contains(check, "independent"), strings.Contains(check, "discovery inventory"), strings.Contains(check, "automatic coverage repair blocked"), strings.Contains(check, "coverage inventory disclosure"):
 		return "独立候选库存仍有未关联、未处置或无法核实的分组，不能只靠补写台账完成评估。"
 	case strings.Contains(check, "recon/source"), strings.Contains(check, "reconnaissance source"), strings.Contains(check, "execution evidence"), strings.Contains(check, "actual execution"):
 		return "来源或完成态执行证据缺失／不匹配，需核对实际执行与原始结果。"

@@ -88,14 +88,25 @@ func TestCoverageRepairScopeThresholdDoesNotTruncateInventory(t *testing.T) {
 			if !progress.Known || progress.InventoryGroups != total || progress.UnresolvedGroups != total || progress.MappedGroups != 0 || progress.RepairBlocked != (total > MaxAutomaticCoverageRepairGroups) {
 				t.Fatalf("inventory/boundary changed: %+v", progress)
 			}
-			if total == 0 && len(report.Missing) != 0 {
-				t.Fatalf("known empty inventory created gaps: %v", report.Missing)
+			if total == 0 {
+				if len(report.Missing) != 0 || len(report.Blocked) != 0 {
+					t.Fatalf("known empty inventory created gaps: %v / %v", report.Missing, report.Blocked)
+				}
+				return
+			}
+			if len(report.Missing) != 0 {
+				t.Fatalf("unresolved raw candidates must be disclosed, not block delivery: %v", report.Missing)
+			}
+			feedback := strings.Join(report.Blocked, "\n")
+			for _, required := range []string{fmt.Sprintf("total=%d", total), "independent discovery inventory", "untested/unclassified raw candidates", "not a per-URL repair queue"} {
+				if !strings.Contains(feedback, required) {
+					t.Fatalf("missing inventory disclosure %q: %s", required, feedback)
+				}
 			}
 			if total > MaxAutomaticCoverageRepairGroups {
-				feedback := strings.Join(report.Missing, "\n")
-				for _, required := range []string{fmt.Sprintf("total=%d", total), "diagnostic samples", "automatic coverage repair blocked", "verified results", "untested/pending-classification", "authorized scope, freshness and business templates", "Do not generate per-URL N/A"} {
+				for _, required := range []string{"independent coverage inventory disclosure", "verified results", "untested/pending-classification", "authorized scope, freshness and business templates", "Do not generate per-URL N/A"} {
 					if !strings.Contains(feedback, required) {
-						t.Fatalf("missing conservative feedback %q: %s", required, feedback)
+						t.Fatalf("missing conservative disclosure %q: %s", required, feedback)
 					}
 				}
 				if got := strings.Count(feedback, "has no matching ledger disposition"); got != independentInventorySampleLimit {
@@ -106,7 +117,7 @@ func TestCoverageRepairScopeThresholdDoesNotTruncateInventory(t *testing.T) {
 	}
 }
 
-func TestCoverageProgressHistorical25735CannotBecomeNARepairQueue(t *testing.T) {
+func TestCoverageProgressHistorical25735IsDisclosedNotBlocking(t *testing.T) {
 	db, project, conversation, message := coverageTestDB(t)
 	seedProgressInventory(t, db, project, conversation, "run-a", 25735)
 	seedProgressSource(t, db, project, conversation, "run-a", progressSource("archive-source", "archive", "gau"))
@@ -115,7 +126,8 @@ func TestCoverageProgressHistorical25735CannotBecomeNARepairQueue(t *testing.T) 
 	before, _ := checkProgressFixture(t, db, project, conversation, nil)
 	// This deterministic offline fixture models the historical URL-by-URL
 	// bookkeeping loop. Even copied real source references do not make an
-	// N/A-only ledger dispose of raw candidates.
+	// N/A-only ledger dispose of raw candidates; unresolved candidates stay
+	// disclosed as limitations and never block delivery.
 	facts := make([]coverage.Fact, 0, 25735*2)
 	for i := 0; i < 25735; i++ {
 		facts = append(facts, progressFacts(i, "not-applicable", "execution:baseline")...)
@@ -125,11 +137,15 @@ func TestCoverageProgressHistorical25735CannotBecomeNARepairQueue(t *testing.T) 
 		if progress != before || !progress.RepairBlocked || progress.UnresolvedGroups != 25735 {
 			t.Fatalf("%d N/A pairs manufactured progress: before=%+v after=%+v", written, before, progress)
 		}
-		if !strings.Contains(strings.Join(report.Missing, "\n"), "25705 additional independent discovery groups") {
-			t.Fatalf("full missing count was truncated: %v", report.Missing)
+		if len(report.Missing) != 0 {
+			t.Fatalf("%d N/A pairs still blocked delivery: %v", written, report.Missing)
+		}
+		if !strings.Contains(strings.Join(report.Blocked, "\n"), "25705 additional independent discovery groups") {
+			t.Fatalf("full disclosure count was truncated: %v", report.Blocked)
 		}
 	}
-	// Lowering the manifest to zero cannot hide the separate original inventory.
+	// Lowering the manifest to zero cannot hide the separate original inventory
+	// from disclosure.
 	persistCoverage(t, db, project, conversation, "passed")
 	if _, err := db.BeginAssessmentRun(conversation, project, "", "", database.AssessmentModeComprehensive, "run-a"); err != nil {
 		t.Fatal(err)
@@ -139,8 +155,8 @@ func TestCoverageProgressHistorical25735CannotBecomeNARepairQueue(t *testing.T) 
 		t.Fatal(err)
 	}
 	d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: "当前已验证成果与未测范围已整理。", MCPExecutionIDs: []string{"baseline"}})
-	if d.Finalizable || d.CompletionReason != ReasonCoverageIncomplete || !d.CoverageProgressKnown || !d.CoverageRepairBlocked || d.CoverageInventoryGroups != 25735 || d.CoverageUnresolvedGroups != 25735 || d.CoverageEvidenceExecutions != 3 {
-		t.Fatalf("self-consistent zero manifest bypassed raw inventory: %+v", d)
+	if d.Finalizable || d.CompletionReason == ReasonCoverageIncomplete || !d.CoverageProgressKnown || !d.CoverageRepairBlocked || d.CoverageInventoryGroups != 25735 || d.CoverageUnresolvedGroups != 25735 || d.CoverageEvidenceExecutions != 3 || len(d.CoverageBlockers) == 0 {
+		t.Fatalf("unresolved raw inventory must be disclosed, not blocking: %+v", d)
 	}
 }
 
@@ -275,8 +291,8 @@ func TestCoverageProgressMissingManifestStillChecksGovernedInventory(t *testing.
 	}
 	for _, response := range []string{"当前已验证成果与未测范围已整理。", "接下来我会继续补写。"} {
 		d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: response})
-		if d.Finalizable || !d.CoverageProgressKnown || !d.CoverageRepairBlocked || d.CoverageInventoryGroups != 101 || d.CoverageUnresolvedGroups != 101 || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "automatic coverage repair blocked") {
-			t.Fatalf("missing manifest/evidence or incomplete response hid raw inventory: %+v", d)
+		if d.Finalizable || !d.CoverageProgressKnown || !d.CoverageRepairBlocked || d.CoverageInventoryGroups != 101 || d.CoverageUnresolvedGroups != 101 || len(d.CoverageBlockers) == 0 || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "missing recon/assessment/") {
+			t.Fatalf("missing manifest/evidence or incomplete response hid raw inventory disclosure: %+v", d)
 		}
 	}
 }
@@ -355,6 +371,29 @@ func TestCoverageGovernedKnownEmptyInventoryRetainsExistingClosure(t *testing.T)
 	d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: coverageReportFixture("未发现可用端点，当前来源已完成核验。"), MCPExecutionIDs: []string{"baseline"}})
 	if !d.Finalizable || !d.CoverageProgressKnown || d.CoverageRepairBlocked || d.CoverageInventoryGroups != 0 || d.CoverageUnresolvedGroups != 0 || d.CoverageEvidenceExecutions != 2 {
 		t.Fatalf("known empty inventory regressed: %+v", d)
+	}
+}
+
+// 未处置原始候选披露后，完整报告仍可交付（带限制），不再被库存无限阻断。
+func TestCoverageDisclosureDoesNotBlockDeliveryWithCompleteReport(t *testing.T) {
+	db, project, conversation, message := coverageTestDB(t)
+	seedProgressInventory(t, db, project, conversation, "run-a", 3)
+	persistCoverage(t, db, project, conversation, "passed")
+	seedProgressSource(t, db, project, conversation, "run-a", progressSource("baseline-source", "baseline", "httpx"))
+	seedProgressSource(t, db, project, conversation, "run-a", progressSource("fofa-source", "fofa-empty-result", "fofa"))
+	if _, err := db.BeginAssessmentRun(conversation, project, "", "", database.AssessmentModeComprehensive, "run-a"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := db.SaveToolExecution(&mcp.ToolExecution{ID: "baseline", ToolName: "httpx", ConversationID: conversation, Status: "completed", StartTime: now, EndTime: &now}); err != nil {
+		t.Fatal(err)
+	}
+	d := Decide(db, Input{
+		ConversationID: conversation, AssistantMessageID: message,
+		Response: coverageReportFixture("评估已完成；未处置原始候选按未覆盖限制披露。"), MCPExecutionIDs: []string{"baseline"},
+	})
+	if !d.Finalizable || d.CompletionReason != ReasonVerifiedWithLimits || len(d.CoverageBlockers) == 0 || d.CoverageUnresolvedGroups != 3 || d.CoverageInventoryGroups != 3 {
+		t.Fatalf("evidenced limitations must not block delivery: %+v", d)
 	}
 }
 

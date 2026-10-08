@@ -1,0 +1,230 @@
+name: "bbot"
+command: "/usr/local/bin/csai-bbot"
+enabled: true
+
+short_description: "多模块递归攻击面侦察：子域/云/邮件/代码/Web 枚举，沙箱托管、JSONL 输出"
+
+description: |
+  BBOT（blacklanternsecurity/bbot，当前 3.0.2）是模块化递归侦察框架：从一个种子目标不断扩散出子域、
+  主机、URL、端口、技术栈、密钥线索、云资源、邮件地址等事件，比较适合作为攻击面的“广域铺开”一轮。
+
+  **运行位置与约定**
+  - 入口是 `/usr/local/bin/csai-bbot`（部署期发布）。只在工作区沙箱内运行：需要 CSAI_WORKSPACE_SANDBOX=1
+    与本次执行的产物目录，缺失即拒绝，不回退宿主机；不申请提权、不修改只读运行目录。
+  - BBOT home 固定为 `$HOME/.bbot`：`tools` 只读指向部署期预装的 `/opt/bbot-home/tools`；
+    `cache` 首次从部署期缓存播种、之后本地持久，同一工作区不会反复下载词表模型/缓存。
+  - 依赖安装器被强制关闭（`--no-deps`）。模块依赖在部署期用
+    `bbot -c home=/opt/bbot-home --install-all-deps` 预装；缺依赖模块在运行时自行报错，不影响其它模块。
+  - 扫描结果默认写在 `$CSAI_ARTIFACT_DIR/bbot-out/<扫描名>/`（`output.json`、`subdomains.txt`、`csv/` 等）。
+    stdout 默认是 JSONL 事件（一行一个），stderr 是日志与统计；`json_output: false` 可切回人类表格。
+  - 运行开始时会在 stderr 打印本次的 home、输出目录路径，便于后续读取原件。
+
+  **典型用法**
+  - 子域枚举（默认预设）：`{ "target": "example.com" }`
+  - 只跑被动模块（不直连目标系统）：`{ "target": "example.com", "require_flags": "passive" }`
+  - 子域 + 基础 Web：`{ "target": "example.com", "presets": "subdomain-enum web" }`
+  - 先验证参数、不实际扫描：`{ "target": "example.com", "dry_run": true }`
+  - 收紧并发避免超时：`{ "target": "example.com", "config_options": "dns.threads=10 dns.brute_threads=200" }`
+
+  **预设（presets）**：subdomain-enum、cloud-enum、code-enum、email-enum、web、web-heavy、spider、
+  tech-detect、wayback、wayback-heavy、virtualhost、waf-bypass、paramminer、webbrute、web-screenshots、
+  js-audit、dotnet-audit、nuclei、nuclei-budget、lightfuzz、kitchen-sink 等。
+  多个预设写进同一个 `presets` 值即可（空格或逗号分隔，启动器会展开为多个 CLI 参数）。
+
+  **限制与注意事项**
+  - 主动模块（dnsbrute、dnsbrute_mutations、webbrute、portscan、nuclei、lightfuzz…）会向目标发起大量
+    请求，仅限已授权目标；要安静时用 `require_flags: "passive"`，或 `exclude_flags: "loud invasive"`。
+  - 单次工具执行受系统超时限制（config.yaml 的 `agent.tool_timeout_minutes`，默认 10 分钟）。
+    超时会被强制终止，已写出的事件与文件保留；长扫描请拆成窄预设，或用 `config_options` 降低并发。
+  - 未配置 API Key 的被动数据源模块会 soft-fail 并给出原因，不代表目标没有问题；需要时把密钥放在
+    `/opt/bbot-home/config/secrets.yml`（部署期集中配置）。
+  - 输出可能很大：默认 JSONL 一行一个事件；需要精简时用 `brief: true`（仅 type/data/scope_description），
+    或用 `event_types` 限定事件类型。
+
+parameters:
+  - name: "target"
+    type: "string"
+    description: |
+      扫描目标（BBOT `-t`）。支持域名、IP、CIDR、URL、EMAIL、`ORG:名称`、`USER:用户名` 等。
+
+      **示例值：**
+      - "example.com"
+      - "https://www.example.com"
+      - "192.0.2.0/24"
+
+      **注意事项：**
+      - 多个目标用空格或逗号分隔（启动器会拆成多个参数）
+      - 只对已授权范围内的目标使用
+    required: true
+    flag: "-t"
+    format: "flag"
+
+  - name: "presets"
+    type: "string"
+    description: |
+      启用预设（BBOT `-p`）。预设决定了加载哪些模块与默认配置。
+
+      **示例值：**
+      - "subdomain-enum"（默认）
+      - "subdomain-enum web"
+      - "wayback,js-audit"
+
+      **注意事项：**
+      - 多个预设空格或逗号分隔
+      - 只指定 `modules` 或 `require_flags` 时也可以留空——默认仍是 subdomain-enum
+    required: false
+    default: "subdomain-enum"
+    flag: "-p"
+    format: "flag"
+
+  - name: "modules"
+    type: "string"
+    description: |
+      额外启用/指定扫描模块（BBOT `-m`）。
+
+      **示例值：**
+      - "portscan"
+      - "dnsbrute webbrute"
+
+      **注意事项：**
+      - 多个模块空格或逗号分隔
+      - 与预设叠加；不确定模块名时先用 `additional_args: "-l"` 列模块
+    required: false
+    flag: "-m"
+    format: "flag"
+
+  - name: "require_flags"
+    type: "string"
+    description: |
+      只启用带指定标志的模块（BBOT `-rf`）。最常用的是 `passive`：完全不直连目标系统。
+
+      **示例值：**
+      - "passive"
+      - "safe"
+
+      **注意事项：**
+      - 多个标志空格分隔；仅当模块同时具备全部标志时才启用
+      - 被动模式覆盖率低于主动模式，是取舍而非替代
+    required: false
+    flag: "-rf"
+    format: "flag"
+
+  - name: "exclude_flags"
+    type: "string"
+    description: |
+      排除带指定标志的模块（BBOT `-ef`）。
+
+      **示例值：**
+      - "loud"（去掉产生大量流量的模块）
+      - "loud invasive"
+
+      **注意事项：**
+      - 多个标志空格分隔
+      - 与 require_flags 同时使用时结果取交集
+    required: false
+    flag: "-ef"
+    format: "flag"
+
+  - name: "event_types"
+    type: "string"
+    description: |
+      只显示这些事件类型（BBOT `--event-types`），用于限制 stdout 体量。
+
+      **示例值：**
+      - "DNS_NAME"
+      - "DNS_NAME,URL"
+
+      **注意事项：**
+      - 多个类型空格或逗号分隔
+      - 只是显示过滤，输出文件里仍保留全部事件
+    required: false
+    flag: "--event-types"
+    format: "flag"
+
+  - name: "scan_name"
+    type: "string"
+    description: |
+      本次扫描的名称（BBOT `-n`），决定输出子目录名 `<输出目录>/<scan_name>/`。
+
+      **示例值：**
+      - "site-subdomain-round1"
+
+      **注意事项：**
+      - 不填时由 BBOT 随机命名；填了更便于后续步骤定位原件
+      - 同一名称重复使用可能冲突，建议带轮次后缀
+    required: false
+    flag: "-n"
+    format: "flag"
+
+  - name: "config_options"
+    type: "string"
+    description: |
+      覆盖 BBOT 配置项（BBOT `-c`，点号 key=value，可写多个）。
+
+      **示例值：**
+      - "dns.threads=10 dns.brute_threads=200"
+      - "web.spider_depth=1 web.spider_distance=1"
+      - "speculate=False"
+
+      **注意事项：**
+      - 不要在这里设置 `home`：运行目录由启动器托管，设置会被忽略/拒绝
+      - 降低并发有助于避免系统单次工具超时
+    required: false
+    flag: "-c"
+    format: "flag"
+
+  - name: "json_output"
+    type: "bool"
+    description: |
+      stdout 输出 JSONL 事件（BBOT `--json`）。默认开启，便于机器解析与后续入库。
+
+      **注意事项：**
+      - 关闭后是 BBOT 的人类表格输出，更适合人工阅读
+      - JSON 事件体积更大，必要时配合 `brief` 精简
+    required: false
+    default: true
+    flag: "--json"
+    format: "flag"
+
+  - name: "brief"
+    type: "bool"
+    description: |
+      精简模式（BBOT `--brief`）：每条事件只保留 type、data、scope_description。
+
+      **注意事项：**
+      - 会丢弃 severity、confidence 等字段，漏洞类事件建议关闭
+      - 适合大范围子域/URL 清单类输出
+    required: false
+    default: false
+    flag: "--brief"
+    format: "flag"
+
+  - name: "dry_run"
+    type: "bool"
+    description: |
+      只加载模块并校验参数，不实际扫描（BBOT `--dry-run`）。
+
+      **注意事项：**
+      - 用于确认预设/模块/参数组合是否可加载，不产生任何目标流量
+      - 会打印启用模块清单（stderr）
+    required: false
+    default: false
+    flag: "--dry-run"
+    format: "flag"
+
+  - name: "additional_args"
+    type: "string"
+    description: |
+      追加到命令末尾的额外 BBOT 参数（按空格拆分，追加在最后）。
+
+      **示例值：**
+      - "-l"（列出全部模块，不扫描）
+      - "-lp"（列出预设）
+      - "-mh dnsbrute"（查看某模块帮助）
+      - "--force"（模块 setup 失败时仍继续）
+
+      **注意事项：**
+      - 需要 nargs 多值参数的吞参数行为（例如 `-b` 黑名单）时放在这里
+      - 不要覆盖 `-o`/`--json`/-c home 等由启动器托管的选项
+    required: false
+    format: "positional"
