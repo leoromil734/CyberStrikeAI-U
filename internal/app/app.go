@@ -32,6 +32,7 @@ import (
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/monitor"
 	"cyberstrike-ai/internal/multiagent"
+	"cyberstrike-ai/internal/pilab"
 	"cyberstrike-ai/internal/robot"
 	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/skillpackage"
@@ -77,6 +78,7 @@ type App struct {
 	experienceHandler  *handler.ExperienceHandler
 	experienceCancel   context.CancelFunc
 	experienceDone     <-chan struct{}
+	piLab              *pilab.Manager // 独立 PI 试验；默认关闭，不使用生产任务调度
 }
 
 // New 创建新应用
@@ -491,6 +493,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		c2WatchdogCancel:   watchdogCancel,
 		c2Handler:          c2Handler,
 		auditSvc:           auditSvc,
+		piLab:              pilab.New(pilab.OptionsFromEnv()),
 	}
 	// 飞书/钉钉长连接（无需公网），启用时在后台启动；后续前端应用配置时会通过 RestartRobotConnections 重启
 	app.startRobotConnections()
@@ -778,6 +781,9 @@ func (a *App) RunWithContext(ctx context.Context) error {
 
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
+	if a.piLab != nil {
+		a.piLab.Close()
+	}
 	if a.experienceCancel != nil {
 		a.experienceCancel()
 		if a.experienceDone != nil {
@@ -968,6 +974,9 @@ func setupRoutes(
 		robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
 	}
 
+	piLabHandler := handler.NewPILabHandler(app.piLab, configHandler.ResolvePILabModel)
+	piLabStartLimiter := security.NewRateLimiter(5, time.Minute)
+	piLabCheckLimiter := security.NewRateLimiter(20, time.Minute)
 	protected := api.Group("")
 	protected.Use(security.AuthMiddleware(authManager))
 	protected.Use(security.RBACMiddlewareWithDenyHook(app.db, func(c *gin.Context, reason, permission string) {
@@ -1003,6 +1012,14 @@ func setupRoutes(
 		protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
 		protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
 		protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+
+		// 独立 PI 实验室：单独记录、属主权限和生命周期，不影响 Eino/批量任务。
+		protected.GET("/pi-lab/status", security.RateLimitMiddleware(piLabCheckLimiter), piLabHandler.Status)
+		protected.GET("/pi-lab/runs", piLabHandler.List)
+		protected.POST("/pi-lab/runs", security.RateLimitMiddleware(piLabStartLimiter), piLabHandler.Create)
+		protected.GET("/pi-lab/runs/:id", piLabHandler.Get)
+		protected.GET("/pi-lab/runs/:id/events", piLabHandler.Events)
+		protected.POST("/pi-lab/runs/:id/cancel", piLabHandler.Cancel)
 
 		// Eino ADK 单代理（ChatModelAgent + Runner；不依赖 multi_agent.enabled）
 		protected.POST("/eino-agent", agentHandler.EinoSingleAgentLoop)

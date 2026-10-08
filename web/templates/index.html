@@ -30,9 +30,10 @@
     <link rel="stylesheet" href="/static/css/model-management.css?v=20261003-layout2">
     <link rel="stylesheet" href="/static/css/ai-channel-probes.css?v=20261005-1">
     <link rel="stylesheet" href="/static/css/task-detail.css?v=20261005-1">
+    <link rel="stylesheet" href="/static/css/pi-lab.css?v=20261008-1">
     <link rel="stylesheet" href="/static/css/c2.css">
     <link rel="stylesheet" href="/static/vendor/xterm.css">
-    <script src="/static/js/router.js?v=20260929-perf1"></script>
+    <script src="/static/js/router.js?v=20261008-pi-lab1"></script>
 </head>
 <body>
     <div id="login-overlay" class="login-overlay" style="display: none;">
@@ -388,6 +389,14 @@
                             <div class="nav-submenu-item" data-page="skills-management" onclick="switchPage('skills-management')">
                                 <span data-i18n="nav.skillsManagement">技能管理</span>
                             </div>
+                        </div>
+                    </div>
+                    <div class="nav-item" data-page="pi-lab" data-require-permission="agent:execute">
+                        <div class="nav-item-content" data-title="PI 实验室" role="button" tabindex="0" onclick="switchPage('pi-lab')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchPage('pi-lab');}">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M9 3h6M10 3v6l-6 10a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2L14 9V3M8 15h8"></path>
+                            </svg>
+                            <span>PI 实验室</span>
                         </div>
                     </div>
                     <div class="nav-item nav-item-has-submenu" data-page="agents">
@@ -2889,6 +2898,76 @@
                             <div class="loading-spinner" data-i18n="common.loading">加载中…</div>
                         </div>
                         <div id="chat-files-pagination" class="chat-files-pagination pagination" hidden></div>
+                    </div>
+                </div>
+
+                <!-- PI 原生运行时独立实验页：不替换任务管理或 Eino。 -->
+                <div id="page-pi-lab" class="page" data-require-permission="agent:execute">
+                    <div class="page-header">
+                        <div class="pi-lab-heading">
+                            <span class="pi-lab-heading-mark" aria-hidden="true">PI</span>
+                            <div><h2>PI 实验室</h2><p>原生 PI 底层 Agent 试验 · 多 Agent 派发 / 路线 / 脆弱面</p></div>
+                        </div>
+                        <div class="page-header-actions"><button id="pi-lab-refresh" type="button" class="btn-secondary">刷新状态</button></div>
+                    </div>
+                    <div class="page-content pi-lab-content">
+                        <div class="pi-lab-boundary">
+                            <strong>独立试验，不替换当前任务与现有引擎。</strong>
+                            <p>首版仅检查原始需求中明示的公网 URL（含授权来源根地址），执行 GET/HEAD 并返回响应头和内容哈希，不分析正文。Shell 与现有工具不联动。应用层隔离不是操作系统安全沙箱；离开本页只停止刷新，不取消后端试验。</p>
+                        </div>
+                        <div id="pi-lab-runtime-status" class="pi-lab-runtime" role="status" aria-live="polite">正在检查 PI 实验运行时…</div>
+                        <details class="pi-lab-runtime-info"><summary>运行时、工具与限制说明</summary><p id="pi-lab-runtime-detail"></p><p id="pi-lab-tools"></p></details>
+                        <div class="pi-lab-layout">
+                            <aside class="pi-lab-sidebar" aria-label="本人独立试验与创建表单">
+                                <section class="pi-lab-panel">
+                                    <div class="pi-lab-panel-head"><h3>我的试验 <span id="pi-lab-runs-count" class="pi-lab-count">0</span></h3><button id="pi-lab-new" type="button" class="btn-secondary btn-small">新建</button></div>
+                                    <p class="pi-lab-muted">后端仅允许属主访问；实验关闭时仍可浏览历史。</p>
+                                    <p id="pi-lab-list-error" class="pi-lab-error" role="alert" hidden></p>
+                                    <div id="pi-lab-runs" class="pi-lab-runs"><p class="pi-lab-empty">正在读取本人试验…</p></div>
+                                </section>
+                                <section class="pi-lab-panel">
+                                    <div class="pi-lab-panel-head"><h3>创建独立试验</h3><span class="pi-lab-count">实验性</span></div>
+                                    <form id="pi-lab-form" class="pi-lab-form">
+                                        <div class="pi-lab-field"><label for="pi-lab-title">试验标题</label><input id="pi-lab-title" type="text" required maxlength="120" placeholder="例如：授权站点低影响检查"></div>
+                                        <div class="pi-lab-field">
+                                            <label for="pi-lab-scope">授权目标范围（每行一个精确 origin）</label>
+                                            <textarea id="pi-lab-scope" rows="3" required spellcheck="false" autocomplete="off" placeholder="https://example.com&#10;https://app.example.com:8443" aria-describedby="pi-lab-scope-hint"></textarea>
+                                            <p id="pi-lab-scope-hint" class="pi-lab-muted">仅协议、主机、可选端口；不含凭据、路径、查询、片段或通配符。子域名与不同端口需逐项授权。</p>
+                                        </div>
+                                        <div class="pi-lab-field"><label for="pi-lab-prompt">测试需求</label><textarea id="pi-lab-prompt" rows="4" required maxlength="16000" placeholder="描述分工、需要观察的现象和停止条件；如需具体路径，请明确写出完整公网 URL。请勿填写密码。"></textarea></div>
+                                        <div class="pi-lab-field"><label for="pi-lab-channel">模型渠道</label><select id="pi-lab-channel" aria-describedby="pi-lab-channel-hint"><option value="">默认模型（由后端选择）</option></select><p id="pi-lab-channel-hint" class="pi-lab-muted">仅引用已有渠道 ID，不读取或编辑凭据。</p></div>
+                                        <div class="pi-lab-limit-fields">
+                                            <div class="pi-lab-field"><label for="pi-lab-parallel">并发数</label><input id="pi-lab-parallel" type="number" min="1" max="4" step="1" value="2" required></div>
+                                            <div class="pi-lab-field"><label for="pi-lab-max-agents">子 Agent 上限</label><input id="pi-lab-max-agents" type="number" min="1" max="12" step="1" value="4" required></div>
+                                            <div class="pi-lab-field"><label for="pi-lab-timeout">时限（秒）</label><input id="pi-lab-timeout" type="number" min="60" max="1800" step="1" value="300" required></div>
+                                        </div>
+                                        <p id="pi-lab-limit-hint" class="pi-lab-muted">范围：并发 1–4，子 Agent 1–12（不含协调 Agent），时限 60–1800 秒；以后端更低上限为准。</p>
+                                        <label class="pi-lab-authorization" for="pi-lab-authorized"><input id="pi-lab-authorized" type="checkbox" required><span>我确认已获得上述精确目标范围的测试授权，同意仅进行低影响检查，并理解候选与观察结果不等于已确认漏洞。</span></label>
+                                        <p id="pi-lab-form-error" class="pi-lab-error" role="alert" hidden></p>
+                                        <button id="pi-lab-submit" class="btn-primary" type="submit" disabled>启动独立试验</button>
+                                    </form>
+                                </section>
+                            </aside>
+                            <div class="pi-lab-workspace">
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-run-title">
+                                    <div class="pi-lab-run-heading"><div><h3 id="pi-lab-run-title">选择或创建一个独立试验</h3><p id="pi-lab-run-meta" class="pi-lab-muted">历史数据由后端按属主隔离，仅可读取本人试验。</p></div><div id="pi-lab-run-status"></div></div>
+                                    <div class="pi-lab-run-actions"><button id="pi-lab-cancel" type="button" class="btn-secondary" disabled>取消试验</button><button id="pi-lab-export" type="button" class="btn-secondary" disabled>导出本地 JSON</button><span id="pi-lab-sync" class="pi-lab-muted" role="status">等待同步</span></div>
+                                    <p id="pi-lab-run-error" class="pi-lab-error" role="alert" hidden></p>
+                                    <div class="pi-lab-metrics">
+                                        <div><strong id="pi-lab-agent-count">0</strong><span>已派发 Agent</span></div>
+                                        <div><strong id="pi-lab-node-count">0</strong><span>路线节点</span></div>
+                                        <div><strong id="pi-lab-hypothesis-count">0</strong><span>候选假设</span></div>
+                                        <div><strong id="pi-lab-observed-count">0</strong><span>观察结果</span></div>
+                                    </div>
+                                    <details class="pi-lab-run-input"><summary>查看本次试验范围与需求</summary><h4>精确授权范围</h4><pre id="pi-lab-run-scope" class="pi-lab-plain">尚未选择试验。</pre><h4>测试需求</h4><pre id="pi-lab-run-prompt" class="pi-lab-plain">尚未选择试验。</pre><p id="pi-lab-run-limits" class="pi-lab-muted"></p></details>
+                                </section>
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-graph-heading"><div class="pi-lab-panel-head"><h3 id="pi-lab-graph-heading">探索路线 / 脆弱面</h3><span class="pi-lab-count">原生 SVG</span></div><p class="pi-lab-muted">箭头表示后端记录的路线关系，不表示漏洞已验证。点击节点或使用 Tab、Enter 查看详情；可横向滚动。</p><div id="pi-lab-graph" class="pi-lab-graph" tabindex="0" aria-label="可滚动的试验路线图"><p class="pi-lab-empty">选择一个试验后显示路线图。</p></div><div id="pi-lab-node-detail" class="pi-lab-node-detail"></div></section>
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-agents-heading"><div class="pi-lab-panel-head"><h3 id="pi-lab-agents-heading">Agent 派发与父子关系</h3></div><div id="pi-lab-agents" class="pi-lab-agents"><p class="pi-lab-empty">尚无 Agent 派发记录。</p></div></section>
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-findings-heading"><div class="pi-lab-panel-head"><h3 id="pi-lab-findings-heading">发现与证据</h3></div><p class="pi-lab-finding-notice">候选（hypothesis）与观察（observed）均不是已确认漏洞，不会自动写入现有漏洞管理。</p><div id="pi-lab-findings" class="pi-lab-findings"></div></section>
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-report-heading"><div class="pi-lab-panel-head"><h3 id="pi-lab-report-heading">试验报告</h3><span class="pi-lab-count">纯文本</span></div><pre id="pi-lab-report" class="pi-lab-plain pi-lab-report">暂无最终报告；这里仅呈现原始纯文本，不执行 HTML 或 Markdown。</pre></section>
+                                <section class="pi-lab-panel" aria-labelledby="pi-lab-events-heading"><div class="pi-lab-panel-head"><h3 id="pi-lab-events-heading">事件时间线</h3><span class="pi-lab-count">最新在前</span></div><p id="pi-lab-event-count" class="pi-lab-muted">已获取 0 条 · 游标 0</p><p id="pi-lab-event-error" class="pi-lab-error" role="alert" hidden></p><ol id="pi-lab-events" class="pi-lab-events"><li class="pi-lab-empty">暂无事件。</li></ol></section>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -6945,6 +7024,7 @@
     <script src="/static/js/chat-files.js"></script>
     <script src="/static/js/tasks.js?v=20261005-task-ui1"></script>
     <script src="/static/js/targets.js?v=20261002-ui1"></script>
+    <script src="/static/js/pi-lab.js?v=20261008-1"></script>
     <script src="/static/js/workflow-package-client.js"></script>
     <script src="/static/js/workflows.js"></script>
     <script src="/static/js/roles.js"></script>

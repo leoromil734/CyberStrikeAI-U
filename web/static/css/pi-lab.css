@@ -1,0 +1,123 @@
+/* PI lab is opt-in and isolated from shared page styles. */
+#page-pi-lab {
+    --pi-lab-accent-soft: rgba(0, 102, 255, .07);
+    --pi-lab-warning-ink: #946200;
+    --pi-lab-success-ink: #18723a;
+    --pi-lab-warning-bg: rgba(234, 179, 8, .09);
+}
+html[data-theme="dark"] #page-pi-lab {
+    --pi-lab-accent-soft: rgba(96, 165, 250, .12);
+    --pi-lab-warning-ink: var(--warning-color);
+    --pi-lab-success-ink: var(--success-color);
+    --pi-lab-warning-bg: rgba(251, 191, 36, .08);
+}
+#page-pi-lab[hidden], #page-pi-lab [hidden] { display: none !important; }
+#page-pi-lab .page-header { padding: 16px 22px; gap: 16px; flex-wrap: wrap; }
+#page-pi-lab .pi-lab-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+#page-pi-lab .pi-lab-heading p { margin: 3px 0 0; color: var(--text-secondary); font-size: .8rem; }
+#page-pi-lab .pi-lab-heading-mark { display: grid; place-items: center; width: 43px; height: 43px; flex-shrink: 0; border-radius: 12px; background: var(--pi-lab-accent-soft); color: var(--accent-color); font-weight: 750; letter-spacing: .04em; }
+#page-pi-lab .pi-lab-content { padding: 20px; background: var(--bg-secondary); }
+#page-pi-lab .pi-lab-boundary { border: 1px solid var(--border-color); border-left: 3px solid var(--accent-color); border-radius: 9px; background: var(--card-bg); padding: 12px 16px; margin-bottom: 12px; font-size: .8rem; }
+#page-pi-lab .pi-lab-boundary strong { font-size: .84rem; }
+#page-pi-lab .pi-lab-boundary p { margin: 4px 0 0; color: var(--text-secondary); }
+#page-pi-lab .pi-lab-runtime { background: var(--pi-lab-warning-bg); border: 1px solid var(--border-color); border-radius: 9px; color: var(--pi-lab-warning-ink); padding: 12px 16px; font-size: .82rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-runtime.is-ready { background: var(--pi-lab-accent-soft); color: var(--accent-color); }
+#page-pi-lab .pi-lab-runtime-info { padding: 9px 4px 14px; color: var(--text-secondary); font-size: .75rem; }
+#page-pi-lab .pi-lab-runtime-info p { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#page-pi-lab summary { cursor: pointer; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); align-items: start; gap: 18px; }
+#page-pi-lab .pi-lab-sidebar, #page-pi-lab .pi-lab-workspace { display: grid; gap: 16px; min-width: 0; }
+#page-pi-lab .pi-lab-panel { min-width: 0; padding: 17px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--card-bg); box-shadow: var(--shadow-sm); }
+#page-pi-lab .pi-lab-panel h3 { font-size: .94rem; margin: 0; font-weight: 650; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-panel h4 { font-size: .84rem; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-panel h5 { font-size: .78rem; margin: 9px 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-panel-head, #page-pi-lab .pi-lab-card-head, #page-pi-lab .pi-lab-run-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 11px; }
+#page-pi-lab .pi-lab-panel-head h3 { display: flex; align-items: center; gap: 8px; }
+#page-pi-lab .pi-lab-count { display: inline-block; font-size: .69rem; color: var(--text-secondary); background: var(--bg-secondary); padding: 2px 7px; border-radius: 5px; font-weight: 400; }
+#page-pi-lab .pi-lab-muted { color: var(--text-secondary); font-size: .75rem; line-height: 1.65; margin: 5px 0; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-empty { color: var(--text-secondary); text-align: center; padding: 25px 14px; font-size: .78rem; line-height: 1.7; margin: 0; }
+#page-pi-lab .pi-lab-error { color: var(--error-color); padding: 10px 12px; margin: 10px 0; border-radius: 7px; border: 1px solid var(--border-color); background: var(--bg-secondary); font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-runs { display: grid; gap: 7px; max-height: 330px; overflow-y: auto; padding: 3px; margin: 9px -3px -3px; }
+#page-pi-lab .pi-lab-run-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 12px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-primary); color: var(--text-primary); text-align: left; cursor: pointer; min-width: 0; }
+#page-pi-lab .pi-lab-run-row strong { overflow-wrap: anywhere; font-size: .8rem; font-weight: 600; }
+#page-pi-lab .pi-lab-run-row small { grid-column: 1 / -1; color: var(--text-secondary); font-size: .69rem; }
+#page-pi-lab .pi-lab-run-row:hover { background: var(--bg-secondary); }
+#page-pi-lab .pi-lab-run-row.is-selected { background: var(--pi-lab-accent-soft); border-color: var(--accent-color); }
+#page-pi-lab .pi-lab-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 5px; font-size: .69rem; font-weight: 500; line-height: 1.6; color: var(--text-secondary); background: var(--bg-tertiary); overflow-wrap: anywhere; max-width: 100%; }
+#page-pi-lab .pi-lab-status-running, #page-pi-lab .pi-lab-status-queued { background: var(--pi-lab-accent-soft); color: var(--accent-color); }
+#page-pi-lab .pi-lab-status-completed { background: rgba(40, 167, 69, .1); color: var(--pi-lab-success-ink); }
+#page-pi-lab .pi-lab-status-partial, #page-pi-lab .pi-lab-status-interrupted { background: var(--pi-lab-warning-bg); color: var(--pi-lab-warning-ink); }
+#page-pi-lab .pi-lab-status-failed { background: rgba(220, 53, 69, .09); color: var(--error-color); }
+#page-pi-lab .pi-lab-form { display: grid; gap: 13px; }
+#page-pi-lab .pi-lab-field { display: grid; gap: 5px; min-width: 0; }
+#page-pi-lab .pi-lab-field label { margin: 0; font-size: .76rem; font-weight: 550; color: var(--text-primary); }
+#page-pi-lab .pi-lab-field input, #page-pi-lab .pi-lab-field textarea, #page-pi-lab .pi-lab-field select { width: 100%; min-width: 0; padding: 9px 10px; font: inherit; font-size: .78rem; color: var(--text-primary); background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 7px; box-shadow: none; }
+#page-pi-lab .pi-lab-field textarea { resize: vertical; min-height: 76px; line-height: 1.6; }
+#page-pi-lab .pi-lab-field input::placeholder, #page-pi-lab .pi-lab-field textarea::placeholder { color: var(--text-secondary); opacity: .8; }
+#page-pi-lab .pi-lab-field p { margin: 0; font-size: .7rem; }
+#page-pi-lab .pi-lab-limit-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+#page-pi-lab .pi-lab-authorization { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border-radius: 8px; background: var(--pi-lab-warning-bg); font-size: .74rem; line-height: 1.7; cursor: pointer; }
+#page-pi-lab .pi-lab-authorization input { margin: 4px 0 0; flex: 0 0 16px; width: 16px; height: 16px; accent-color: var(--accent-color); }
+#page-pi-lab button { font-size: .78rem; min-height: 34px; }
+#page-pi-lab button:disabled { cursor: not-allowed; opacity: .48; transform: none; box-shadow: none; }
+#page-pi-lab :is(button, input, select, textarea, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
+#page-pi-lab .pi-lab-run-heading > div:first-child { flex: 1; min-width: 0; }
+#page-pi-lab .pi-lab-run-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 13px 0; }
+#page-pi-lab .pi-lab-run-actions .pi-lab-muted { margin-left: auto; }
+#page-pi-lab .pi-lab-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+#page-pi-lab .pi-lab-metrics > div { display: grid; gap: 2px; border-radius: 9px; padding: 12px; min-width: 0; background: var(--bg-secondary); border: 1px solid var(--border-color); }
+#page-pi-lab .pi-lab-metrics strong { color: var(--accent-color); font-size: 1.6rem; line-height: 1.3; font-weight: 650; font-variant-numeric: tabular-nums; }
+#page-pi-lab .pi-lab-metrics span { color: var(--text-secondary); font-size: .7rem; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-run-input { border-top: 1px solid var(--border-color); padding-top: 11px; font-size: .77rem; }
+#page-pi-lab .pi-lab-run-input h4 { margin-top: 12px; }
+#page-pi-lab .pi-lab-graph { width: 100%; overflow: auto; max-height: 490px; margin-top: 12px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-secondary); }
+#page-pi-lab .pi-lab-graph svg { display: block; min-width: 100%; max-width: none; }
+#page-pi-lab .pi-lab-graph-edge { stroke: var(--text-secondary); stroke-width: 1.4; fill: none; opacity: .65; }
+#page-pi-lab .pi-lab-graph-arrow { fill: var(--text-secondary); }
+#page-pi-lab .pi-lab-edge-label { fill: var(--text-secondary); font-size: 10px; paint-order: stroke; stroke: var(--bg-secondary); stroke-width: 3px; stroke-linejoin: round; }
+#page-pi-lab .pi-lab-graph-node { cursor: pointer; }
+#page-pi-lab .pi-lab-graph-node rect { fill: var(--card-bg); stroke: var(--border-color); stroke-width: 1.5; }
+#page-pi-lab .pi-lab-graph-node:is(:hover, :focus-visible, .is-selected) rect { stroke: var(--accent-color); stroke-width: 2; }
+#page-pi-lab .pi-lab-graph-node text { pointer-events: none; }
+#page-pi-lab .pi-lab-node-label { fill: var(--text-primary); font-size: 12px; font-weight: 600; }
+#page-pi-lab .pi-lab-node-meta { fill: var(--text-secondary); font-size: 10px; }
+#page-pi-lab .pi-lab-node-detail { margin-top: 10px; padding: 12px; border: 1px dashed var(--border-color); border-radius: 8px; min-width: 0; }
+#page-pi-lab .pi-lab-node-detail .pi-lab-empty { padding: 6px; text-align: left; }
+#page-pi-lab .pi-lab-agents { display: grid; gap: 11px; }
+#page-pi-lab .pi-lab-agent-card { min-width: 0; padding: 12px 14px; border: 1px solid var(--border-color); border-left: 3px solid var(--accent-color); border-radius: 9px; background: var(--bg-secondary); }
+#page-pi-lab .pi-lab-agent-card .pi-lab-card-head { margin-bottom: 5px; }
+#page-pi-lab .pi-lab-plain { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: .75rem; line-height: 1.75; color: var(--text-primary); background: transparent; padding: 4px 0; margin: 0; border: 0; min-width: 0; }
+#page-pi-lab .pi-lab-report { max-height: 490px; overflow: auto; padding: 14px; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); }
+#page-pi-lab .pi-lab-link { display: inline-block; max-width: 100%; color: var(--accent-color); font-size: .75rem; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+#page-pi-lab .pi-lab-finding-notice { color: var(--pi-lab-warning-ink); background: var(--pi-lab-warning-bg); font-size: .76rem; padding: 10px 12px; border-radius: 7px; margin-bottom: 14px; }
+#page-pi-lab .pi-lab-findings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+#page-pi-lab .pi-lab-finding-group { min-width: 0; }
+#page-pi-lab .pi-lab-finding-card { margin-top: 11px; padding: 12px; border-radius: 9px; border: 1px solid var(--border-color); background: var(--bg-secondary); }
+#page-pi-lab .pi-lab-finding-card > h5:first-child { margin-top: 0; font-size: .82rem; }
+#page-pi-lab .pi-lab-events { list-style: none; margin: 13px 0 0; padding: 0; max-height: 520px; overflow-y: auto; }
+#page-pi-lab .pi-lab-event { border-left: 2px solid var(--border-color); padding: 0 0 12px 14px; margin-left: 3px; }
+#page-pi-lab .pi-lab-event summary { color: var(--text-secondary); font-size: .74rem; padding: 3px 0; }
+#page-pi-lab .pi-lab-event pre { padding: 8px 10px; margin-top: 7px; border-radius: 6px; background: var(--bg-secondary); }
+@media (max-width: 1180px) {
+    #page-pi-lab .pi-lab-layout { grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 14px; }
+    #page-pi-lab .pi-lab-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #page-pi-lab .pi-lab-findings { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+    #page-pi-lab .pi-lab-layout { grid-template-columns: minmax(0, 1fr); }
+    #page-pi-lab .pi-lab-sidebar { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); align-items: start; }
+    #page-pi-lab .pi-lab-runs { max-height: 470px; }
+    #page-pi-lab .pi-lab-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+    #page-pi-lab .page-header { padding: 14px; }
+    #page-pi-lab .pi-lab-heading { align-items: flex-start; }
+    #page-pi-lab .pi-lab-content { padding: 12px; }
+    #page-pi-lab .pi-lab-panel { padding: 13px; }
+    #page-pi-lab .pi-lab-sidebar { grid-template-columns: minmax(0, 1fr); }
+    #page-pi-lab .pi-lab-runs { max-height: 230px; }
+    #page-pi-lab .pi-lab-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #page-pi-lab .pi-lab-run-actions .pi-lab-muted { flex-basis: 100%; margin-left: 0; }
+    #page-pi-lab .pi-lab-limit-fields { gap: 6px; }
+    #page-pi-lab .pi-lab-field input { padding: 9px 7px; }
+}
