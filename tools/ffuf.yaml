@@ -104,6 +104,12 @@ parameters:
     required: false
     flag: "-fs"
     format: "flag"
+  - name: "proxy"
+    type: "string"
+    description: "HTTP 代理地址（来自 proxy_get 的本地 HTTP CONNECT，如 http://127.0.0.1:PORT）；目标限流/边缘挑战持续拦截时使用；不要改写为 socks5://"
+    required: false
+    flag: "-x"
+    format: "flag"
   - name: "additional_args"
     type: "string"
     description: "额外的FFuf参数"

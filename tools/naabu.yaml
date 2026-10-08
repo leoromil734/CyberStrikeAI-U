@@ -69,6 +69,12 @@ parameters:
     flag: "-silent"
     format: "flag"
     default: true
+  - name: "proxy"
+    type: "string"
+    description: "HTTP 代理地址（来自 proxy_get 的本地 HTTP CONNECT，如 http://127.0.0.1:PORT）；部分环境服务端口连接被限速/拦截时使用；原生 TCP 扫描仅 CONNECT 类代理生效"
+    required: false
+    flag: "-proxy"
+    format: "flag"
   - name: "additional_args"
     type: "string"
     description: |

@@ -38,6 +38,12 @@ parameters:
     flag: "-t"
     format: "flag"
     default: 10
+  - name: "proxy"
+    type: "string"
+    description: "HTTP 代理地址（来自 proxy_get 的本地 HTTP CONNECT，如 http://127.0.0.1:PORT）；目标限流/边缘挑战持续拦截时使用；不要改写为 socks5://"
+    required: false
+    flag: "--proxy"
+    format: "flag"
   - name: "additional_args"
     type: "string"
     description: |
