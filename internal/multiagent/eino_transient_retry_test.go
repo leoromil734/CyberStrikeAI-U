@@ -69,6 +69,13 @@ func TestIsModelInterruptError(t *testing.T) {
 	if !IsModelInterruptError(errors.New("上游模型服务异常")) {
 		t.Fatal("upstream model error should be retried")
 	}
+	// 上游以 400 Bad Request 明确拒绝请求体（如超长/非法负载）时，原样重试必然重复失败。
+	if IsModelInterruptError(errors.New(`[NodeRunError] error, status code: 400, status: 400 Bad Request, message: Upstream error: 400`)) {
+		t.Fatal("deterministic upstream bad request must not be retried")
+	}
+	if IsModelInterruptError(errors.New("HTTP 400: Bad Request")) {
+		t.Fatal("bad request text must not be retried")
+	}
 }
 
 func TestEinoTransientRetryBackoff(t *testing.T) {

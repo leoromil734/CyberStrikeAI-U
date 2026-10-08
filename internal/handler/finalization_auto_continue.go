@@ -26,8 +26,13 @@ const (
 	// 该上限只用于兜底病态快段空转，达到时保留轨迹供人工恢复。
 	finalizationCoverageMaxAttempts     = config.DefaultCoverageContinuationMaxSegments
 	finalizationCoverageNoProgressLimit = 2
-	finalizationPendingWaitTimeout      = 20 * time.Minute
-	finalizationPendingPollInterval     = 5 * time.Second
+	// defaultIdleSegmentMaxDuration 段时长低于该值且无进展时视作「快速空转段」。
+	// 快速空转段（模型数十秒内 exit 又无任何可核查产出）连续累积会触发 exit 循环刹车。
+	defaultIdleSegmentMaxDuration = 3 * time.Minute
+	// defaultIdleSegmentLimit 连续快速空转段达到该数量时停止自动续跑，不等 90 分钟时间窗。
+	defaultIdleSegmentLimit         = 5
+	finalizationPendingWaitTimeout  = 20 * time.Minute
+	finalizationPendingPollInterval = 5 * time.Second
 )
 
 // A bounded continuation budget belongs to this request, not to a model response.
@@ -55,6 +60,10 @@ type finalizationContinuationState struct {
 	LastProgressAt      time.Time
 	StagnationWindow    time.Duration
 	CoverageMaxSegments int
+	// 快速空转（exit 风暴）治理：LastObserveAt 记录上一段结束时间以计算段时长；
+	// IdleSegments 统计连续「段过短且无进展」的段数，达到上限即停止续跑。
+	LastObserveAt time.Time
+	IdleSegments  int
 	// WorkMode changes the next action, never the coverage proof or task scope.
 	WorkMode            string
 	LastReportCandidate string
@@ -216,6 +225,21 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		if progress {
 			state.LastProgressAt = now
 		}
+		// 快速空转（exit 风暴）治理：段过短且无任何可核查进展时计数；
+		// 任何真实进展或足够长的执行段都会清零，只对「秒级 exit 循环」刹车。
+		segmentDuration := time.Duration(0)
+		if !state.LastObserveAt.IsZero() {
+			segmentDuration = now.Sub(state.LastObserveAt)
+		}
+		state.LastObserveAt = now
+		switch {
+		case progress:
+			state.IdleSegments = 0
+		case segmentDuration > 0 && segmentDuration < defaultIdleSegmentMaxDuration:
+			state.IdleSegments++
+		default:
+			state.IdleSegments = 0
+		}
 		if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
 			state.CoverageEvidenceHighWater = d.CoverageEvidenceExecutions
 		}
@@ -233,6 +257,12 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
 			state.WorkMode = "classify_and_verify"
+		}
+		// 先到先停：连续快速空转段达到上限时立即刹车，不等 90 分钟时间窗。
+		if state.IdleSegments >= defaultIdleSegmentLimit {
+			state.StopReason = fmt.Sprintf("已连续 %d 段为快速空转（每段不足 %s 且无新增可核查执行，疑似退出-重启循环）；停止自动续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，工作轨迹供人工恢复",
+				state.IdleSegments, formatStagnationDuration(defaultIdleSegmentMaxDuration))
+			return false
 		}
 		window := state.stagnationWindow()
 		if stagnant := now.Sub(state.LastProgressAt); stagnant >= window {
@@ -506,13 +536,18 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"lastProgressAt":          state.LastProgressAt,
 			"nextStopEligibleAt":      nextStopAt,
 			"coverageInventoryGroups": decision.CoverageInventoryGroups,
+			// 快速空转（exit 风暴）刹车诊断。
+			"idleSegments":        state.IdleSegments,
+			"idleBrakeAt":         defaultIdleSegmentLimit,
+			"idleSegmentMax":      formatStagnationDuration(defaultIdleSegmentMaxDuration),
+			"continuationBackoff": finalizationContinuationBackoff(state).String(),
 		})
 	}
 	select {
 	case <-taskCtx.Done():
 		stopFinalizationForContext(taskCtx, state)
 		return false
-	case <-time.After(finalizationAutoContinueBackoff(state.Attempts)):
+	case <-time.After(finalizationContinuationBackoff(state)):
 		return true
 	}
 }
@@ -610,4 +645,30 @@ func finalizationAutoContinueBackoff(attempt int) time.Duration {
 		attempt = 5
 	}
 	return time.Duration(attempt) * time.Second
+}
+
+// finalizationContinuationBackoff 在基础退避上叠加「空转段指数退避」：
+// 连续空转越多，续跑间隔越长（5s → 10s → 20s → 40s → … 5 分钟封顶），
+// 把秒级 exit 循环降速为真正可执行的节奏；正常有进展的任务不受影响。
+func finalizationContinuationBackoff(state *finalizationContinuationState) time.Duration {
+	attempt := 0
+	if state != nil {
+		attempt = state.Attempts
+	}
+	base := finalizationAutoContinueBackoff(attempt)
+	if state == nil || state.IdleSegments < 2 {
+		return base
+	}
+	idle := state.IdleSegments
+	if idle > 8 {
+		idle = 8
+	}
+	backoff := 5 * time.Second * time.Duration(1<<(idle-2))
+	if backoff > 5*time.Minute {
+		backoff = 5 * time.Minute
+	}
+	if backoff < base {
+		backoff = base
+	}
+	return backoff
 }

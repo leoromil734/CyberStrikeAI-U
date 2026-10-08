@@ -164,6 +164,11 @@ func isNonRetryableModelError(msg string) bool {
 		"maximum context length",
 		"context length exceeded",
 		"token limit",
+		// 上游明确拒绝请求体（400 Bad Request / Upstream error: 400）属于确定性失败：
+		// 原样重试只会重复被拒并浪费配额，应直接失败并交由人工/换通道处理。
+		// 「provider 400 + model busy」等文本不在此列，仍按任务级瞬时错误有限重试。
+		"bad request",
+		"upstream error: 400",
 	}
 	for _, needle := range needles {
 		if strings.Contains(msg, needle) {
