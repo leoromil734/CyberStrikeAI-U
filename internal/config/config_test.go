@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureLocalConfigCreatesFromExample(t *testing.T) {
@@ -182,6 +183,32 @@ func TestModelOutputLimitDefaultsAndValidation(t *testing.T) {
 	}
 	if err := validateModelOutputLimits(OpenAIConfig{MaxCompletionTokens: -1}, MultiAgentEinoMiddlewareConfig{}); err == nil {
 		t.Fatal("negative completion limit must fail")
+	}
+}
+
+func TestCoverageContinuationPolicyDefaultsAndValidation(t *testing.T) {
+	if DefaultCoverageContinuationStagnationWindow != 90*time.Minute {
+		t.Fatalf("Loop stagnation window default changed: %v", DefaultCoverageContinuationStagnationWindow)
+	}
+	var zero MultiAgentEinoMiddlewareConfig
+	if got := zero.CoverageContinuationStagnationEffective(); got != DefaultCoverageContinuationStagnationWindow {
+		t.Fatalf("default stagnation window = %v, want %v", got, DefaultCoverageContinuationStagnationWindow)
+	}
+	if got := zero.CoverageContinuationMaxSegmentsEffective(); got != DefaultCoverageContinuationMaxSegments {
+		t.Fatalf("default segment guard = %d, want %d", got, DefaultCoverageContinuationMaxSegments)
+	}
+	custom := MultiAgentEinoMiddlewareConfig{CoverageContinuationStagnationMinutes: 45, CoverageContinuationMaxSegments: 128}
+	if got := custom.CoverageContinuationStagnationEffective(); got != 45*time.Minute {
+		t.Fatalf("custom stagnation window = %v", got)
+	}
+	if got := custom.CoverageContinuationMaxSegmentsEffective(); got != 128 {
+		t.Fatalf("custom segment guard = %d", got)
+	}
+	if err := validateModelOutputLimits(OpenAIConfig{}, MultiAgentEinoMiddlewareConfig{CoverageContinuationStagnationMinutes: -1}); err == nil {
+		t.Fatal("negative stagnation window must fail")
+	}
+	if err := validateModelOutputLimits(OpenAIConfig{}, MultiAgentEinoMiddlewareConfig{CoverageContinuationMaxSegments: -1}); err == nil {
+		t.Fatal("negative segment guard must fail")
 	}
 }
 

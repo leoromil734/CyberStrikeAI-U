@@ -23,23 +23,50 @@ func ValidateRequest(req CreateRequest) (CreateRequest, Limits, error) {
 	if len(req.AIChannel) > 128 {
 		return req, Limits{}, fmt.Errorf("模型通道标识过长")
 	}
+	req.Mode = strings.TrimSpace(req.Mode)
+	if req.Mode == "" {
+		req.Mode = ModeProbe
+	} // Preserve existing callers and history.
+	if req.Mode != ModeProbe && req.Mode != ModePlatform {
+		return req, Limits{}, fmt.Errorf("PI 模式无效")
+	}
 	if len(req.Scope) < 1 || len(req.Scope) > 20 {
-		return req, Limits{}, fmt.Errorf("授权范围须包含 1–20 个精确 HTTP(S) 来源")
+		return req, Limits{}, fmt.Errorf("授权范围须包含 1–20 项")
+	}
+	limits := DefaultLimits
+	caps := Limits{MaxParallel: 4, MaxAgents: 12, TimeoutSeconds: 1800, MaxTurns: 20, MaxToolCalls: 256}
+	if req.Mode == ModePlatform {
+		req.ProjectID, req.Role = strings.TrimSpace(req.ProjectID), strings.TrimSpace(req.Role)
+		if req.ProjectID == "" || len(req.ProjectID) > 128 {
+			return req, Limits{}, fmt.Errorf("正式模式必须选择一个可访问的项目")
+		}
+		if req.Role == "" {
+			req.Role = "渗透测试"
+		}
+		if req.Role != "渗透测试" {
+			return req, Limits{}, fmt.Errorf("正式模式使用本项目的渗透测试角色")
+		}
+		limits, caps = DefaultPlatformLimits, PlatformLimitCaps
 	}
 	scope := []string{}
 	seen := map[string]bool{}
 	for _, raw := range req.Scope {
-		origin, err := normalizeOrigin(raw)
-		if err != nil {
-			return req, Limits{}, err
+		value := strings.TrimSpace(raw)
+		if req.Mode == ModeProbe {
+			var err error
+			value, err = normalizeOrigin(raw)
+			if err != nil {
+				return req, Limits{}, err
+			}
+		} else if value == "" || len(value) > 1024 || strings.ContainsAny(value, "\x00\r\n") {
+			return req, Limits{}, fmt.Errorf("每项授权范围须为非空单行文本，最多 1024 字节")
 		}
-		if !seen[origin] {
-			scope = append(scope, origin)
-			seen[origin] = true
+		if !seen[value] {
+			scope = append(scope, value)
+			seen[value] = true
 		}
 	}
 	req.Scope = scope
-	limits := DefaultLimits
 	if req.MaxParallel != 0 {
 		limits.MaxParallel = req.MaxParallel
 	}
@@ -49,8 +76,14 @@ func ValidateRequest(req CreateRequest) (CreateRequest, Limits, error) {
 	if req.TimeoutSeconds != 0 {
 		limits.TimeoutSeconds = req.TimeoutSeconds
 	}
-	if limits.MaxParallel < 1 || limits.MaxParallel > 4 || limits.MaxAgents < limits.MaxParallel || limits.MaxAgents > 12 || limits.TimeoutSeconds < 60 || limits.TimeoutSeconds > 1800 {
-		return req, Limits{}, fmt.Errorf("并发须为 1–4，总子 Agent 数须不小于并发且不超过 12，时限须为 60–1800 秒")
+	if req.MaxTurns != 0 {
+		limits.MaxTurns = req.MaxTurns
+	}
+	if req.MaxToolCalls != 0 {
+		limits.MaxToolCalls = req.MaxToolCalls
+	}
+	if limits.MaxParallel < 1 || limits.MaxParallel > caps.MaxParallel || limits.MaxAgents < limits.MaxParallel || limits.MaxAgents > caps.MaxAgents || limits.TimeoutSeconds < 60 || limits.TimeoutSeconds > caps.TimeoutSeconds || limits.MaxTurns < 1 || limits.MaxTurns > caps.MaxTurns || limits.MaxToolCalls < 1 || limits.MaxToolCalls > caps.MaxToolCalls {
+		return req, Limits{}, fmt.Errorf("PI 预算超出模式上限：并发 %d、子 Agent %d、时限 %d 秒、模型 %d 轮、工具 %d 次；子 Agent 数不能小于并发", caps.MaxParallel, caps.MaxAgents, caps.TimeoutSeconds, caps.MaxTurns, caps.MaxToolCalls)
 	}
 	return req, limits, nil
 }

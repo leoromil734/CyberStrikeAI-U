@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"cyberstrike-ai/internal/termout"
 
@@ -67,6 +68,12 @@ const (
 	DefaultLatestUserMessageHeadRunes                 = 24000
 	DefaultLatestUserMessageTailRunes                 = 24000
 	DefaultSummarizationOutputReserveTokens           = 8192
+	// DefaultCoverageContinuationStagnationWindow 覆盖续跑停滞窗口默认值：
+	// 连续该时长没有新增可核查进展（新漏洞验证 / 新侦察来源执行 / 新测试面发现）才停止自动续跑。
+	DefaultCoverageContinuationStagnationWindow = 90 * time.Minute
+	// DefaultCoverageContinuationMaxSegments 覆盖续跑段数安全上限默认值：
+	// 仅防病态快段空转，正常停止由停滞时间窗决定；运行总时长仍受请求级预算约束。
+	DefaultCoverageContinuationMaxSegments = 512
 )
 
 // ProjectConfig 项目黑板（跨对话共享事实）配置。
@@ -323,6 +330,12 @@ type MultiAgentEinoMiddlewareConfig struct {
 	RunRetryMaxBackoffSec int `yaml:"run_retry_max_backoff_sec,omitempty" json:"run_retry_max_backoff_sec,omitempty"`
 	// EmptyResponseContinueMaxAttempts Run 成功但未捕获助手正文时 Handler 层退避续跑次数；0=默认 5。
 	EmptyResponseContinueMaxAttempts int `yaml:"empty_response_continue_max_attempts,omitempty" json:"empty_response_continue_max_attempts,omitempty"`
+	// CoverageContinuationStagnationMinutes 覆盖续跑停滞窗口（分钟）：连续无新增可核查进展
+	// （新漏洞验证 / 新侦察来源执行 / 新测试面发现，任一）达到该时长才停止自动续跑；<=0 默认 90。
+	CoverageContinuationStagnationMinutes int `yaml:"coverage_continuation_stagnation_minutes,omitempty" json:"coverage_continuation_stagnation_minutes,omitempty"`
+	// CoverageContinuationMaxSegments 覆盖续跑段数安全上限（防病态快段空转）；<=0 默认 512。
+	// 正常停止由停滞时间窗决定；达到该上限时保留轨迹供人工恢复。
+	CoverageContinuationMaxSegments int `yaml:"coverage_continuation_max_segments,omitempty" json:"coverage_continuation_max_segments,omitempty"`
 	// TaskToolDescriptionPrefix when non-empty sets deep.Config TaskToolDescriptionGenerator (sub-agent names appended).
 	TaskToolDescriptionPrefix string `yaml:"task_tool_description_prefix,omitempty" json:"task_tool_description_prefix,omitempty"`
 }
@@ -346,6 +359,22 @@ func (c MultiAgentEinoMiddlewareConfig) ModelOutputRepairMaxAttemptsEffective() 
 		return c.ModelOutputRepairMaxAttempts
 	}
 	return DefaultModelOutputRepairMaxAttempts
+}
+
+// CoverageContinuationStagnationEffective 返回覆盖续跑停滞窗口；未配置或非正数时使用 90 分钟默认值。
+func (c MultiAgentEinoMiddlewareConfig) CoverageContinuationStagnationEffective() time.Duration {
+	if c.CoverageContinuationStagnationMinutes > 0 {
+		return time.Duration(c.CoverageContinuationStagnationMinutes) * time.Minute
+	}
+	return DefaultCoverageContinuationStagnationWindow
+}
+
+// CoverageContinuationMaxSegmentsEffective 返回覆盖续跑段数安全上限；未配置或非正数时使用 512。
+func (c MultiAgentEinoMiddlewareConfig) CoverageContinuationMaxSegmentsEffective() int {
+	if c.CoverageContinuationMaxSegments > 0 {
+		return c.CoverageContinuationMaxSegments
+	}
+	return DefaultCoverageContinuationMaxSegments
 }
 
 func (c MultiAgentEinoMiddlewareConfig) SummarizationTriggerRatioEffective() float64 {
@@ -1540,6 +1569,12 @@ func validateModelOutputLimits(openAI OpenAIConfig, mw MultiAgentEinoMiddlewareC
 	}
 	if mw.ModelOutputRepairMaxAttempts < 0 {
 		return fmt.Errorf("multi_agent.eino_middleware.model_output_repair_max_attempts 必须为正数")
+	}
+	if mw.CoverageContinuationStagnationMinutes < 0 {
+		return fmt.Errorf("multi_agent.eino_middleware.coverage_continuation_stagnation_minutes 必须为正数")
+	}
+	if mw.CoverageContinuationMaxSegments < 0 {
+		return fmt.Errorf("multi_agent.eino_middleware.coverage_continuation_max_segments 必须为正数")
 	}
 	if mw.MaxShellCommandBytesEffective() > mw.MaxToolArgumentsBytesEffective() {
 		return fmt.Errorf("multi_agent.eino_middleware.max_shell_command_bytes 不能大于 max_tool_arguments_bytes")

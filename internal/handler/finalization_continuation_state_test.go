@@ -38,7 +38,7 @@ func TestCoverageContinuationProgressAndHardBudget(t *testing.T) {
 		t.Fatal("unbounded continuation")
 	}
 	stopped := finalizationStoppedDecision(d, state)
-	if stopped.Status != agentfinalizer.StatusBlocked || stopped.Finalizable || !strings.Contains(strings.Join(stopped.MissingChecks, "\n"), "硬上限") {
+	if stopped.Status != agentfinalizer.StatusBlocked || stopped.Finalizable || !strings.Contains(strings.Join(stopped.MissingChecks, "\n"), "安全上限") {
 		t.Fatalf("budget stop not reported as blocked: %+v", stopped)
 	}
 }

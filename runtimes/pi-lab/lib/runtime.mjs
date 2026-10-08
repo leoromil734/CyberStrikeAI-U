@@ -1,8 +1,9 @@
 import { Type } from 'typebox';
-import { PublicError, clip, createEmitter, createRedactor, publicMessage, text, validateInput } from './protocol.mjs';
+import { PublicError, clip, configSecrets, createEmitter, createRedactor, publicMessage, text, validateInput } from './protocol.mjs';
 import { RunControl, Semaphore, abortable, checkAbort, combineSignals, settleWithin } from './control.mjs';
 import { HttpInspector, ScopePolicy } from './http.mjs';
 import { createPiSession, installModelFetch } from './sdk.mjs';
+import { PlatformBridge, compilePlatformTools, platformSystemPrompt } from './platform.mjs';
 
 const boundedString = (maxLength = 4000) => Type.String({ minLength: 1, maxLength });
 const result = (data, summary, redact) => ({
@@ -25,7 +26,8 @@ Respond in the user's language. A final report must explicitly describe what was
 
 export async function runLab(input, options = {}) {
   const config = validateInput(input);
-  const redact = createRedactor([config.model.api_key, config.model.base_url]);
+  const formal = config.mode === 'platform';
+  const redact = createRedactor(configSecrets(config));
   const emit = createEmitter(options.write ?? ((line) => process.stdout.write(line)), redact);
   const control = new RunControl(config.limits, options.signal, options.controlOptions);
   const factory = options.sessionFactory ?? createPiSession;
@@ -36,9 +38,14 @@ export async function runLab(input, options = {}) {
   const httpNodes = new Map();
   let childCount = 0;
   let toolCount = 0;
+  let toolWarnings = 0;
+  const platformToolNames = new Set(config.platform?.tools.map((tool) => tool.name) ?? []);
+  const recoverableArgumentCodes = new Set(['invalid_tool_arguments', 'invalid_input', 'invalid_parent', 'invalid_finding', 'invalid_tasks']);
   let nextId = 0;
   let cleanupFetch;
   let inspector;
+  let bridge;
+  let platformTools;
   let coordinator;
   const newId = (prefix) => `${prefix}-${++nextId}`;
   const mark = (code, message) => control.mark(code, message);
@@ -57,18 +64,25 @@ export async function runLab(input, options = {}) {
         try {
           checkAbort(control.signal);
           checkAbort(signal);
-          if (++toolCount > 256) throw new PublicError('tool_budget', '运行达到 256 次自定义工具调用预算。');
+          const budgetMessage = `运行达到 ${config.limits.max_tool_calls} 次自定义工具调用预算。`;
+          if (toolCount >= config.limits.max_tool_calls) throw new PublicError('tool_budget', budgetMessage);
+          if (++toolCount === config.limits.max_tool_calls) mark('tool_budget', budgetMessage);
           return await execute(args, signal);
         } catch (error) {
           const message = publicMessage(error, '工具执行失败；内部错误详情已隐藏。');
-          mark(error instanceof PublicError ? error.code : 'tool_failed', message);
+          // Only ordinary argument mistakes are recoverable here. Bridge,
+          // budget, cancellation and unexpected runtime failures remain fatal
+          // to the final status, even if the model subsequently keeps working.
+          if (!formal || !(error instanceof PublicError) || !recoverableArgumentCodes.has(error.code)) {
+            mark(error instanceof PublicError ? error.code : 'tool_failed', message);
+          }
           throw new PublicError(error instanceof PublicError ? error.code : 'tool_failed', message);
         }
       },
     };
   }
-  function toolsFor(agent, isCoordinator) {
-    const tools = [
+  function probeToolsFor(agent) {
+    return [
       tool(agent, 'inspect_http', 'Observe one explicitly authorized URL with GET or HEAD. No redirects are followed. Status is an observation, NOT a vulnerability. Body is limited to 64 KiB and only a hash is returned.', Type.Object({
         url: boundedString(4096), method: Type.Union([Type.Literal('GET'), Type.Literal('HEAD')]),
       }, { additionalProperties: false }), async ({ url, method }, signal) => {
@@ -112,6 +126,41 @@ export async function runLab(input, options = {}) {
         return result({ id, status: args.status, note: '记录不等于确认漏洞。' }, '已记录带状态和证据的发现。', redact);
       }),
     ];
+  }
+  function platformToolsFor(agent) {
+    const tools = platformTools.map(({ name, description, parameters, validator }) => tool(agent, name, description, parameters, async (args, signal) => {
+      if (!validator.Check(args)) throw new PublicError('invalid_tool_arguments', '平台工具参数未通过 JSON Schema 校验。');
+      const value = await bridge.call(name, args, agent, signal);
+      if (value.details.bridge_failure) mark('bridge_http', '平台工具桥 HTTP 请求失败；请检查桥服务与认证。');
+      // Application errors stay visible to the model and in lifecycle/graph
+      // events, but only the Go coverage/execution gates decide final delivery.
+      return value;
+    }));
+    tools.push(tool(agent, 'record_surface', 'Add a visualization note about a surface within the authorization. No request or independent verification occurs; recording a note does not grant authorization.', Type.Object({
+      label: boundedString(200), url: boundedString(4096), detail: boundedString(), parent_id: Type.Optional(boundedString(200)),
+    }, { additionalProperties: false }), async (args) => {
+      const parent = args.parent_id ?? agent;
+      if (!nodes.has(parent)) throw new PublicError('invalid_parent', 'parent_id 必须引用本次运行中已存在的节点。');
+      const id = newId('surface');
+      addNode(agent, { id, kind: 'surface', label: text(args.label, 'label', 200), detail: text(args.detail, 'detail'), status: 'hypothesis', url: text(args.url, 'url', 4096), parent_id: parent });
+      edge(agent, parent, id, 'surface note');
+      return result({ id, status: 'hypothesis', note: '仅记录资产分析笔记，不代表授权、实际探测或验证。' }, '已记录资产分析笔记。', redact);
+    }));
+    tools.push(tool(agent, 'record_finding', 'Add an unverified analysis note to the graph ONLY. This never records a formal vulnerability. Use the platform record_vulnerability and its evidence/validation gate for real vulnerability records.', Type.Object({
+      title: boundedString(200), url: boundedString(4096), evidence: boundedString(),
+      severity: Type.Optional(Type.Union(['info', 'low', 'medium', 'high', 'critical'].map((v) => Type.Literal(v)))),
+      status: Type.Optional(Type.Literal('hypothesis')), remediation: Type.Optional(boundedString()),
+    }, { additionalProperties: false }), async (args) => {
+      if (args.status && args.status !== 'hypothesis') throw new PublicError('invalid_finding', '分析笔记只能是 hypothesis；正式漏洞必须经平台验证门禁。');
+      const id = newId('note');
+      addNode(agent, { id, kind: 'note', label: text(args.title, 'title', 200), detail: `未验证的分析笔记，不是正式漏洞。\n${text(args.evidence, 'evidence')}`, status: 'hypothesis', url: text(args.url, 'url', 4096), parent_id: agent });
+      edge(agent, agent, id, 'analysis note');
+      return result({ id, status: 'hypothesis', note: '未写入正式漏洞；record_vulnerability 由平台既有证据门禁验证。' }, '已记录未验证的分析笔记，未写入正式漏洞。', redact);
+    }));
+    return tools;
+  }
+  function toolsFor(agent, isCoordinator) {
+    const tools = formal ? platformToolsFor(agent) : probeToolsFor(agent);
     if (isCoordinator) tools.push(tool(agent, 'delegate_agents', 'Delegate bounded independent tasks to real PI worker sessions. Workers cannot delegate. Waits for actual summaries, including failures.', Type.Object({
       tasks: Type.Array(Type.Object({ name: boundedString(100), task: boundedString(8000) }, { additionalProperties: false }), { minItems: 1, maxItems: 32 }),
     }, { additionalProperties: false }), async ({ tasks }, signal) => {
@@ -158,7 +207,7 @@ export async function runLab(input, options = {}) {
     let status = 'failed';
     let closed = false;
     try {
-      const creating = factory({ config: config.model, cwd, systemPrompt: systemPrompt(config, isCoordinator), tools: toolsFor(id, isCoordinator), control, id });
+      const creating = factory({ config: config.model, mode: config.mode, cwd, systemPrompt: redact(formal ? platformSystemPrompt(config, isCoordinator) : systemPrompt(config, isCoordinator)), tools: toolsFor(id, isCoordinator), control, id });
       creating.then((late) => {
         if (closed) { control.abortSession(late); return late.dispose(); }
       }, () => {}).catch(() => {});
@@ -169,6 +218,11 @@ export async function runLab(input, options = {}) {
       checkAbort(signal);
       unsubscribe = session.subscribe((event) => {
         if (closed) return;
+        if (formal && event.type === 'compaction_end' && (event.aborted || event.errorMessage)) {
+          // SDK catches compaction errors internally. Never leak its raw error or
+          // silently declare a run complete when context maintenance failed.
+          mark('compaction_failed', '自动上下文压缩失败或取消；上下文可能未完整压缩。');
+        }
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
           lastAssistant = event.message;
           const value = assistantText(event.message);
@@ -180,11 +234,25 @@ export async function runLab(input, options = {}) {
         } else if (event.type === 'tool_execution_end') {
           const name = clip(redact(String(event.toolName)), 100);
           activeTools.delete(event.toolCallId ?? name);
-          if (event.isError) mark('tool_failed', '至少一个工具调用失败或被安全限制拒绝。');
-          emit('tool_end', id, { name, summary: event.isError ? '工具失败或被限制拒绝；原始错误详情未输出。' : clip(redact(String(event.result?.details?.summary ?? '受限工具已返回。')), 1000), is_error: Boolean(event.isError) });
+          const isError = Boolean(event.isError || event.result?.isError);
+          if (isError) {
+            if (formal) toolWarnings++;
+            else mark('tool_failed', '至少一个工具调用失败或被安全限制拒绝。');
+          }
+          if (formal && (platformToolNames.has(event.toolName) || isError)) {
+            // Include SDK validation failures which occur BEFORE custom execute.
+            // Keep one bounded reference node per call; never copy raw results.
+            const nodeId = newId('tool');
+            const executionId = event.result?.details?.execution_id;
+            addNode(id, { id: nodeId, kind: 'tool', label: name, detail: JSON.stringify({ name, execution_id: typeof executionId === 'string' ? clip(redact(executionId), 256) : '', is_error: isError }), status: isError ? 'failed' : 'observed', url: '', parent_id: id });
+            edge(id, id, nodeId, 'tool result');
+          }
+          emit('tool_end', id, { name, summary: isError ? '工具失败或被限制拒绝；原始错误详情未输出。' : clip(redact(String(event.result?.details?.summary ?? '受限工具已返回。')), 1000), is_error: isError });
         }
       });
-      const request = `${isCoordinator ? 'Original user request' : 'Assigned worker task'}:\n${task}\n\nOriginal authorized URLs:\n${JSON.stringify([...inspector.policy.explicitUrls])}`;
+      const request = formal
+        ? `${isCoordinator ? 'Original user request' : 'Assigned worker handoff objective'}:\n${redact(task)}\n\nAuthorized scope and exclusions:\n${JSON.stringify(redact(config.scope))}`
+        : `${isCoordinator ? 'Original user request' : 'Assigned worker task'}:\n${task}\n\nOriginal authorized URLs:\n${JSON.stringify([...inspector.policy.explicitUrls])}`;
       await abortable(session.prompt(request, { expandPromptTemplates: false }), signal);
       checkAbort(signal);
       // prompt() can RESOLVE on provider failure. Inspect stopReason instead of
@@ -198,7 +266,7 @@ export async function runLab(input, options = {}) {
         status = 'partial';
       } else if (last?.stopReason === 'stop' && assistantText(last)) {
         finalText = assistantText(last);
-        status = isCoordinator && control.issues.size ? 'partial' : 'completed';
+        status = (formal || isCoordinator) && control.issues.size ? 'partial' : 'completed';
       } else {
         throw new PublicError('empty_result', '模型未产生有效最终文本；不会将空响应或仅工具调用视为完成。');
       }
@@ -227,10 +295,15 @@ export async function runLab(input, options = {}) {
     return { id, status, summary, finalText: clip(redact(finalText)) };
   }
   try {
-    const policy = new ScopePolicy(config.scope, config.prompt);
-    inspector = new HttpInspector({ policy, limits: config.limits, signal: control.signal, onIssue: mark, transport: options.transport, timeoutMs: options.httpTimeoutMs });
+    if (formal) {
+      platformTools = compilePlatformTools(config.platform.tools, redact);
+      bridge = new PlatformBridge({ bridge: config.platform.bridge, limits: config.limits, signal: control.signal, redact });
+    } else {
+      const policy = new ScopePolicy(config.scope, config.prompt);
+      inspector = new HttpInspector({ policy, limits: config.limits, signal: control.signal, onIssue: mark, transport: options.transport, timeoutMs: options.httpTimeoutMs });
+    }
     if (factory === createPiSession) cleanupFetch = installModelFetch(config.model.base_url, control.signal);
-    coordinator = await runAgent('coordinator', 'coordinator', config.prompt, true);
+    coordinator = await runAgent('coordinator', formal ? config.platform.role_name : 'coordinator', config.prompt, true);
   } catch (error) {
     const message = publicMessage(error);
     mark(error instanceof PublicError ? error.code : 'run_failed', message);
@@ -239,11 +312,15 @@ export async function runLab(input, options = {}) {
   } finally {
     if (childPromises.size) await settleWithin(Promise.allSettled([...childPromises]));
     await control.close();
+    await bridge?.close();
     await cleanupFetch?.();
+    config.model.api_key = '';
+    if (config.platform) config.platform.bridge.token = '';
   }
   const partial = control.issues.size > 0 || coordinator?.status !== 'completed';
   const limitations = [...control.issues.values()];
   let report = coordinator?.finalText || '协调器未产生有效最终报告。没有据此声称任务成功或确认漏洞。';
+  if (formal && toolWarnings) report = `工具警告：本次运行出现 ${toolWarnings} 次工具错误，请复核失败事件、图节点及后续执行记录。普通参数/平台执行错误不自动判定交付失败，也不表示已经恢复；最终完整交付必须由 Go 服务端覆盖、执行及证据门禁确认，不可仅依据运行时 completed 或模型报告。\n\n${report}`;
   if (partial) report = `本次运行仅有部分结果。\n限制：${limitations.join('；')}\n\n${report}`;
   emit('report', 'coordinator', { text: clip(report) });
   emit('complete', 'coordinator', { status: partial ? 'partial' : 'completed' });

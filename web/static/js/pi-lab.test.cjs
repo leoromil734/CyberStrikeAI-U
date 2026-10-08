@@ -53,7 +53,10 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const ready = { enabled: true, ready: true, reason: '', runtime: 'pi-native', isolation: 'application-only', tools: ['http_get', 'http_head'], limits: { max_parallel: 4, max_agents: 12, timeout_seconds: 1800, max_requests: 32 } };
 const run = (id = 'r1', status = 'running', extra = {}) => ({ id, status, title: '试验 ' + id, prompt: '观察安全响应头', scope: ['https://example.test'], ai_channel: '', model: 'offline-fixture', created_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:00:01Z', limits: ready.limits, agents: [], nodes: [], edges: [], findings: [], report: '', error: '', event_count: 0, ...extra });
 const event = seq => ({ seq, time: '2026-10-08T00:00:01Z', type: 'agent.completed', agent_id: 'a1', data: { text: '最终文本 ' + seq } });
-const input = (extra = {}) => ({ title: '新试验', prompt: '仅观察响应头', scope: 'https://example.test\nhttps://other.test:8443/', ai_channel: '', max_parallel: 2, max_agents: 4, timeout_seconds: 300, authorized: true, ...extra });
+const profile = { available: true, reason: '', role: { name: '渗透测试', description: '平台已有测试角色' }, skills: [{ name: 'recon', description: '授权信息收集' }], tools: [{ name: 'platform_tool', description: '平台工具索引' }], limits: { max_parallel: 8, max_agents: 32, timeout_seconds: 21600, max_turns: 500, max_tool_calls: 2000 } };
+const projects = [{ id: 'project-one', name: '已授权项目' }];
+const input = (extra = {}) => ({ mode: 'probe', title: '新试验', prompt: '仅观察响应头', scope: 'https://example.test\nhttps://other.test:8443/', ai_channel: '', max_parallel: 2, max_agents: 4, timeout_seconds: 300, authorized: true, ...extra });
+const platformInput = (extra = {}) => input({ mode: 'platform', project_id: 'project-one', title: '平台任务', prompt: '执行明确授权范围内的测试并记录证据', scope: 'http://127.0.0.1:8080/api/\n10.20.0.0/24 排除网关\n内部应用测试环境，禁止破坏性操作', max_parallel: 3, max_agents: 12, timeout_seconds: 3600, max_turns: 120, max_tool_calls: 600, ...extra });
 
 function fixture(options = {}) {
     const elements = new Map(); const created = []; const calls = []; const timers = new Map(); const blobs = []; const revoked = [];
@@ -69,12 +72,16 @@ function fixture(options = {}) {
         createElementNS: (ns, tag) => { const node = new Element(tag, ns); created.push(node); return node; },
     };
     elements.get('pi-lab-form').reset = () => {
-        ['title', 'scope', 'prompt', 'channel'].forEach(id => { elements.get('pi-lab-' + id).value = ''; });
+        ['title', 'scope', 'prompt', 'channel', 'project'].forEach(id => { elements.get('pi-lab-' + id).value = ''; });
+        elements.get('pi-lab-mode').value = 'platform';
         elements.get('pi-lab-authorized').checked = false;
-        elements.get('pi-lab-parallel').value = '2'; elements.get('pi-lab-max-agents').value = '4'; elements.get('pi-lab-timeout').value = '300';
+        elements.get('pi-lab-parallel').value = '3'; elements.get('pi-lab-max-agents').value = '12'; elements.get('pi-lab-timeout').value = '3600';
+        elements.get('pi-lab-max-turns').value = '120'; elements.get('pi-lab-max-tool-calls').value = '600';
     };
     const fallback = url => {
         if (url === '/api/pi-lab/status') return response(options.status || ready);
+        if (url === '/api/pi-lab/profile') return response(options.profile || profile);
+        if (url === '/api/projects?status=active&limit=500') return response({ projects: options.projects || projects });
         if (url === '/api/config/ai-channels') return response({ default_channel: 'one', channels: { one: { name: '主模型', model: 'offline-fixture' } } });
         if (url === '/api/pi-lab/runs') return response({ runs: options.runs || [] });
         if (url.includes('/events?')) return response({ events: [], cursor: Number(url.split('after=')[1]), has_more: false });
@@ -84,7 +91,7 @@ function fixture(options = {}) {
     const env = {
         document, hasPermission: () => permitted, getOwner: () => owner, ensureAuthenticated: options.ensureAuthenticated || (async () => true),
         apiFetch: async (url, opts) => {
-            assert.match(url, /^\/api\/(pi-lab\/(?:status|runs(?:\/[^/]+(?:\/cancel|\/events\?after=\d+)?)?)|config\/ai-channels)$/);
+            assert.match(url, /^\/api\/(pi-lab\/(?:status|profile|runs(?:\/[^/]+(?:\/cancel|\/events\?after=\d+)?)?)|config\/ai-channels|projects\?status=active&limit=500)$/);
             calls.push([url, opts]); return implementation ? implementation(url, opts, fallback) : fallback(url);
         },
         AbortController, Blob,
@@ -170,7 +177,7 @@ test('routine event polling does not repeatedly spawn runtime readiness checks',
 });
 
 test('creation validates authorization, numeric bounds, server limits and readiness', () => {
-    assert.deepEqual(lab.buildPayload(input(), ready), { title: '新试验', prompt: '仅观察响应头', scope: ['https://example.test', 'https://other.test:8443'], ai_channel: '', authorized: true, max_parallel: 2, max_agents: 4, timeout_seconds: 300 });
+    assert.deepEqual(lab.buildPayload(input(), ready), { mode: 'probe', title: '新试验', prompt: '仅观察响应头', scope: ['https://example.test', 'https://other.test:8443'], ai_channel: '', authorized: true, max_parallel: 2, max_agents: 4, timeout_seconds: 300 });
     for (const extra of [{ authorized: false }, { authorized: 'true' }, { title: ' ' }, { prompt: '' }, { max_parallel: 0 }, { max_parallel: 5 }, { max_agents: 13 }, { max_agents: 1 }, { timeout_seconds: 59 }, { timeout_seconds: 1801 }, { max_parallel: 1.5 }, { max_agents: NaN }]) assert.throws(() => lab.buildPayload(input(extra), ready));
     assert.throws(() => lab.buildPayload(input(), { ...ready, enabled: false }));
     assert.throws(() => lab.buildPayload(input(), { ...ready, ready: false }));
@@ -202,10 +209,11 @@ test('status failure and channel-list failure remain read-only recoverable with 
     let fail = true;
     const f = fixture({ runs: [run('history', 'completed')], fetch: (url, opts, fallback) => fail && (url.endsWith('/status') || url.endsWith('/ai-channels')) ? response({ error: '未配置 / 权限不足' }, 503) : fallback(url) });
     await f.controller.init();
-    assert.equal(f.el('submit').disabled, true); assert.match(f.el('runtime-status').textContent, /无法读取实验状态/);
+    assert.equal(f.el('submit').disabled, true); assert.match(f.el('runtime-status').textContent, /无法读取 PI 状态/);
     assert.equal(f.el('channel').children.length, 1); assert.equal(f.el('channel').children[0].value, ''); assert.match(f.el('channel-hint').textContent, /默认模型/);
     assert.equal(f.state().run.id, 'history');
     fail = false; await f.controller.refresh(true);
+    f.controller.setProject('project-one');
     f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
     assert.equal(f.el('submit').disabled, false); assert.equal(f.el('channel').children.length, 2);
 });
@@ -304,7 +312,7 @@ test('missing or forbidden detail clears stale report and events while showing a
     const f = fixture({ runs: [run()], fetch: (url, opts, fallback) => forbidden && url === '/api/pi-lab/runs/r1' ? response({ error: '仅属主可见' }, 403) : fallback(url) });
     await f.controller.init(); forbidden = true; await f.controller.refresh();
     assert.equal(f.state().run, null); assert.equal(f.state().events.length, 0); assert.equal(f.el('export').disabled, true);
-    assert.match(f.el('run-error').textContent, /仅属主可见/); assert.match(f.el('graph').textContent, /选择一个试验/);
+    assert.match(f.el('run-error').textContent, /仅属主可见/); assert.match(f.el('graph').textContent, /选择一个任务/);
 });
 
 test('all server text is rendered as text nodes, SVG has no untrusted markup, and URL links use noopener', async () => {
@@ -429,7 +437,7 @@ test('failed lists have a distinct retryable error and do not masquerade as empt
     const f = fixture({ fetch: (url, opts, fallback) => broken && url === '/api/pi-lab/runs' ? response({ error: '历史存储暂不可用' }, 503) : fallback(url) });
     await f.controller.init(); assert.match(f.el('list-error').textContent, /历史存储暂不可用/);
     assert.match(f.el('runs').textContent, /无可用历史列表/); assert.equal(f.state().run, null);
-    broken = false; await f.controller.refresh(); assert.equal(f.el('list-error').hidden, true); assert.match(f.el('runs').textContent, /暂无独立试验/);
+    broken = false; await f.controller.refresh(); assert.equal(f.el('list-error').hidden, true); assert.match(f.el('runs').textContent, /暂无 PI 任务/);
 });
 
 test('changing owner before re-entry clears cached history before awaiting authentication', async () => {
@@ -442,10 +450,259 @@ test('changing owner before re-entry clears cached history before awaiting authe
 });
 
 test('authentication failure on re-entry cannot leave a previously enabled submit button active', async () => {
-    const f = fixture(); await f.controller.init(); f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
+    const f = fixture(); await f.controller.init(); f.controller.setProject('project-one'); f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
     assert.equal(f.el('submit').disabled, false); f.controller.stop();
     f.env.ensureAuthenticated = async () => { throw new Error('登录校验失败'); }; await f.controller.init();
     assert.equal(f.state().status, null); assert.equal(f.el('submit').disabled, true); assert.match(f.el('runtime-status').textContent, /登录校验失败/);
+});
+
+test('platform creation requires profile and project, preserves descriptive private scopes and allowlists its payload', () => {
+    const source = platformInput({ role: 'ignored-client-role', skills: ['ignored'], execution_ids: ['ignored'] });
+    assert.deepEqual(lab.buildPayload(source, ready, profile, projects), {
+        mode: 'platform', project_id: 'project-one', role: '渗透测试', title: source.title, prompt: source.prompt,
+        scope: ['http://127.0.0.1:8080/api/', '10.20.0.0/24 排除网关', '内部应用测试环境，禁止破坏性操作'],
+        ai_channel: '', max_parallel: 3, max_agents: 12, timeout_seconds: 3600, max_turns: 120, max_tool_calls: 600, authorized: true,
+    });
+    assert.equal(lab.buildPayload(platformInput({ mode: undefined }), ready, profile, projects).mode, 'platform');
+    assert.equal(lab.buildPayload(source, { ...ready, platform_available: false }, profile, projects).mode, 'platform');
+    assert.throws(() => lab.buildPayload(source, { ...ready, platform_available: true }, null, projects), /能力配置/);
+    assert.throws(() => lab.buildPayload(source, ready, { ...profile, available: false, reason: '角色不可用' }, projects), /角色不可用/);
+    assert.throws(() => lab.buildPayload(source, ready, { ...profile, role: { name: '其他角色' } }, projects), /渗透测试/);
+    for (const project_id of ['', undefined, {}, ' ', '/unsafe', 'unknown']) assert.throws(() => lab.buildPayload(platformInput({ project_id }), ready, profile, projects), /项目/);
+    for (const mode of ['unknown', '__proto__']) assert.throws(() => lab.buildPayload(platformInput({ mode }), ready, profile, projects), /模式/);
+});
+
+test('platform budgets enforce five integer limits, UTF-8 input sizes and twenty descriptive scope lines', () => {
+    for (const extra of [{ max_parallel: 9 }, { max_agents: 33 }, { timeout_seconds: 21601 }, { max_turns: 501 }, { max_tool_calls: 2001 }, { max_turns: 0 }, { max_tool_calls: -1 }, { max_tool_calls: 2.5 }, { max_agents: 2 }, { timeout_seconds: 59 }, { max_turns: NaN }, { authorized: false }, { title: '题'.repeat(121) }, { prompt: '文'.repeat(5462) }, { scope: ' \n ' }, { scope: Array(21).fill('内网测试环境').join('\n') }]) {
+        assert.throws(() => lab.buildPayload(platformInput(extra), ready, profile, projects), undefined, JSON.stringify(extra));
+    }
+    const maximum = lab.buildPayload(platformInput({ ...profile.limits, title: '题'.repeat(120), prompt: 'x'.repeat(16384), scope: Array(20).fill('10.0.0.0/8 明确授权且排除生产').join('\n') }), ready, profile, projects);
+    assert.equal(maximum.scope.length, 20); assert.equal(maximum.max_turns, 500); assert.equal(maximum.max_tool_calls, 2000);
+    assert.throws(() => lab.buildPayload(platformInput(), ready, { ...profile, limits: { ...profile.limits, max_turns: 100 } }, projects), /模型轮次/);
+    assert.deepEqual(lab.parsePlatformScope('  http://[::1]:8080/path?q=1 \r\n \n10.1.0.0/16\n仅指定内部应用'), ['http://[::1]:8080/path?q=1', '10.1.0.0/16', '仅指定内部应用']);
+    assert.throws(() => lab.buildPayload(input({ scope: 'http://127.0.0.1/api/' }), ready), /origin/);
+});
+
+test('profile HTTP 403 reason is visible in capability and submit errors without enabling platform creation', async () => {
+    const reason = '缺少 project:read、tool:execute 权限';
+    const f = fixture({ fetch: (url, opts, fallback) => url.endsWith('/profile') ? response({ available: false, reason }, 403) : fallback(url) });
+    await f.controller.init(); f.controller.setProject('project-one');
+    f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
+    assert.equal(f.state().profile, null); assert.equal(f.el('submit').disabled, true);
+    assert.equal(f.state().errors.profile, 'HTTP 403：' + reason);
+    assert.ok(f.el('profile-status').textContent.includes(reason));
+    await f.controller.createRun(platformInput());
+    assert.ok(f.el('form-error').textContent.includes(reason));
+    assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+    f.controller.stop();
+});
+
+test('profile errors fail closed without implicit fallback, while explicit probe mode remains usable', async () => {
+    const failures = [response({ error: '无 profile 权限' }, 403), response({ error: '尚未部署 profile' }, 404), response({ available: false, reason: '平台工具未配置' }), response({ available: 'true' })];
+    for (const failure of failures) {
+        const f = fixture({ status: { ...ready, platform_available: true }, runs: [run('old', 'failed')], fetch: (url, opts, fallback) => {
+            if (url.endsWith('/profile')) return failure;
+            if (opts.method === 'POST') return response(run('probe-created', 'queued', { mode: 'probe' }), 202);
+            return fallback(url);
+        } });
+        await f.controller.init(); f.controller.setProject('project-one');
+        f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
+        assert.equal(f.state().mode, 'platform'); assert.equal(f.el('submit').disabled, true); assert.match(f.el('profile-status').textContent, /不可提交/);
+        await f.controller.createRun(platformInput());
+        assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+        assert.equal(f.state().run.id, 'old'); assert.equal(f.el('export').disabled, false);
+        f.controller.setMode('probe'); assert.equal(f.el('profile-panel').hidden, true);
+        f.el('authorized').checked = true; await f.el('authorized').dispatch('change'); assert.equal(f.el('submit').disabled, false);
+        await f.controller.createRun(input()); await tick();
+        const posts = f.calls.filter(([, opts]) => opts.method === 'POST'); assert.equal(posts.length, 1); assert.equal(JSON.parse(posts[0][1].body).mode, 'probe');
+        f.controller.stop();
+    }
+});
+
+test('project is required and permission failures show the reason instead of inventing a project', async () => {
+    const f = fixture(); await f.controller.init();
+    f.el('authorized').checked = true; await f.el('authorized').dispatch('change');
+    assert.equal(f.el('submit').disabled, true); assert.equal(f.el('project').value, '');
+    await f.controller.createRun(platformInput({ project_id: '' })); assert.match(f.el('form-error').textContent, /必须选择/);
+    assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+    f.el('project').value = 'project-one'; await f.el('project').dispatch('change');
+    assert.equal(f.state().projectId, 'project-one'); assert.equal(f.el('authorized').checked, false);
+    f.el('authorized').checked = true; await f.el('authorized').dispatch('change'); assert.equal(f.el('submit').disabled, false);
+    f.setFetch((url, opts, fallback) => url.startsWith('/api/projects?') ? response({ error: '缺少 project:read 权限' }, 403) : fallback(url));
+    await f.controller.refresh(true);
+    assert.match(f.el('project-hint').textContent, /HTTP 403.*project:read/); assert.equal(f.el('submit').disabled, true); assert.deepEqual(f.state().projects, []);
+    await f.controller.createRun(platformInput()); assert.match(f.el('form-error').textContent, /project:read/);
+    assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+    f.setFetch((url, opts, fallback) => url.startsWith('/api/projects?') ? response({ projects: [] }) : fallback(url));
+    await f.controller.refresh(true); assert.match(f.el('project-hint').textContent, /原项目当前不可读/);
+    f.controller.setProject(''); assert.match(f.el('project-hint').textContent, /暂无可读/); f.controller.stop();
+});
+
+test('mode switching updates default budgets, scope hints, required fields and explicit authorization', async () => {
+    const f = fixture(); await f.controller.init();
+    assert.equal(f.state().mode, 'platform'); assert.equal(f.el('mode').value, 'platform');
+    assert.deepEqual(['parallel', 'max-agents', 'timeout', 'max-turns', 'max-tool-calls'].map(id => f.el(id).value), ['3', '12', '3600', '120', '600']);
+    assert.deepEqual(['parallel', 'max-agents', 'timeout', 'max-turns', 'max-tool-calls'].map(id => f.el(id).max), ['8', '32', '21600', '500', '2000']);
+    assert.match(f.el('mode-hint').textContent, /不再限于 GET\/HEAD/); assert.match(f.el('scope-hint').textContent, /CIDR.*任务约束/);
+    f.el('scope').value = '10.0.0.0/8'; f.el('authorized').checked = true;
+    f.el('mode').value = 'probe'; await f.el('mode').dispatch('change');
+    assert.equal(f.el('authorized').checked, false); assert.equal(f.el('project').required, false); assert.equal(f.el('project').disabled, true);
+    assert.equal(f.el('max-turns').disabled, true); assert.equal(f.el('max-turns').required, false);
+    assert.equal(f.el('platform-budgets').hidden, true); assert.equal(f.el('profile-panel').hidden, true);
+    assert.deepEqual(['parallel', 'max-agents', 'timeout'].map(id => f.el(id).value), ['2', '4', '300']);
+    assert.deepEqual(['parallel', 'max-agents', 'timeout'].map(id => f.el(id).max), ['4', '12', '1800']);
+    assert.match(f.el('scope-label').textContent, /origin/); assert.match(f.el('mode-hint').textContent, /仅 GET\/HEAD/);
+    assert.equal(f.el('scope').value, '10.0.0.0/8');
+    f.controller.setMode('platform'); assert.equal(f.el('project').required, true); assert.equal(f.el('max-turns').disabled, false);
+    assert.equal(f.el('max-turns').value, '120'); assert.equal(f.el('max-tool-calls').value, '600'); assert.equal(f.el('authorized').checked, false);
+    assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0); f.controller.stop();
+});
+
+test('form submission uses the platform contract and cancel keeps platform metadata and final events', async () => {
+    let created = false; let cancelled = false;
+    const platformRun = () => run('platform-run', cancelled ? 'cancelled' : 'running', { mode: 'platform', project_id: 'project-one', conversation_id: 'conversation-one', role: '渗透测试', skills: ['recon'], execution_ids: cancelled ? ['execution-final'] : [], limits: { max_parallel: 3, max_agents: 12, timeout_seconds: 3600, max_turns: 120, max_tool_calls: 600 }, report: cancelled ? '取消后最终报告' : '' });
+    const f = fixture({ fetch: (url, opts, fallback) => {
+        if (url === '/api/pi-lab/runs' && opts.method === 'POST') { created = true; return response(platformRun(), 202); }
+        if (url === '/api/pi-lab/runs') return response({ runs: created ? [platformRun()] : [] });
+        if (url.endsWith('/cancel')) { cancelled = true; return response(platformRun()); }
+        if (url === '/api/pi-lab/runs/platform-run') return response(platformRun());
+        if (url.includes('/events?') && cancelled) {
+            const next = Number(url.split('after=')[1]) + 1;
+            return response({ events: [event(next)], cursor: next, has_more: next < 10 });
+        }
+        return fallback(url);
+    } });
+    await f.controller.init(); f.controller.setProject('project-one');
+    const draft = platformInput(); ['title', 'prompt', 'scope'].forEach(key => { f.el(key).value = draft[key]; });
+    f.el('authorized').checked = true; await f.el('form').dispatch('submit'); await tick();
+    const creation = f.calls.find(([, opts]) => opts.method === 'POST');
+    assert.deepEqual(JSON.parse(creation[1].body), lab.buildPayload(draft, ready, profile, projects));
+    assert.equal(f.state().run.mode, 'platform'); assert.equal(f.state().run.conversation_id, 'conversation-one');
+    assert.equal(f.el('authorized').checked, false);
+    await f.controller.cancelRun(); await tick();
+    assert.equal(f.state().run.status, 'cancelled'); assert.equal(f.el('cancel').disabled, true);
+    assert.equal(f.el('report').textContent, '取消后最终报告'); assert.equal(f.el('run-executions').textContent, 'execution-final');
+    assert.equal(f.state().events.length, 8); assert.equal([...f.timers.values()][0].delay, 100);
+    await f.fireTimer(); assert.equal(f.state().events.length, 10); assert.equal(f.state().hasMore, false); assert.equal([...f.timers.values()][0].delay, 10000);
+    assert.equal(f.calls.filter(([url]) => url.endsWith('/status')).length, 1); assert.equal(f.calls.filter(([url]) => url.endsWith('/profile')).length, 1);
+    f.controller.stop();
+});
+
+test('old runs remain probe records and copying failed records never posts or grants authorization', async () => {
+    const old = run('old-failed', 'failed', { prompt: '原需求', error: '旧失败原因' });
+    const platform = run('platform-failed', 'failed', { mode: 'platform', project_id: 'project-one', role: '渗透测试', scope: ['10.2.0.0/16'], limits: { max_parallel: 3, max_agents: 12, timeout_seconds: 3600, max_turns: 120, max_tool_calls: 600 }, ai_channel: 'removed-channel' });
+    const f = fixture({ runs: [old, platform] }); await f.controller.init();
+    assert.equal(f.state().run.mode, 'probe'); assert.equal(f.state().mode, 'platform'); assert.match(f.el('run-role').textContent, /旧版诊断/);
+    const count = f.calls.length; f.el('authorized').checked = true; await f.el('copy').dispatch('click');
+    assert.equal(f.calls.length, count); assert.equal(f.state().selectedId, 'old-failed'); assert.equal(f.state().mode, 'probe');
+    assert.equal(f.el('title').value, old.title); assert.equal(f.el('prompt').value, old.prompt); assert.equal(f.el('scope').value, old.scope.join('\n'));
+    assert.equal(f.el('authorized').checked, false); assert.equal(f.el('submit').disabled, true); assert.match(f.el('form-notice').textContent, /尚未提交/);
+    await f.controller.selectRun('platform-failed'); f.el('authorized').checked = true;
+    const beforeCopy = f.calls.length; f.controller.copyRun();
+    assert.equal(f.calls.length, beforeCopy); assert.equal(f.state().mode, 'platform'); assert.equal(f.el('project').value, 'project-one');
+    assert.equal(f.el('channel').value, 'removed-channel'); assert.equal(f.el('max-turns').value, '120'); assert.equal(f.el('authorized').checked, false);
+    f.controller.newRun(); assert.equal(f.state().mode, 'platform'); assert.equal(f.el('title').value, ''); assert.equal(f.el('project').value, ''); assert.equal(f.el('channel').value, '');
+    assert.equal(f.el('authorized').checked, false); assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0); f.controller.stop();
+});
+
+test('copying a platform run whose project is unavailable requires a new explicit project choice', async () => {
+    const f = fixture({ runs: [run('failed', 'failed', { mode: 'platform', project_id: 'archived-project', scope: ['10.0.0.0/8'] })] });
+    await f.controller.init(); f.controller.copyRun();
+    assert.equal(f.el('project').value, 'archived-project'); assert.match(f.el('project-hint').textContent, /原项目当前不可读/);
+    f.el('authorized').checked = true; await f.el('authorized').dispatch('change'); assert.equal(f.el('submit').disabled, true);
+    assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0); f.controller.stop();
+});
+
+test('profile and project catalog project only legal metadata and render untrusted text without HTML', async () => {
+    const attack = '<img src=x onerror="bad()"><script>bad()</script>';
+    const project = { id: 'project-one', name: attack };
+    Object.defineProperty(project, 'scope_json', { enumerable: true, get() { throw new Error('project configuration must not be read'); } });
+    const skill = { name: attack, description: attack };
+    Object.defineProperty(skill, 'body', { enumerable: true, get() { throw new Error('skill body must not be read'); } });
+    const p = { ...profile, role: { name: '渗透测试', description: attack }, skills: [skill], tools: [skill] };
+    Object.defineProperty(p, 'credentials', { enumerable: true, get() { throw new Error('credentials must not be read'); } });
+    const f = fixture({ profile: p, projects: [project, { id: 'invalid/id', name: 'invalid' }, { id: {}, name: 'invalid' }, { id: 'no-name', name: {} }, { id: 'blank-name', name: ' ' }, { id: 'project-one', name: 'duplicate' }] });
+    await f.controller.init(); assert.deepEqual(f.state().projects, [{ id: 'project-one', name: attack }]);
+    assert.equal(f.state().profile.skills[0].body, undefined); assert.equal(f.state().profile.credentials, undefined);
+    for (const id of ['project', 'profile-role', 'catalog-skills', 'catalog-tools']) assert.ok(f.el(id).textContent.includes(attack), id);
+    assert.ok(!f.created.some(node => ['IMG', 'SCRIPT', 'IFRAME'].includes(node.tagName)));
+    assert.deepEqual(lab.normalizeProjects({ projects: [null, project] }), [{ id: 'project-one', name: attack }]);
+    assert.throws(() => lab.normalizeProjects({ projects: {} }), /格式/); f.controller.stop();
+});
+
+test('platform detail links encode metadata and local export preserves the agreed run metadata only', async () => {
+    const id = 'c/one?x=<script>#part'; const attack = '<svg onload="bad()">';
+    const value = run('platform-meta', 'completed', { mode: 'platform', project_id: 'project-one', conversation_id: id, role: attack, skills: ['recon', attack, {}], execution_ids: ['exec-one', attack, 3], limits: { ...profile.limits, unrelated: 'secret' }, api_key: 'secret', scope: ['10.0.0.0/8'] });
+    const f = fixture({ runs: [value] }); let openedProject = ''; f.env.openProject = id => { openedProject = id; };
+    await f.controller.init();
+    assert.ok(f.el('run-role').textContent.includes(attack)); assert.ok(f.el('run-skills').textContent.includes(attack)); assert.ok(f.el('run-executions').textContent.includes(attack));
+    assert.match(f.el('run-limits').textContent, /模型轮次 500.*工具调用 2000/); assert.match(f.el('run-integration').textContent, /项目、漏洞和工具监控/);
+    const links = f.el('run-links').children.filter(node => node.tagName === 'A');
+    assert.ok(links.some(node => node.href === '#chat?conversation=' + encodeURIComponent(id)));
+    assert.ok(links.some(node => node.href === '#vulnerabilities?project_id=project-one')); assert.ok(links.some(node => node.href === '#mcp-monitor'));
+    await links.find(node => node.href === '#projects?id=project-one').dispatch('click'); assert.equal(openedProject, 'project-one');
+    const count = f.calls.length; f.controller.exportRun(); assert.equal(f.calls.length, count);
+    const exported = JSON.parse(await f.blobs[0].text());
+    assert.deepEqual({ mode: exported.run.mode, project_id: exported.run.project_id, conversation_id: exported.run.conversation_id, role: exported.run.role, skills: exported.run.skills, execution_ids: exported.run.execution_ids }, { mode: 'platform', project_id: 'project-one', conversation_id: id, role: attack, skills: ['recon', attack], execution_ids: ['exec-one', attack] });
+    assert.equal(exported.run.limits.max_turns, 500); assert.equal(exported.run.limits.max_tool_calls, 2000);
+    assert.equal(exported.run.limits.unrelated, undefined); assert.equal(exported.run.api_key, undefined); assert.equal(exported.profile, undefined);
+    f.controller.stop();
+});
+
+test('failed global dependency checks and catalogs retry only on entry or manual refresh, never on event polls', async () => {
+    let failing = true;
+    const setup = ['/api/pi-lab/status', '/api/pi-lab/profile', '/api/projects?status=active&limit=500', '/api/config/ai-channels'];
+    const f = fixture({ runs: [run()], fetch: (url, opts, fallback) => failing && setup.includes(url) ? response({ error: '离线依赖错误' }, 503) : fallback(url) });
+    await f.controller.init(); await f.controller.refresh(); await f.fireTimer();
+    for (const url of setup) assert.equal(f.calls.filter(([path]) => path === url).length, 1, url);
+    assert.match(f.el('channel-hint').textContent, /HTTP 503.*离线依赖错误/); assert.match(f.el('profile-status').textContent, /HTTP 503.*离线依赖错误/);
+    failing = false; await f.controller.refresh(true);
+    for (const url of setup) assert.equal(f.calls.filter(([path]) => path === url).length, 2, url);
+    assert.equal(f.state().profile.available, true); f.controller.stop();
+});
+
+test('refreshing setup blocks creation with stale availability until profile failure is known', async () => {
+    const wait = deferred(); const f = fixture(); await f.controller.init(); f.controller.setProject('project-one');
+    f.el('authorized').checked = true; await f.el('authorized').dispatch('change'); assert.equal(f.el('submit').disabled, false);
+    f.setFetch((url, opts, fallback) => url.endsWith('/profile') ? wait.promise : fallback(url));
+    const refresh = f.controller.refresh(true); assert.equal(f.el('submit').disabled, true);
+    await f.controller.createRun(platformInput()); assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+    wait.resolve(response({ error: '角色读取失败' }, 503)); await refresh;
+    assert.equal(f.state().profile, null); assert.equal(f.el('submit').disabled, true); assert.match(f.el('profile-status').textContent, /角色读取失败/); f.controller.stop();
+});
+
+test('identity change during profile loading clears catalogs, projects, authorization and cached task metadata', async () => {
+    const wait = deferred(); const f = fixture({ runs: [run('private', 'completed', { mode: 'platform', conversation_id: 'private-conversation' })] });
+    await f.controller.init(); f.controller.setProject('project-one'); f.el('authorized').checked = true;
+    f.setFetch((url, opts, fallback) => url.endsWith('/profile') ? wait.promise : fallback(url));
+    const refresh = f.controller.refresh(true); await tick(); f.setOwner('new-owner');
+    wait.resolve(response({ ...profile, skills: [{ name: 'private-skill', description: '' }] })); await refresh;
+    assert.equal(f.state().profile, null); assert.deepEqual(f.state().projects, []); assert.equal(f.state().projectId, '');
+    assert.equal(f.el('authorized').checked, false); assert.equal(f.el('channel').value, ''); assert.equal(f.el('submit').disabled, true);
+    assert.doesNotMatch(f.el('catalog-skills').textContent, /private-skill/); assert.doesNotMatch(f.el('run-links').textContent, /private-conversation/);
+    assert.equal(f.timers.size, 0);
+});
+
+test('selecting history during a pending setup check cannot re-enable stale platform availability', async () => {
+    const wait = deferred(); const f = fixture({ runs: [run('one'), run('two')] });
+    await f.controller.init(); f.controller.setProject('project-one'); f.el('authorized').checked = true;
+    f.setFetch((url, opts, fallback) => url.endsWith('/profile') ? wait.promise : fallback(url));
+    const refresh = f.controller.refresh(true); await tick(); await f.controller.selectRun('two');
+    assert.equal(f.state().run.id, 'two'); assert.equal(f.state().profile, null); assert.equal(f.el('submit').disabled, true);
+    assert.match(f.el('runtime-status').textContent, /检查未完成/);
+    await f.controller.createRun(platformInput()); assert.equal(f.calls.filter(([, opts]) => opts.method === 'POST').length, 0);
+    wait.resolve(response(profile)); await refresh;
+    assert.equal(f.state().profile, null); assert.equal(f.el('submit').disabled, true);
+    f.setFetch((url, opts, fallback) => fallback(url)); await f.controller.refresh(true);
+    assert.equal(f.state().profile.available, true); f.controller.stop();
+});
+
+test('invalid project metadata remains plain text and cannot call the shared project selector', async () => {
+    const f = fixture({ runs: [run('invalid-project', 'completed', { mode: 'platform', project_id: '../config?x=<script>' })] });
+    let opened = false; f.env.openProject = () => { opened = true; }; await f.controller.init();
+    assert.match(f.el('run-links').textContent, /项目 ID 无效/);
+    assert.ok(!f.el('run-links').children.some(node => node.tagName === 'A' && node.href.startsWith('#projects')));
+    assert.equal(opened, false); f.controller.stop();
 });
 
 test('identity changes invalidate in-flight responses and erase the previous owner state', async () => {

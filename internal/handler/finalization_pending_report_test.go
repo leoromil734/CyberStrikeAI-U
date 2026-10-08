@@ -47,7 +47,7 @@ func TestSubmittedExitWaitsForPendingToolsBeforeContinuationBudget(t *testing.T)
 			}
 		}
 	})
-	if ok || !waited || !strings.Contains(state.StopReason, "硬上限") || state.Attempts != finalizationCoverageMaxAttempts {
+	if ok || !waited || !strings.Contains(state.StopReason, "安全上限") || state.Attempts != finalizationCoverageMaxAttempts {
 		t.Fatalf("exit bypassed pending work/budget: ok=%v waited=%v state=%+v", ok, waited, state)
 	}
 	got, err := db.GetToolExecution(execution.ID)

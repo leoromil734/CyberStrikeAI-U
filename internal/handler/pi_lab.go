@@ -17,12 +17,31 @@ import (
 type PILabModelResolver func(string) (pilab.Model, string, error)
 
 type PILabHandler struct {
-	manager *pilab.Manager
-	resolve PILabModelResolver
+	manager  *pilab.Manager
+	resolve  PILabModelResolver
+	platform *PILabPlatform
 }
 
 func NewPILabHandler(manager *pilab.Manager, resolve PILabModelResolver) *PILabHandler {
 	return &PILabHandler{manager: manager, resolve: resolve}
+}
+
+func (h *PILabHandler) SetPlatform(platform *PILabPlatform) {
+	h.platform = platform
+	if h.manager != nil && platform != nil {
+		h.manager.SetRecovery(platform.Recover)
+	}
+}
+
+func (h *PILabHandler) Profile(c *gin.Context) {
+	if _, ok := piLabOwner(c); !ok {
+		return
+	}
+	if h.platform == nil {
+		c.JSON(http.StatusOK, pilab.Profile{Available: false, Reason: pilab.ErrPlatformUnavailable.Error(), Skills: []pilab.SkillInfo{}, Tools: []pilab.ToolDefinition{}, Limits: pilab.PlatformLimitCaps})
+		return
+	}
+	h.platform.Profile(c)
 }
 
 // ResolvePILabModel takes a read-locked value snapshot. Credentials are never
@@ -87,7 +106,9 @@ func piLabError(c *gin.Context, err error) {
 		code = http.StatusConflict
 	case errors.Is(err, pilab.ErrStorage):
 		code = http.StatusInternalServerError
-	case errors.Is(err, pilab.ErrDisabled), errors.Is(err, pilab.ErrUnavailable):
+	case errors.Is(err, pilab.ErrForbidden):
+		code = http.StatusForbidden
+	case errors.Is(err, pilab.ErrDisabled), errors.Is(err, pilab.ErrUnavailable), errors.Is(err, pilab.ErrPlatformUnavailable):
 		code = http.StatusServiceUnavailable
 	}
 	c.JSON(code, gin.H{"error": err.Error()})
@@ -110,7 +131,13 @@ func (h *PILabHandler) List(c *gin.Context) {
 		piLabError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"runs": runs})
+	visible := make([]pilab.Run, 0, len(runs))
+	for _, run := range runs {
+		if h.canReadRun(c, run) {
+			visible = append(visible, run)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"runs": visible})
 }
 
 func (h *PILabHandler) Create(c *gin.Context) {
@@ -139,7 +166,15 @@ func (h *PILabHandler) Create(c *gin.Context) {
 		return
 	}
 	validated.AIChannel = channel
-	run, err := h.manager.Create(owner, validated, model)
+	var prepare pilab.PrepareFunc
+	if validated.Mode == pilab.ModePlatform {
+		if h.platform == nil {
+			piLabError(c, pilab.ErrPlatformUnavailable)
+			return
+		}
+		prepare = h.platform.Preparer(c)
+	}
+	run, err := h.manager.CreatePrepared(owner, validated, model, prepare)
 	if err != nil {
 		piLabError(c, err)
 		return
@@ -157,6 +192,10 @@ func (h *PILabHandler) Get(c *gin.Context) {
 		piLabError(c, err)
 		return
 	}
+	if !h.canReadRun(c, run) {
+		piLabError(c, pilab.ErrForbidden)
+		return
+	}
 	c.JSON(http.StatusOK, run)
 }
 
@@ -170,6 +209,9 @@ func (h *PILabHandler) Cancel(c *gin.Context) {
 		piLabError(c, err)
 		return
 	}
+	if !h.canReadRun(c, run) {
+		run = redactedPILabCancellation(run)
+	}
 	c.JSON(http.StatusOK, run)
 }
 
@@ -181,6 +223,15 @@ func (h *PILabHandler) Events(c *gin.Context) {
 	after, err := strconv.ParseInt(c.DefaultQuery("after", "0"), 10, 64)
 	if err != nil || after < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "事件游标无效"})
+		return
+	}
+	run, err := h.manager.Get(owner, c.Param("id"))
+	if err != nil {
+		piLabError(c, err)
+		return
+	}
+	if !h.canReadRun(c, run) {
+		piLabError(c, pilab.ErrForbidden)
 		return
 	}
 	page, err := h.manager.Events(owner, c.Param("id"), after)

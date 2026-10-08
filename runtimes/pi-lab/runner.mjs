@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // No static third-party imports: even a missing installation produces a clean
 // machine-readable --check result / NDJSON failure, never an SDK stack trace.
-import { createEmitter, createRedactor, publicMessage, PublicError, readInput, validateInput, SDK_VERSION } from './lib/protocol.mjs';
+import { createEmitter, createRedactor, configSecrets, publicMessage, PublicError, readInput, validateInput, SDK_VERSION } from './lib/protocol.mjs';
 
 // stdout is exclusively the protocol. SDK/provider debug logging is not an
 // output channel (and could contain request credentials), so discard console.
@@ -35,26 +35,36 @@ async function main() {
     }
   }
   let inputTimer;
+  let input;
+  let config;
   try {
     if (args.length) throw new PublicError('arguments', '运行仅支持无参数或 --check。');
     const inputTimeout = new AbortController();
     inputTimer = setTimeout(() => inputTimeout.abort(), 30000);
-    const input = await readInput(process.stdin, AbortSignal.any([cancelled.signal, inputTimeout.signal]));
+    input = await readInput(process.stdin, AbortSignal.any([cancelled.signal, inputTimeout.signal]));
     clearTimeout(inputTimer);
-    const config = validateInput(input);
-    emit = createEmitter(output, createRedactor([config.model.api_key, config.model.base_url]));
+    config = validateInput(input);
+    emit = createEmitter(output, createRedactor(configSecrets(config)));
     const { runLab } = await import('./lib/runtime.mjs');
     const result = await runLab(config, { signal: cancelled.signal, write: output });
-    // Strings cannot be guaranteed to be zeroed in V8; release our references.
-    config.model.api_key = '';
-    if (input.model) input.model.api_key = '';
     return result.exitCode;
   } catch (error) {
     emit('error', 'coordinator', { message: publicMessage(error) });
     emit('report', 'coordinator', { text: '运行未完成，未生成有效模型报告。请根据错误修正配置或限制后重试。' });
     emit('complete', 'coordinator', { status: 'partial' });
     return error instanceof PublicError && error.code.startsWith('invalid') ? 2 : 1;
-  } finally { clearTimeout(inputTimer); }
+  } finally {
+    clearTimeout(inputTimer);
+    // All role/skill/tool/workspace context and both credentials stay in memory.
+    // Releasing references is not a guarantee of physical V8 string erasure.
+    for (const value of [input, config]) {
+      if (value?.model && typeof value.model === 'object') value.model.api_key = '';
+      if (value?.platform && typeof value.platform === 'object') {
+        if (value.platform.bridge && typeof value.platform.bridge === 'object') value.platform.bridge.token = '';
+        value.platform = undefined;
+      }
+    }
+  }
 }
 
 try { process.exitCode = await main(); }

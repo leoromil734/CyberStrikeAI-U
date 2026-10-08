@@ -3,6 +3,7 @@ package handler
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"cyberstrike-ai/internal/agentfinalizer"
 )
@@ -32,81 +33,88 @@ func TestCoverageWorkDoesNotSpendReportDeliveryAllowance(t *testing.T) {
 	}
 }
 
-func TestCoverageStagnationRequiresConsecutiveIndependentEvidenceAbsence(t *testing.T) {
+func TestCoverageStagnationWindowRequiresElapsedTimeWithoutProgress(t *testing.T) {
 	s := &finalizationContinuationState{}
-	for i := 0; i <= finalizationCoverageStagnationLimit; i++ {
-		d := coverageDecision(1000+i*1000, "facts alone do not prove tests")
-		d.CoverageEvidenceExecutions = 3
-		continued := observeFinalizationContinuation(d, s)
-		if i < finalizationCoverageStagnationLimit {
-			if !continued {
-				t.Fatalf("stopped before strategy change could work: %+v", s)
-			}
-			s.recordContinuation(d)
-		} else if continued || !strings.Contains(s.StopReason, "未新增可核查") {
-			t.Fatalf("fact inflation renewed a stalled task: %+v", s)
-		}
+	base := time.Now()
+	d := coverageDecision(1000, "facts alone do not prove tests")
+	d.CoverageEvidenceExecutions = 3
+	// 首观察初始化停滞时钟（此时已有真实进展），不递增无进展计数。
+	if !observeFinalizationContinuationAt(d, s, base) {
+		t.Fatalf("first observation stopped early: %+v", s)
+	}
+	s.recordContinuation(d)
+	// 事实补写不重置时钟：89 分钟无新进展仍在窗口内，可以继续。
+	ledgerOnly := d
+	ledgerOnly.CoverageValidFacts = 500
+	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(89*time.Minute)) {
+		t.Fatalf("stopped inside the stagnation window: %+v", s)
+	}
+	s.recordContinuation(d)
+	// 达到 90 分钟停滞窗口：停止续跑，且停止原因说明时间窗语义。
+	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(90*time.Minute)) {
+		t.Fatalf("stagnation window did not stop the loop: %+v", s)
+	}
+	if !strings.Contains(s.StopReason, "停滞窗口") || !strings.Contains(s.StopReason, "未新增可核查进展") {
+		t.Fatalf("stop reason lost the window semantics: %q", s.StopReason)
 	}
 }
 
-func TestLedgerMappingDoesNotRenewStagnationButNewEvidenceDoes(t *testing.T) {
+func TestLedgerMappingDoesNotRenewStagnationClockButProgressDoes(t *testing.T) {
 	s := &finalizationContinuationState{}
+	base := time.Now()
 	d := coverageDecision(1, "still unfinished")
 	d.CoverageEvidenceExecutions = 1
 	d.CoverageInventoryGroups = 20
-	for i := 0; i < finalizationCoverageStagnationLimit; i++ {
-		if !observeFinalizationContinuation(d, s) {
-			t.Fatal("fixture stopped before the ledger-only check")
-		}
-		s.recordContinuation(d)
+	if !observeFinalizationContinuationAt(d, s, base) {
+		t.Fatal("first observation stopped early")
 	}
-	d.CoverageMappedGroups = 5
-	d.CoverageValidFacts = 500
-	if observeFinalizationContinuation(d, s) || s.CoverageNoProgress == 0 {
-		t.Fatalf("ledger mapping renewed a stalled task: %+v", s)
+	s.recordContinuation(d)
+	ledgerOnly := d
+	ledgerOnly.CoverageMappedGroups = 5
+	ledgerOnly.CoverageValidFacts = 500
+	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(89*time.Minute)) {
+		t.Fatal("ledger mapping stopped the loop before the window elapsed")
+	}
+	s.recordContinuation(d)
+	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(90*time.Minute)) || s.CoverageNoProgress == 0 {
+		t.Fatalf("ledger mapping renewed a stalled run: %+v", s)
 	}
 
+	// 新的侦察来源执行（真实可核查进展）重置停滞时钟，窗口从新进展重新起算。
 	s = &finalizationContinuationState{}
 	d = coverageDecision(1, "still unfinished")
 	d.CoverageEvidenceExecutions = 1
 	d.CoverageInventoryGroups = 20
-	for i := 0; i < finalizationCoverageStagnationLimit-1; i++ {
-		if !observeFinalizationContinuation(d, s) {
-			t.Fatalf("fixture stopped before new execution evidence: %+v", s)
-		}
-		s.recordContinuation(d)
-	}
-	d.CoverageEvidenceExecutions = 2
-	if !observeFinalizationContinuation(d, s) || s.CoverageNoProgress != 0 {
-		t.Fatalf("new execution evidence was discarded: %+v", s)
+	if !observeFinalizationContinuationAt(d, s, base) {
+		t.Fatal("first observation stopped early")
 	}
 	s.recordContinuation(d)
-	s.WorkAttempts = finalizationCoverageMaxAttempts
-	d.CoverageEvidenceExecutions = 3
-	if observeFinalizationContinuation(d, s) {
-		t.Fatal("progress bypassed absolute work-segment guard")
+	advanced := d
+	advanced.CoverageEvidenceExecutions = 2
+	if !observeFinalizationContinuationAt(advanced, s, base.Add(80*time.Minute)) || s.CoverageNoProgress != 0 {
+		t.Fatalf("new execution evidence did not renew the clock: %+v", s)
 	}
-}
+	if !s.LastProgressAt.Equal(base.Add(80 * time.Minute)) {
+		t.Fatalf("last progress time not renewed: %v", s.LastProgressAt)
+	}
+	s.recordContinuation(d)
+	// 原 90 分钟窗口不再适用于旧起点：仍可继续到新进展 + 90 分钟之前。
+	if !observeFinalizationContinuationAt(advanced, s, base.Add(100*time.Minute)) {
+		t.Fatalf("renewed clock stopped too early: %+v", s)
+	}
+	s.recordContinuation(d)
+	// 新进展后 90 分钟到点停止（80 + 90 = 170 分钟）。
+	if observeFinalizationContinuationAt(advanced, s, base.Add(170*time.Minute)) {
+		t.Fatalf("renewed window did not stop at the window boundary: %+v", s)
+	}
 
-func TestVerificationExecutionResetsStagnationButLedgerDoesNot(t *testing.T) {
-	s := &finalizationContinuationState{}
-	d := coverageDecision(1, "still unfinished")
-	d.CoverageEvidenceExecutions = 4
-	d.VerificationExecutions = 12
-	for i := 0; i < finalizationCoverageStagnationLimit-1; i++ {
-		if !observeFinalizationContinuation(d, s) {
-			t.Fatalf("stopped before a new verification: %+v", s)
-		}
-		s.recordContinuation(d)
-	}
-	d.CoverageValidFacts = 900
-	if !observeFinalizationContinuation(d, s) {
-		t.Fatal("ledger-only segment should still be inside the stagnation window")
-	}
-	s.recordContinuation(d)
-	d.VerificationExecutions = 13
-	if !observeFinalizationContinuation(d, s) || s.CoverageNoProgress != 0 || s.VerificationHighWater != 13 {
-		t.Fatalf("completed vulnerability verification did not renew the run: %+v", s)
+	// 段数安全上限仍兜底病态快段：达到上限即停止，即使刚有进展。
+	s = &finalizationContinuationState{}
+	d = coverageDecision(1, "still unfinished")
+	d.CoverageEvidenceExecutions = 2
+	s.WorkAttempts = finalizationCoverageMaxAttempts
+	if observeFinalizationContinuationAt(d, s, base) {
+		t.Fatal("progress bypassed absolute work-segment guard")
 	}
 }
 

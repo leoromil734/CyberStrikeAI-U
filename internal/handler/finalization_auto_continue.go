@@ -10,6 +10,7 @@ import (
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/agentfinalizer"
+	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 	"cyberstrike-ai/internal/tooloutput"
@@ -20,12 +21,11 @@ import (
 
 const (
 	finalizationAutoContinueMaxAttempts = 4
-	finalizationCoverageMaxAttempts     = 64
+	// finalizationCoverageMaxAttempts 是覆盖续跑的段数安全上限默认值。
+	// 正常停止由停滞时间窗（默认 90 分钟无新增可核查进展）决定，而不是段数；
+	// 该上限只用于兜底病态快段空转，达到时保留轨迹供人工恢复。
+	finalizationCoverageMaxAttempts     = config.DefaultCoverageContinuationMaxSegments
 	finalizationCoverageNoProgressLimit = 2
-	// The first observation only records the evidence high water. Each later
-	// segment without a new real execution counts. Three such segments stop
-	// the loop and deliver a phase report; ledger rows never renew this.
-	finalizationCoverageStagnationLimit = 3
 	finalizationPendingWaitTimeout      = 20 * time.Minute
 	finalizationPendingPollInterval     = 5 * time.Second
 )
@@ -33,7 +33,12 @@ const (
 // A bounded continuation budget belongs to this request, not to a model response.
 // Work and report delivery have separate allowances. New fact rows or a shorter
 // error list are not progress; only a new real execution can renew the
-// consecutive-stagnation allowance. Ledger mappings cannot.
+// stagnation clock. Ledger mappings cannot.
+//
+// Loop Engineering（时间窗停滞治理）：覆盖续跑的停止条件 = 距上次可核查进展
+// （新漏洞验证执行 / 新侦察来源执行 / 新测试面发现，任一）达到 StagnationWindow
+// （默认 90 分钟，可配置）。CoverageNoProgress 只用于切换工作策略，不再直接停止；
+// CoverageMaxSegments 只是防病态快段的安全上限。
 type finalizationContinuationState struct {
 	Attempts                    int // Total restored segments; diagnostic only.
 	WorkAttempts                int
@@ -43,12 +48,59 @@ type finalizationContinuationState struct {
 	CoverageEvidenceHighWater   int
 	CoverageMappedHighWater     int
 	VerificationHighWater       int
+	CoverageInventoryHighWater  int
 	CoverageNoProgress          int
+	// 时间窗停滞治理字段：StartedAt/LastProgressAt 记录停滞时钟；窗口与段数上限由配置注入。
+	StartedAt           time.Time
+	LastProgressAt      time.Time
+	StagnationWindow    time.Duration
+	CoverageMaxSegments int
 	// WorkMode changes the next action, never the coverage proof or task scope.
 	WorkMode            string
 	LastReportCandidate string
 	StopReason          string
 	StopStatus          string
+}
+
+// applyContinuationPolicy 注入停滞窗口与段数上限；未配置时保持默认值（90 分钟 / 512 段）。
+func (s *finalizationContinuationState) applyContinuationPolicy(cfg *config.Config) {
+	if s.StagnationWindow <= 0 {
+		s.StagnationWindow = config.DefaultCoverageContinuationStagnationWindow
+		if cfg != nil {
+			s.StagnationWindow = cfg.MultiAgent.EinoMiddleware.CoverageContinuationStagnationEffective()
+		}
+	}
+	if s.CoverageMaxSegments <= 0 {
+		s.CoverageMaxSegments = config.DefaultCoverageContinuationMaxSegments
+		if cfg != nil {
+			s.CoverageMaxSegments = cfg.MultiAgent.EinoMiddleware.CoverageContinuationMaxSegmentsEffective()
+		}
+	}
+}
+
+func (s *finalizationContinuationState) stagnationWindow() time.Duration {
+	if s.StagnationWindow > 0 {
+		return s.StagnationWindow
+	}
+	return config.DefaultCoverageContinuationStagnationWindow
+}
+
+func (s *finalizationContinuationState) coverageMaxSegments() int {
+	if s.CoverageMaxSegments > 0 {
+		return s.CoverageMaxSegments
+	}
+	return finalizationCoverageMaxAttempts
+}
+
+func (s *finalizationContinuationState) continuationLimit(d agentfinalizer.Decision) int {
+	if finalizationNeedsCoverageWork(d) {
+		return s.coverageMaxSegments()
+	}
+	return finalizationAutoContinueMaxAttempts
+}
+
+func (s *finalizationContinuationState) shouldAutoContinue(d agentfinalizer.Decision, attempt int) bool {
+	return shouldAutoContinueWithinLimit(d, attempt, s.continuationLimit(d))
 }
 
 func finalizationNeedsCoverageWork(d agentfinalizer.Decision) bool {
@@ -85,7 +137,12 @@ func (s *finalizationContinuationState) recordContinuation(d agentfinalizer.Deci
 }
 
 func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int) bool {
-	if d.Finalizable || d.Finalized || attempt >= finalizationContinuationLimit(d) {
+	return shouldAutoContinueWithinLimit(d, attempt, finalizationContinuationLimit(d))
+}
+
+// shouldAutoContinueWithinLimit 判定当前段是否允许进入下一段续跑（含原因白名单与上限检查）。
+func shouldAutoContinueWithinLimit(d agentfinalizer.Decision, attempt, limit int) bool {
+	if d.Finalizable || d.Finalized || attempt >= limit {
 		return false
 	}
 	if d.Status == agentfinalizer.StatusFailed || d.Status == agentfinalizer.StatusCancelled || d.Status == agentfinalizer.StatusAwaitingHITL {
@@ -104,17 +161,30 @@ func shouldAutoContinueAfterFinalization(d agentfinalizer.Decision, attempt int)
 // observeFinalizationContinuation is separate from trace restoration for tests.
 // Attempts are incremented only once a usable trace has actually been restored.
 func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizationContinuationState) bool {
+	return observeFinalizationContinuationAt(d, state, time.Now())
+}
+
+// observeFinalizationContinuationAt 是 Loop Engineering 的核心判定（时间窗停滞治理）：
+//   - 停止条件 = 距上次可核查进展达到停滞窗口（默认 90 分钟），而不是连续固定段数；
+//   - 可核查进展（任一信号即重置停滞时钟）：
+//     1）新的漏洞验证执行（VerificationExecutions：record_vulnerability 及各验证器）；
+//     2）新的侦察来源执行（CoverageEvidenceExecutions：新测试面被核实）；
+//     3）新的测试脆弱面（CoverageInventoryGroups：独立候选库存增长）；
+//   - 台账映射、事实补写、文件读写与普通 shell 探测不算进展；
+//   - 连续无进展段数（CoverageNoProgress）只用于切换工作策略，不再直接停止；
+//   - 段数安全上限（CoverageMaxSegments）只兜底病态快段空转。
+func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finalizationContinuationState, now time.Time) bool {
 	if d.Finalizable || d.Finalized {
 		return false
 	}
 	used := state.usedAttempts(d)
-	if !shouldAutoContinueAfterFinalization(d, used) {
-		if used >= finalizationContinuationLimit(d) {
+	if !state.shouldAutoContinue(d, used) {
+		if used >= state.continuationLimit(d) {
 			phase := "报告收尾"
 			if finalizationNeedsCoverageWork(d) {
 				phase = "实际工作"
 			}
-			state.StopReason = fmt.Sprintf("%s自动续跑已达到本次运行的 %d 段硬上限，检查仍未通过；保留轨迹供人工修复后恢复", phase, finalizationContinuationLimit(d))
+			state.StopReason = fmt.Sprintf("%s自动续跑已达到本次运行的 %d 段安全上限，检查仍未通过；保留轨迹供人工修复后恢复", phase, state.continuationLimit(d))
 		}
 		return false
 	}
@@ -125,10 +195,16 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			// not investigation. Reclassify within scope and verify real work.
 			state.WorkMode = "classify_and_verify"
 		}
-		// Ledger rows do not renew the run. A new recon source or a new completed
-		// vulnerability-verification tool does. Fact writes and file reads do not.
+		// 停滞时钟起点：首次观察时初始化，保证窗口从任务进入覆盖工作阶段就开始计时。
+		if state.LastProgressAt.IsZero() {
+			state.StartedAt, state.LastProgressAt = now, now
+		}
+		// Ledger rows do not renew the clock. A new recon source, a new completed
+		// vulnerability-verification tool, or newly discovered test surface does.
+		// Fact writes and file reads do not.
 		progress := (d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater) ||
-			d.VerificationExecutions > state.VerificationHighWater
+			d.VerificationExecutions > state.VerificationHighWater ||
+			(d.CoverageProgressKnown && d.CoverageInventoryGroups > state.CoverageInventoryHighWater)
 		if state.CoverageObserved {
 			if progress {
 				state.CoverageNoProgress = 0
@@ -137,6 +213,9 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 			}
 		}
 		state.CoverageObserved = true
+		if progress {
+			state.LastProgressAt = now
+		}
 		if d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater {
 			state.CoverageEvidenceHighWater = d.CoverageEvidenceExecutions
 		}
@@ -149,17 +228,39 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 		if d.VerificationExecutions > state.VerificationHighWater {
 			state.VerificationHighWater = d.VerificationExecutions
 		}
+		if d.CoverageProgressKnown && d.CoverageInventoryGroups > state.CoverageInventoryHighWater {
+			state.CoverageInventoryHighWater = d.CoverageInventoryGroups
+		}
 		if state.CoverageNoProgress >= finalizationCoverageNoProgressLimit {
 			state.WorkMode = "classify_and_verify"
 		}
-		if state.CoverageNoProgress >= finalizationCoverageStagnationLimit {
-			state.StopReason = fmt.Sprintf("已连续 %d 段未新增可核查执行证据；台账和事实补写不算进展，新的漏洞验证执行会重新起算。停止续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，不视为已验证安全", state.CoverageNoProgress)
+		window := state.stagnationWindow()
+		if stagnant := now.Sub(state.LastProgressAt); stagnant >= window {
+			state.StopReason = fmt.Sprintf("已连续 %s 未新增可核查进展（停滞窗口 %s）：新漏洞验证、新的侦察来源执行或新的测试面发现都会重新起算；台账与事实补写不算进展。停止续跑并按现有证据交付阶段报告，未处置组保留为未覆盖，不视为已验证安全",
+				formatStagnationDuration(stagnant), formatStagnationDuration(window))
 			return false
 		}
 	} else {
 		state.WorkMode = "deliver_report"
 	}
 	return true
+}
+
+// formatStagnationDuration 把停滞时长格式化为人类可读的中文文本。
+func formatStagnationDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0 分钟"
+	}
+	hours := int(d / time.Hour)
+	minutes := int((d % time.Hour) / time.Minute)
+	switch {
+	case hours > 0 && minutes > 0:
+		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
+	case hours > 0:
+		return fmt.Sprintf("%d 小时", hours)
+	default:
+		return fmt.Sprintf("%d 分钟", minutes)
+	}
 }
 
 // An execution loop ending is not a successful completion. Preserve failed,
@@ -289,6 +390,12 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	if state == nil || decision.Finalizable || decision.Finalized {
 		return false
 	}
+	// 时间窗停滞治理：先注入配置的停滞窗口/段数上限，默认 90 分钟 / 512 段。
+	var continuationCfg *config.Config
+	if h != nil {
+		continuationCfg = h.config
+	}
+	state.applyContinuationPolicy(continuationCfg)
 	if result != nil && (result.ReportSubmitted || multiagent.IsAssessmentReportCandidate(decision.FinalText)) && strings.TrimSpace(decision.FinalText) != "" {
 		state.LastReportCandidate = decision.FinalText
 	}
@@ -377,9 +484,13 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 	}
 	state.recordContinuation(decision)
 	if progressCallback != nil {
+		stagnantSeconds, nextStopAt := 0, state.LastProgressAt.Add(state.stagnationWindow())
+		if !state.LastProgressAt.IsZero() {
+			stagnantSeconds = int(time.Since(state.LastProgressAt).Seconds())
+		}
 		progressCallback("finalization_auto_continue", "最终回复检查尚未收敛，正在基于已有轨迹继续执行…", map[string]interface{}{
 			"conversationId": conversationID, "source": "finalizer", "attempt": state.Attempts,
-			"maxAttempts": finalizationContinuationLimit(decision), "phaseAttempt": state.usedAttempts(decision),
+			"maxAttempts": state.continuationLimit(decision), "phaseAttempt": state.usedAttempts(decision),
 			"workAttempts": state.WorkAttempts, "deliveryAttempts": state.DeliveryAttempts, "status": decision.Status,
 			"completionReason": decision.CompletionReason, "missingChecks": decision.MissingChecks,
 			"coverageChecksFile": coverageChecksFile, "coverageValidFacts": decision.CoverageValidFacts,
@@ -388,6 +499,13 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"bookkeepingRepairStopped": state.WorkMode == "classify_and_verify",
 			"pendingExecutionIds":      decision.PendingExecutionIDs,
 			"contextInjection":         finalizationNeedsCoverageWork(decision),
+			// 时间窗停滞治理诊断：距上次可核查进展的时长、窗口、下次可停止时间与库存信号。
+			"stagnationWindowSeconds": int(state.stagnationWindow().Seconds()),
+			"stagnantSeconds":         stagnantSeconds,
+			"stagnantWindow":          formatStagnationDuration(state.stagnationWindow()),
+			"lastProgressAt":          state.LastProgressAt,
+			"nextStopEligibleAt":      nextStopAt,
+			"coverageInventoryGroups": decision.CoverageInventoryGroups,
 		})
 	}
 	select {

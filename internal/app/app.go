@@ -975,6 +975,7 @@ func setupRoutes(
 	}
 
 	piLabHandler := handler.NewPILabHandler(app.piLab, configHandler.ResolvePILabModel)
+	piLabHandler.SetPlatform(handler.NewPILabPlatform(configHandler, agentHandler, app.db, mcpServer, app.externalMCPMgr, authManager, app.logger.Logger))
 	piLabStartLimiter := security.NewRateLimiter(5, time.Minute)
 	piLabCheckLimiter := security.NewRateLimiter(20, time.Minute)
 	protected := api.Group("")
@@ -1015,6 +1016,7 @@ func setupRoutes(
 
 		// 独立 PI 实验室：单独记录、属主权限和生命周期，不影响 Eino/批量任务。
 		protected.GET("/pi-lab/status", security.RateLimitMiddleware(piLabCheckLimiter), piLabHandler.Status)
+		protected.GET("/pi-lab/profile", piLabHandler.Profile)
 		protected.GET("/pi-lab/runs", piLabHandler.List)
 		protected.POST("/pi-lab/runs", security.RateLimitMiddleware(piLabStartLimiter), piLabHandler.Create)
 		protected.GET("/pi-lab/runs/:id", piLabHandler.Get)

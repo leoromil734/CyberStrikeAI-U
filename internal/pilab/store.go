@@ -43,16 +43,21 @@ func (m *Manager) loadLocked() error {
 		if err != nil {
 			return ErrStorage
 		}
-		data, err := io.ReadAll(io.LimitReader(file, 2*1024*1024+1))
+		data, err := io.ReadAll(io.LimitReader(file, 8*1024*1024+1))
 		_ = file.Close()
 		var run storedRun
-		if err != nil || len(data) > 2*1024*1024 || json.Unmarshal(data, &run) != nil || run.ID != entry.Name() || run.OwnerID == "" || run.EventCount < 0 || run.EventCount > maxEvents {
+		if err != nil || len(data) > 8*1024*1024 || json.Unmarshal(data, &run) != nil || len(data) > runSnapshotLimit(&run.Run) || run.ID != entry.Name() || run.OwnerID == "" || run.EventCount < 0 || run.EventCount > runEventLimit(&run.Run) {
 			return ErrStorage
 		}
 		if active(run.Status) {
 			run.Status, run.Error = "interrupted", "上次服务退出时试验未结束；为避免重复请求，不自动恢复执行"
 			run.UpdatedAt = time.Now().UTC()
 			finishAgents(&run.Run)
+			if run.Mode == ModePlatform && m.recoverPlatform != nil {
+				if err := m.recoverPlatform(run.OwnerID, &run.Run); err != nil {
+					run.Error += "；关联平台状态恢复失败，请检查原项目记录"
+				}
+			}
 			if err := m.saveLocked(&run); err != nil {
 				return err
 			}
@@ -65,7 +70,7 @@ func (m *Manager) loadLocked() error {
 
 func (m *Manager) saveLocked(run *storedRun) error {
 	data, err := json.Marshal(run)
-	if err != nil || len(data) > 2*1024*1024 {
+	if err != nil || len(data) > runSnapshotLimit(&run.Run) {
 		return ErrStorage
 	}
 	file, err := os.CreateTemp(m.runPath(run.ID, ""), ".snapshot-*")
@@ -91,12 +96,12 @@ func (m *Manager) saveLocked(run *storedRun) error {
 }
 
 func (m *Manager) appendLocked(run *storedRun, event Event) error {
-	if run.EventCount >= maxEvents {
+	if run.EventCount >= runEventLimit(&run.Run) {
 		return fmt.Errorf("PI 事件预算已耗尽")
 	}
 	event.Seq, event.Time = run.EventCount+1, time.Now().UTC()
 	data, err := json.Marshal(event)
-	if err != nil || len(data) > maxEventBytes || run.EventBytes+int64(len(data)+1) > maxEventLogBytes {
+	if err != nil || len(data) > maxEventBytes || run.EventBytes+int64(len(data)+1) > runLogLimit(&run.Run) {
 		return fmt.Errorf("PI 事件存储预算已耗尽")
 	}
 	file, err := os.OpenFile(m.runPath(run.ID, "events.ndjson"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
@@ -133,7 +138,7 @@ func (m *Manager) Events(owner, id string, after int64) (EventPage, error) {
 		return result, ErrStorage
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(io.LimitReader(file, maxEventLogBytes+1))
+	scanner := bufio.NewScanner(io.LimitReader(file, runLogLimit(&run.Run)+1))
 	scanner.Buffer(make([]byte, 4096), maxEventBytes)
 	for scanner.Scan() {
 		var event Event

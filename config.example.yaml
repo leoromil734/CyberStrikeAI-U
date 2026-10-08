@@ -255,6 +255,8 @@ multi_agent:
     run_retry_max_attempts: 0 # 408/409/425/429/5xx/网络抖动时可退避重试次数；0=默认 4（永久性 4xx 不重试）
     run_retry_max_backoff_sec: 0 # 单次退避上限秒数；0=默认 30
     empty_response_continue_max_attempts: 0 # Run 成功但未捕获助手正文（含流式中断）时 Handler 退避续跑次数；0=默认 5
+    coverage_continuation_stagnation_minutes: 90 # Loop 停滞窗口（分钟）：连续无新增可核查进展（新漏洞验证 / 新侦察来源执行 / 新测试面发现，任一）达到该时长才停止自动续跑；0=默认 90
+    coverage_continuation_max_segments: 0 # 覆盖续跑段数安全上限（仅兜底病态快段空转，不参与正常停滞判定）；0=默认 512；达到上限时保留轨迹供人工恢复
     deep_output_key: final_answer # P0：Eino session 写入最终助手结论（框架内部；Deep/Supervisor 主/eino_single）
     deep_model_retry_max_retries: 0 # 已废弃，请用 run_retry_max_attempts；保留字段仅为兼容旧配置
     task_tool_description_prefix: "" # 非空：仅 Deep 的 task 工具使用自定义描述前缀，运行时会拼接子代理名称；空则走 Eino 默认生成逻辑

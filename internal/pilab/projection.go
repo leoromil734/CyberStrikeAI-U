@@ -11,6 +11,10 @@ import (
 // promotion into production assets, confirmed vulnerabilities or attack chains.
 func projectEvent(run *Run, event Event) error {
 	invalid := fmt.Errorf("PI 事件字段无效或投影预算已耗尽")
+	nodeCap, edgeCap, findingCap := 256, 512, 128
+	if run.Mode == ModePlatform {
+		nodeCap, edgeCap, findingCap = 4096, 8192, 512
+	}
 	switch event.Type {
 	case "agent_start":
 		var agent Agent
@@ -61,7 +65,7 @@ func projectEvent(run *Run, event Event) error {
 				return nil
 			}
 		}
-		if len(run.Nodes) >= 256 {
+		if len(run.Nodes) >= nodeCap {
 			return invalid
 		}
 		run.Nodes = append(run.Nodes, node)
@@ -76,7 +80,7 @@ func projectEvent(run *Run, event Event) error {
 				return nil
 			}
 		}
-		if len(run.Edges) >= 512 {
+		if len(run.Edges) >= edgeCap {
 			return invalid
 		}
 		run.Edges = append(run.Edges, edge)
@@ -99,7 +103,7 @@ func projectEvent(run *Run, event Event) error {
 				return nil
 			}
 		}
-		if len(run.Findings) >= 128 {
+		if len(run.Findings) >= findingCap {
 			return invalid
 		}
 		run.Findings = append(run.Findings, finding)

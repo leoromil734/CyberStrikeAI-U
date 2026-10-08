@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,7 +38,8 @@ func OptionsFromEnv() Options {
 	if abs, err := filepath.Abs(script); err == nil {
 		script = abs
 	}
-	return Options{Enabled: strings.EqualFold(os.Getenv("CYBERSTRIKE_PI_ENABLED"), "true"), Root: root, Runtime: &ProcessRuntime{Node: node, Script: script}}
+	maxConcurrent, _ := strconv.Atoi(os.Getenv("CYBERSTRIKE_PI_MAX_RUNS"))
+	return Options{Enabled: strings.EqualFold(os.Getenv("CYBERSTRIKE_PI_ENABLED"), "true"), Root: root, Runtime: &ProcessRuntime{Node: node, Script: script}, MaxConcurrent: maxConcurrent}
 }
 
 func runtimeEnv() []string {
@@ -97,6 +99,16 @@ func (r *ProcessRuntime) Check(ctx context.Context) error {
 func (r *ProcessRuntime) Run(ctx context.Context, workdir string, input Input, emit func(Event) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if input.Mode == ModePlatform {
+		bridge, err := startToolBridge(ctx, input)
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		platform := *input.Platform
+		platform.Bridge = &bridge.config
+		input.Platform = &platform
+	}
 	payload, err := json.Marshal(input)
 	if err != nil {
 		return fmt.Errorf("无法构建 PI 运行请求")

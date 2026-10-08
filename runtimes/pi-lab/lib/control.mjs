@@ -76,7 +76,7 @@ export async function settleWithin(promise, milliseconds = 1500) {
 }
 
 export class RunControl {
-  constructor(limits, externalSignal, { maxTurns = 20 } = {}) {
+  constructor(limits, externalSignal, { maxTurns = limits.max_turns ?? 20 } = {}) {
     this.controller = new AbortController();
     this.signal = this.controller.signal;
     this.issues = new Map();

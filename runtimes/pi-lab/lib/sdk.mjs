@@ -49,7 +49,7 @@ export async function createMemoryModelRuntime(sdk) {
   });
 }
 
-export async function createPiSession({ config, cwd, systemPrompt, tools, control }) {
+export async function createPiSession({ config, cwd, systemPrompt, tools, control, mode = 'probe' }) {
   const sdk = await loadSDK();
   checkAbort(control.signal);
   const provider = config.provider === 'claude' ? 'anthropic' : 'openai';
@@ -75,7 +75,14 @@ export async function createPiSession({ config, cwd, systemPrompt, tools, contro
   await modelRuntime.setRuntimeApiKey(provider, config.api_key, { signal: control.signal });
   const settingsManager = sdk.SettingsManager.inMemory({
     cacheWarming: 'off',
-    compaction: { enabled: false },
+    // Supported SDK compaction runs through the same modelRuntime.streamSimple
+    // wrapper below, so summary requests share auth, cancellation and turn limits.
+    // Scale down for small configured windows rather than retaining a 20k tail.
+    compaction: mode === 'platform' ? {
+      enabled: true,
+      reserveTokens: Math.min(16384, Math.floor(config.context_window / 4)),
+      keepRecentTokens: Math.min(20000, Math.floor(config.context_window / 4)),
+    } : { enabled: false },
     retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0, timeoutMs: 90000, maxRetryDelayMs: 0 } },
     enableInstallTelemetry: false,
     enableSkillCommands: false,
@@ -110,7 +117,7 @@ export async function createPiSession({ config, cwd, systemPrompt, tools, contro
     return stream(activeModel, context, {
       ...options,
       signal: combineSignals(options.signal, control.signal),
-      maxTokens: config.max_tokens,
+      maxTokens: mode === 'platform' ? Math.min(config.max_tokens, options.maxTokens ?? config.max_tokens) : config.max_tokens,
       cacheRetention: 'none',
       maxRetries: 0,
     });

@@ -24,6 +24,14 @@ html[data-theme="dark"] #page-pi-lab {
 #page-pi-lab .pi-lab-runtime.is-ready { background: var(--pi-lab-accent-soft); color: var(--accent-color); }
 #page-pi-lab .pi-lab-runtime-info { padding: 9px 4px 14px; color: var(--text-secondary); font-size: .75rem; }
 #page-pi-lab .pi-lab-runtime-info p { margin: 7px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-profile { margin-bottom: 16px; }
+#page-pi-lab .pi-lab-catalogs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+#page-pi-lab .pi-lab-catalogs > details { min-width: 0; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-size: .78rem; }
+#page-pi-lab .pi-lab-catalog { list-style: none; padding: 0; margin: 8px 0 0; max-height: 240px; overflow-y: auto; }
+#page-pi-lab .pi-lab-catalog-item { display: grid; gap: 3px; border-top: 1px solid var(--border-color); padding: 8px 2px; overflow-wrap: anywhere; }
+#page-pi-lab .pi-lab-catalog-item .pi-lab-muted { margin: 0; }
+#page-pi-lab .pi-lab-run-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 8px 0; }
+#page-pi-lab .pi-lab-limit-fields-extra { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #page-pi-lab summary { cursor: pointer; overflow-wrap: anywhere; }
 #page-pi-lab .pi-lab-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); align-items: start; gap: 18px; }
 #page-pi-lab .pi-lab-sidebar, #page-pi-lab .pi-lab-workspace { display: grid; gap: 16px; min-width: 0; }
@@ -114,7 +122,7 @@ html[data-theme="dark"] #page-pi-lab {
     #page-pi-lab .pi-lab-heading { align-items: flex-start; }
     #page-pi-lab .pi-lab-content { padding: 12px; }
     #page-pi-lab .pi-lab-panel { padding: 13px; }
-    #page-pi-lab .pi-lab-sidebar { grid-template-columns: minmax(0, 1fr); }
+    #page-pi-lab .pi-lab-sidebar, #page-pi-lab .pi-lab-catalogs { grid-template-columns: minmax(0, 1fr); }
     #page-pi-lab .pi-lab-runs { max-height: 230px; }
     #page-pi-lab .pi-lab-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     #page-pi-lab .pi-lab-run-actions .pi-lab-muted { flex-basis: 100%; margin-left: 0; }

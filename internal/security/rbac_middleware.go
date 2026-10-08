@@ -130,7 +130,7 @@ func permissionForRequest(method, fullPath string) string {
 		return "robot:read"
 	case strings.HasPrefix(path, "/robot"):
 		return "robot:write"
-	case path == "/pi-lab/status", path == "/pi-lab/runs", path == "/pi-lab/runs/:id", path == "/pi-lab/runs/:id/events", path == "/pi-lab/runs/:id/cancel":
+	case path == "/pi-lab/status", path == "/pi-lab/profile", path == "/pi-lab/runs", path == "/pi-lab/runs/:id", path == "/pi-lab/runs/:id/events", path == "/pi-lab/runs/:id/cancel":
 		return "agent:execute"
 	case strings.HasPrefix(path, "/eino-agent"), strings.HasPrefix(path, "/multi-agent"):
 		if strings.Contains(path, "/markdown-agents") {

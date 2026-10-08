@@ -10,12 +10,14 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("PI 试验不存在")
-	ErrDisabled    = errors.New("PI 实验室尚未启用")
-	ErrBusy        = errors.New("PI 实验室已有运行中的试验，请稍后重试")
-	ErrStorage     = errors.New("PI 独立存储读写失败，请检查数据目录权限与磁盘空间")
-	ErrUnavailable = errors.New("PI 运行时未就绪，请安装独立运行时依赖并检查 Node 路径")
-	ErrPartialExit = errors.New("PI 运行时以部分结果退出")
+	ErrNotFound            = errors.New("PI 试验不存在")
+	ErrDisabled            = errors.New("PI 实验室尚未启用")
+	ErrBusy                = errors.New("PI 实验室已有运行中的试验，请稍后重试")
+	ErrStorage             = errors.New("PI 独立存储读写失败，请检查数据目录权限与磁盘空间")
+	ErrUnavailable         = errors.New("PI 运行时未就绪，请安装独立运行时依赖并检查 Node 路径")
+	ErrPartialExit         = errors.New("PI 运行时以部分结果退出")
+	ErrForbidden           = errors.New("无权执行该 PI 平台任务或访问关联资源")
+	ErrPlatformUnavailable = errors.New("PI 平台模式未配置，不能退回受限演示模式")
 )
 
 type Limits struct {
@@ -23,11 +25,20 @@ type Limits struct {
 	MaxAgents      int `json:"max_agents"`
 	TimeoutSeconds int `json:"timeout_seconds"`
 	MaxRequests    int `json:"max_requests"`
+	MaxTurns       int `json:"max_turns,omitempty"`
+	MaxToolCalls   int `json:"max_tool_calls,omitempty"`
 }
 
-var DefaultLimits = Limits{MaxParallel: 2, MaxAgents: 6, TimeoutSeconds: 900, MaxRequests: 80}
+var DefaultLimits = Limits{MaxParallel: 2, MaxAgents: 6, TimeoutSeconds: 900, MaxRequests: 80, MaxTurns: 20, MaxToolCalls: 256}
+var DefaultPlatformLimits = Limits{MaxParallel: 3, MaxAgents: 12, TimeoutSeconds: 3600, MaxTurns: 120, MaxToolCalls: 600}
+var PlatformLimitCaps = Limits{MaxParallel: 8, MaxAgents: 32, TimeoutSeconds: 21600, MaxTurns: 500, MaxToolCalls: 2000}
 
 type CreateRequest struct {
+	Mode           string   `json:"mode"`
+	ProjectID      string   `json:"project_id"`
+	Role           string   `json:"role"`
+	MaxTurns       int      `json:"max_turns"`
+	MaxToolCalls   int      `json:"max_tool_calls"`
 	Title          string   `json:"title"`
 	Prompt         string   `json:"prompt"`
 	Scope          []string `json:"scope"`
@@ -85,23 +96,30 @@ type Finding struct {
 }
 
 type Run struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	Prompt     string    `json:"prompt"`
-	Scope      []string  `json:"scope"`
-	AIChannel  string    `json:"ai_channel"`
-	Model      string    `json:"model"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Error      string    `json:"error,omitempty"`
-	Report     string    `json:"report"`
-	Limits     Limits    `json:"limits"`
-	Agents     []Agent   `json:"agents"`
-	Nodes      []Node    `json:"nodes"`
-	Edges      []Edge    `json:"edges"`
-	Findings   []Finding `json:"findings"`
-	EventCount int64     `json:"event_count"`
+	Mode               string    `json:"mode"`
+	ProjectID          string    `json:"project_id,omitempty"`
+	ConversationID     string    `json:"conversation_id,omitempty"`
+	AssistantMessageID string    `json:"assistant_message_id,omitempty"`
+	Role               string    `json:"role,omitempty"`
+	Skills             []string  `json:"skills"`
+	ExecutionIDs       []string  `json:"execution_ids"`
+	ID                 string    `json:"id"`
+	Title              string    `json:"title"`
+	Prompt             string    `json:"prompt"`
+	Scope              []string  `json:"scope"`
+	AIChannel          string    `json:"ai_channel"`
+	Model              string    `json:"model"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Error              string    `json:"error,omitempty"`
+	Report             string    `json:"report"`
+	Limits             Limits    `json:"limits"`
+	Agents             []Agent   `json:"agents"`
+	Nodes              []Node    `json:"nodes"`
+	Edges              []Edge    `json:"edges"`
+	Findings           []Finding `json:"findings"`
+	EventCount         int64     `json:"event_count"`
 }
 
 type Event struct {
@@ -119,21 +137,28 @@ type EventPage struct {
 }
 
 type Status struct {
-	Enabled   bool     `json:"enabled"`
-	Ready     bool     `json:"ready"`
-	Reason    string   `json:"reason"`
-	Runtime   string   `json:"runtime"`
-	Limits    Limits   `json:"limits"`
-	Tools     []string `json:"tools"`
-	Isolation string   `json:"isolation"`
+	Modes             []string `json:"modes"`
+	ActiveRuns        int      `json:"active_runs"`
+	MaxConcurrentRuns int      `json:"max_concurrent_runs"`
+	PlatformLimits    Limits   `json:"platform_limits"`
+	Enabled           bool     `json:"enabled"`
+	Ready             bool     `json:"ready"`
+	Reason            string   `json:"reason"`
+	Runtime           string   `json:"runtime"`
+	Limits            Limits   `json:"limits"`
+	Tools             []string `json:"tools"`
+	Isolation         string   `json:"isolation"`
 }
 
 type Input struct {
-	RunID  string   `json:"run_id"`
-	Prompt string   `json:"prompt"`
-	Scope  []string `json:"scope"`
-	Limits Limits   `json:"limits"`
-	Model  Model    `json:"model"`
+	Mode     string         `json:"mode,omitempty"`
+	Platform *PlatformInput `json:"platform,omitempty"`
+	Execute  ToolExecutor   `json:"-"`
+	RunID    string         `json:"run_id"`
+	Prompt   string         `json:"prompt"`
+	Scope    []string       `json:"scope"`
+	Limits   Limits         `json:"limits"`
+	Model    Model          `json:"model"`
 }
 
 // Runtime permits hermetic tests without invoking a model or probing a target.

@@ -19,10 +19,30 @@ const maxRuns = 1000
 const maxEvents = 2000
 const maxEventLogBytes = 8 * 1024 * 1024
 
+func runEventLimit(run *Run) int64 {
+	if run.Mode == ModePlatform {
+		return 12000
+	}
+	return maxEvents
+}
+func runLogLimit(run *Run) int64 {
+	if run.Mode == ModePlatform {
+		return 64 * 1024 * 1024
+	}
+	return maxEventLogBytes
+}
+func runSnapshotLimit(run *Run) int {
+	if run.Mode == ModePlatform {
+		return 8 * 1024 * 1024
+	}
+	return 2 * 1024 * 1024
+}
+
 type Options struct {
-	Enabled bool
-	Root    string
-	Runtime Runtime
+	Enabled       bool
+	Root          string
+	Runtime       Runtime
+	MaxConcurrent int
 }
 
 type storedRun struct {
@@ -32,24 +52,48 @@ type storedRun struct {
 }
 
 type Manager struct {
-	mu      sync.Mutex
-	options Options
-	loaded  bool
-	closed  bool
-	runs    map[string]*storedRun
-	cancels map[string]context.CancelFunc
-	wg      sync.WaitGroup
+	mu              sync.Mutex
+	options         Options
+	loaded          bool
+	closed          bool
+	runs            map[string]*storedRun
+	cancels         map[string]context.CancelFunc
+	wg              sync.WaitGroup
+	recoverPlatform func(string, *Run) error
 }
 
 // New creates no directories, starts no goroutines and makes no network requests.
 func New(options Options) *Manager {
+	if options.MaxConcurrent < 1 {
+		options.MaxConcurrent = 1
+	}
+	if options.MaxConcurrent > 4 {
+		options.MaxConcurrent = 4
+	}
 	return &Manager{options: options, runs: map[string]*storedRun{}, cancels: map[string]context.CancelFunc{}}
 }
 
+// SetRecovery installs a metadata-only restart reconciler. It must never
+// resume model execution or replay operational tool calls.
+func (m *Manager) SetRecovery(recoverRun func(string, *Run) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recoverPlatform = recoverRun
+}
+
 func (m *Manager) Status(ctx context.Context) Status {
-	status := Status{Enabled: m.options.Enabled, Runtime: "pi-coding-agent", Limits: Limits{MaxParallel: 4, MaxAgents: 12, TimeoutSeconds: 1800, MaxRequests: DefaultLimits.MaxRequests},
+	status := Status{Enabled: m.options.Enabled, Runtime: "pi-coding-agent", Modes: []string{ModePlatform, ModeProbe}, PlatformLimits: PlatformLimitCaps, Limits: Limits{MaxParallel: 4, MaxAgents: 12, TimeoutSeconds: 1800, MaxRequests: DefaultLimits.MaxRequests, MaxTurns: 20, MaxToolCalls: 256},
 		Tools:     []string{"delegate_agents", "inspect_http", "record_surface", "record_finding"},
-		Isolation: "独立 PI 进程、记录和预算；仅公网授权来源及需求明示 URL 的 GET/HEAD 和响应头/哈希观察，无 Shell、现有 MCP 或生产任务联动；不是操作系统安全沙箱"}
+		Isolation: "平台模式复用现有渗透测试角色、技能、工具权限和项目工作目录；诊断模式保留受限 HTTP 检查。工具实际执行和证据入库由平台控制，不绕过授权，也不宣称任意命令的网络隔离"}
+	m.mu.Lock()
+	status.ActiveRuns = len(m.cancels)
+	status.MaxConcurrentRuns = m.options.MaxConcurrent
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		status.Reason = "PI 任务管理器已关闭"
+		return status
+	}
 	if !m.options.Enabled {
 		status.Reason = "默认关闭；安装 runtimes/pi-lab 依赖后，由管理员在下次计划启动时设置 CYBERSTRIKE_PI_ENABLED=true"
 		return status
@@ -63,6 +107,10 @@ func (m *Manager) Status(ctx context.Context) Status {
 }
 
 func (m *Manager) Create(owner string, req CreateRequest, model Model) (Run, error) {
+	return m.CreatePrepared(owner, req, model, nil)
+}
+
+func (m *Manager) CreatePrepared(owner string, req CreateRequest, model Model, prepare PrepareFunc) (Run, error) {
 	if !m.options.Enabled {
 		return Run{}, ErrDisabled
 	}
@@ -89,7 +137,7 @@ func (m *Manager) Create(owner string, req CreateRequest, model Model) (Run, err
 	if err := m.loadLocked(); err != nil {
 		return Run{}, err
 	}
-	if len(m.cancels) != 0 {
+	if len(m.cancels) >= m.options.MaxConcurrent {
 		return Run{}, ErrBusy
 	}
 	if len(m.runs) >= maxRuns {
@@ -97,33 +145,106 @@ func (m *Manager) Create(owner string, req CreateRequest, model Model) (Run, err
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	run := &storedRun{OwnerID: owner, Run: Run{ID: id, Title: req.Title, Prompt: req.Prompt, Scope: req.Scope,
+	run := &storedRun{OwnerID: owner, Run: Run{ID: id, Mode: req.Mode, Title: req.Title, Prompt: req.Prompt, Scope: req.Scope,
 		AIChannel: req.AIChannel, Model: model.ID, Status: "queued", Limits: limits, CreatedAt: now, UpdatedAt: now,
-		Agents: []Agent{}, Nodes: []Node{}, Edges: []Edge{}, Findings: []Finding{}}}
+		Agents: []Agent{}, Nodes: []Node{}, Edges: []Edge{}, Findings: []Finding{}, Skills: []string{}, ExecutionIDs: []string{}}}
+	var prepared *PreparedRun
+	if req.Mode == ModePlatform {
+		if prepare == nil {
+			return Run{}, ErrPlatformUnavailable
+		}
+		prepared, err = prepare(context.Background(), id, req)
+		if err != nil {
+			return Run{}, err
+		}
+		if prepared == nil || prepared.Platform == nil || prepared.Execute == nil {
+			if prepared != nil && prepared.Close != nil {
+				prepared.Close()
+			}
+			return Run{}, ErrPlatformUnavailable
+		}
+		run.ProjectID, run.ConversationID, run.Role = prepared.Platform.ProjectID, prepared.Platform.ConversationID, prepared.Platform.RoleName
+		run.AssistantMessageID = prepared.AssistantMessageID
+		if run.ProjectID != req.ProjectID || run.ConversationID == "" || run.Role != req.Role {
+			if prepared.Close != nil {
+				prepared.Close()
+			}
+			return Run{}, ErrPlatformUnavailable
+		}
+	}
+	cleanup := func() {
+		if prepared != nil && prepared.Close != nil {
+			prepared.Close()
+		}
+	}
 	workdir := filepath.Join(m.options.Root, "runs", id, "workspace")
 	if err := os.MkdirAll(workdir, 0700); err != nil {
+		cleanup()
 		return Run{}, ErrStorage
 	}
 	if err := m.saveLocked(run); err != nil {
+		cleanup()
 		return Run{}, err
 	}
 	m.runs[id] = run
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limits.TimeoutSeconds)*time.Second)
+	base := context.Background()
+	if prepared != nil && prepared.Context != nil {
+		base = prepared.Context
+	}
+	ctx, cancel := context.WithTimeout(base, time.Duration(limits.TimeoutSeconds)*time.Second)
+	if prepared != nil && prepared.Start != nil {
+		if err := prepared.Start(ctx, cancel); err != nil {
+			cancel()
+			run.Status = "failed"
+			run.Error = "平台任务启动失败"
+			m.finishPreparedLocked(run, prepared)
+			_ = m.saveLocked(run)
+			cleanup()
+			return Run{}, err
+		}
+	}
 	m.cancels[id] = cancel
-	input := Input{RunID: id, Prompt: req.Prompt, Scope: append([]string{}, req.Scope...), Limits: limits, Model: model}
+	input := Input{RunID: id, Mode: req.Mode, Prompt: req.Prompt, Scope: append([]string{}, req.Scope...), Limits: limits, Model: model}
+	if prepared != nil {
+		input.Platform = prepared.Platform
+		input.Execute = func(ctx context.Context, call ToolCall) (*ToolReply, error) {
+			reply, err := prepared.Execute(ctx, call)
+			m.mu.Lock()
+			if reply != nil && reply.ExecutionID != "" {
+				run.ExecutionIDs = appendUnique(run.ExecutionIDs, reply.ExecutionID, limits.MaxToolCalls)
+			}
+			if err == nil && reply != nil && !reply.IsError && call.Name == "load_skill" {
+				name, _ := call.Arguments["name"].(string)
+				if name != "" {
+					run.Skills = appendUnique(run.Skills, name, 256)
+				}
+			}
+			storeErr := m.saveLocked(run)
+			m.mu.Unlock()
+			if err == nil && storeErr != nil {
+				return reply, storeErr
+			}
+			return reply, err
+		}
+	}
 	result := cloneRun(run.Run)
 	m.wg.Add(1)
-	go m.execute(ctx, cancel, workdir, input)
+	go m.execute(ctx, cancel, workdir, input, prepared)
 	return result, nil
 }
 
-func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, workdir string, input Input) {
+func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, workdir string, input Input, prepared *PreparedRun) {
 	defer m.wg.Done()
 	defer cancel()
+	defer func() { m.mu.Lock(); delete(m.cancels, input.RunID); m.mu.Unlock() }()
+	if prepared != nil && prepared.Close != nil {
+		defer prepared.Close()
+	}
 	m.mu.Lock()
 	run := m.runs[input.RunID]
 	if !active(run.Status) {
-		delete(m.cancels, input.RunID)
+		m.finishPreparedLocked(run, prepared)
+		_ = m.saveLocked(run)
 		m.mu.Unlock()
 		return
 	}
@@ -163,15 +284,16 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, workdi
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.cancels, input.RunID)
 	if !active(run.Status) {
+		m.finishPreparedLocked(run, prepared)
+		_ = m.saveLocked(run)
 		return
 	}
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		run.Status, run.Error = "partial", "达到独立试验时限；已保留当前证据，尚未完成全部测试"
 	case ctx.Err() != nil:
-		run.Status, run.Error = "interrupted", "PI 运行被中断"
+		run.Status, run.Error = "cancelled", "PI 运行已取消"
 	case errors.Is(err, ErrPartialExit) && completeStatus == "partial" && strings.TrimSpace(run.Report) != "":
 		run.Status = "partial"
 		if run.Error == "" {
@@ -191,11 +313,76 @@ func (m *Manager) execute(ctx context.Context, cancel context.CancelFunc, workdi
 			run.Status = "partial"
 		}
 	}
+	m.finishPreparedLocked(run, prepared)
 	finishAgents(&run.Run)
 	run.UpdatedAt = time.Now().UTC()
 	if m.saveLocked(run) != nil {
 		run.Status, run.Error = "failed", ErrStorage.Error()
 	}
+}
+
+// Caller holds m.mu. Platform database/finalizer hooks run outside it so tool
+// completion and cancellation cannot deadlock on PI state persistence.
+func (m *Manager) finishPreparedLocked(run *storedRun, prepared *PreparedRun) {
+	if prepared == nil || prepared.Finish == nil {
+		return
+	}
+	snapshot := cloneRun(run.Run)
+	original := snapshot.Status
+	if _, running := m.cancels[run.ID]; running && original != "cancelled" && original != "interrupted" {
+		run.Status = "running"
+	}
+	m.mu.Unlock()
+	var finishErr error
+	func() {
+		defer func() {
+			if recover() != nil {
+				finishErr = fmt.Errorf("平台收尾异常")
+			}
+		}()
+		finishErr = prepared.Finish(&snapshot)
+	}()
+	m.mu.Lock()
+	if finishErr != nil {
+		snapshot.Status = "failed"
+		snapshot.Error = "平台报告或任务状态保存失败；PI 记录仍保留已接收报告"
+	}
+	if snapshot.Status != "completed" && snapshot.Status != "partial" && snapshot.Status != "failed" && snapshot.Status != "cancelled" && snapshot.Status != "interrupted" {
+		snapshot.Status = "failed"
+		snapshot.Error = "平台收尾状态无效"
+	}
+	if original != "completed" && snapshot.Status == "completed" {
+		snapshot.Status = original
+	}
+	if run.Status == "cancelled" || run.Status == "interrupted" {
+		snapshot.Status = run.Status
+	}
+	run.Status = snapshot.Status
+	if snapshot.Error != "" {
+		run.Error = snapshot.Error
+	}
+	run.Report = snapshot.Report
+	for _, id := range snapshot.ExecutionIDs {
+		run.ExecutionIDs = appendUnique(run.ExecutionIDs, id, PlatformLimitCaps.MaxToolCalls)
+	}
+	for _, skill := range snapshot.Skills {
+		run.Skills = appendUnique(run.Skills, skill, 256)
+	}
+}
+
+func appendUnique(values []string, value string, limit int) []string {
+	if value == "" {
+		return values
+	}
+	for _, v := range values {
+		if v == value {
+			return values
+		}
+	}
+	if len(values) >= limit {
+		return values
+	}
+	return append(values, value)
 }
 
 func agentsCompleted(run *Run) bool {
@@ -240,7 +427,15 @@ func (m *Manager) List(owner string) ([]Run, error) {
 	result := []Run{}
 	for _, run := range m.runs {
 		if run.OwnerID == owner {
-			result = append(result, cloneRun(run.Run))
+			summary := run.Run
+			summary.Agents = nil
+			summary.Nodes = nil
+			summary.Edges = nil
+			summary.Findings = nil
+			summary.ExecutionIDs = nil
+			summary.Report = ""
+			summary.Prompt = ""
+			result = append(result, cloneRun(summary))
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
@@ -319,6 +514,11 @@ func (m *Manager) Close() {
 }
 
 func cloneRun(run Run) Run {
+	if run.Mode == "" {
+		run.Mode = ModeProbe
+	}
+	run.Skills = append([]string{}, run.Skills...)
+	run.ExecutionIDs = append([]string{}, run.ExecutionIDs...)
 	run.Scope = append([]string{}, run.Scope...)
 	run.Agents = append([]Agent{}, run.Agents...)
 	run.Nodes = append([]Node{}, run.Nodes...)

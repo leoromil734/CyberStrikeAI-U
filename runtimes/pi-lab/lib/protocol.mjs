@@ -48,16 +48,78 @@ export function parseHttpUrl(value) {
   return url;
 }
 
+// Keep protocol validation free of SDK imports so --check and malformed stdin
+// still return controlled output when dependencies are not installed.
+export function validateBridgeUrl(value) {
+  const match = typeof value === 'string' && /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/tools\/call$/.exec(value);
+  if (!match || Number(match[1]) > 65535) {
+    throw new PublicError('invalid_bridge', 'platform.bridge.url 必须是 http://127.0.0.1:<port>/tools/call；不允许其他主机、userinfo、查询、片段或路径。');
+  }
+  return value;
+}
+
+const reservedToolNames = new Set(['delegate_agents', 'record_surface', 'record_finding', 'inspect_http', 'codemode', 'tool_search']);
+function object(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PublicError('invalid_platform', `${field} 必须是 JSON 对象。`);
+  return value;
+}
+function string(value, field, max) {
+  if (typeof value !== 'string' || value.length > max) throw new PublicError('invalid_platform', `${field} 必须是字符串，且不超过 ${max} 字符。`);
+  return value;
+}
+function validatePlatform(value) {
+  const platform = object(value, 'platform');
+  const bridge = object(platform.bridge, 'platform.bridge');
+  const token = string(bridge.token, 'platform.bridge.token', 16384);
+  if (!/^[\x21-\x7e]+$/.test(token)) throw new PublicError('invalid_bridge', 'platform.bridge.token 必须是非空、无空白的 ASCII 凭据。');
+  if (!Array.isArray(platform.skills) || platform.skills.length > 256) throw new PublicError('invalid_platform', 'platform.skills 必须是至多 256 项的数组。');
+  if (!Array.isArray(platform.tools) || platform.tools.length < 1 || platform.tools.length > 256) throw new PublicError('invalid_platform', 'platform.tools 必须是 1 至 256 项的数组。');
+  const names = new Set();
+  const tools = platform.tools.map((value) => {
+    const tool = object(value, 'platform.tools[]');
+    const name = string(tool.name, 'platform.tools[].name', 64);
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || reservedToolNames.has(name) || name.startsWith('mcp__') || names.has(name)) {
+      throw new PublicError('invalid_platform', '平台工具名称无效、重复或与运行时保留工具冲突。');
+    }
+    names.add(name);
+    const schema = object(tool.input_schema, 'platform.tools[].input_schema');
+    if (schema.type !== 'object' || JSON.stringify(schema).length > 65536) throw new PublicError('invalid_platform', '工具参数必须是至多 65536 字符的 object JSON Schema。');
+    return { name, description: string(tool.description, 'platform.tools[].description', 16000), input_schema: structuredClone(schema) };
+  });
+  return {
+    role_name: text(platform.role_name, 'platform.role_name', 200),
+    instructions: text(platform.instructions, 'platform.instructions', 128000),
+    worker_instructions: string(platform.worker_instructions, 'platform.worker_instructions', 128000),
+    project_id: string(platform.project_id, 'platform.project_id', 256),
+    conversation_id: string(platform.conversation_id, 'platform.conversation_id', 256),
+    workspace: text(platform.workspace, 'platform.workspace', 4096),
+    skills: platform.skills.map((value) => {
+      const skill = object(value, 'platform.skills[]');
+      return { name: text(skill.name, 'platform.skills[].name', 200), description: string(skill.description, 'platform.skills[].description', 8000) };
+    }),
+    tools, bridge: { url: validateBridgeUrl(bridge.url), token },
+  };
+}
+
+export function configSecrets(config) {
+  return [config.model.api_key, config.model.base_url, ...(config.mode === 'platform' ? [config.platform.bridge.token, config.platform.bridge.url, new URL(config.platform.bridge.url).origin] : [])];
+}
+
 export function validateInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new PublicError('invalid_input', 'stdin 必须提供一个 JSON 对象。');
   }
+  const mode = input.mode ?? 'probe';
+  if (!['probe', 'platform'].includes(mode)) throw new PublicError('invalid_input', 'mode 仅支持 probe 或 platform。');
+  const formal = mode === 'platform';
   const run_id = text(input.run_id, 'run_id', 128);
   const prompt = text(input.prompt, 'prompt', 48000);
   if (!Array.isArray(input.scope) || input.scope.length < 1 || input.scope.length > 32) {
-    throw new PublicError('invalid_scope', 'scope 必须包含 1 至 32 个明确授权 URL。');
+    throw new PublicError('invalid_scope', formal ? 'scope 必须包含 1 至 32 项明确授权范围与排除说明。' : 'scope 必须包含 1 至 32 个明确授权 URL。');
   }
-  const scope = [...new Set(input.scope.map((value) => parseHttpUrl(value).href))];
+  // Platform scope is an authorization contract, not the probe URL filter.
+  // Network/tool/workspace permissions are enforced by the Go execution layer.
+  const scope = [...new Set(input.scope.map((value) => formal ? text(value, 'scope[]', 4096) : parseHttpUrl(value).href))];
   const limits = input.limits ?? {};
   if (typeof limits !== 'object' || Array.isArray(limits)) {
     throw new PublicError('invalid_input', 'limits 必须是 JSON 对象。');
@@ -73,12 +135,15 @@ export function validateInput(input) {
   const context_window = integer(model.context_window, 128000, 'context_window', 1024, 2000000);
   const max_tokens = integer(model.max_tokens, 4096, 'max_tokens', 1, Math.min(32768, context_window));
   return {
-    run_id, prompt, scope,
+    mode, run_id, prompt, scope,
+    ...(formal ? { platform: validatePlatform(input.platform) } : {}),
     limits: {
       max_parallel: integer(limits.max_parallel, 2, 'max_parallel', 1, 8),
-      max_agents: integer(limits.max_agents, 6, 'max_agents', 0, 32),
-      timeout_seconds: integer(limits.timeout_seconds, 900, 'timeout_seconds', 1, 3600),
-      max_requests: integer(limits.max_requests, 80, 'max_requests', 0, 1000),
+      max_agents: integer(limits.max_agents, 6, 'max_agents', formal ? 1 : 0, 32),
+      timeout_seconds: integer(limits.timeout_seconds, 900, 'timeout_seconds', formal ? 60 : 1, formal ? 21600 : 3600),
+      ...(formal ? {} : { max_requests: integer(limits.max_requests, 80, 'max_requests', 0, 1000) }),
+      max_turns: formal ? integer(limits.max_turns, 120, 'max_turns', 1, 500) : 20,
+      max_tool_calls: formal ? integer(limits.max_tool_calls, 600, 'max_tool_calls', 1, 2000) : 256,
     },
     model: {
       provider: model.provider,
@@ -123,13 +188,24 @@ export function createEmitter(write, redact = createRedactor()) {
     for (const key of ['id', 'parent_id', 'source', 'target', 'kind', 'status', 'severity']) {
       if (Object.hasOwn(data, key)) safeData[key] = data[key];
     }
-    write(JSON.stringify({ type, agent_id, data: safeData }) + '\n');
+    let line = JSON.stringify({ type, agent_id, data: safeData }) + '\n';
+    // The Go reader caps each UTF-8 NDJSON line at 96 KiB. Character limits
+    // alone are insufficient (e.g. escaped control characters need 6 bytes).
+    while (Buffer.byteLength(line) >= 96 * 1024) {
+      const largest = Object.keys(safeData).filter((key) => typeof safeData[key] === 'string' && !['id', 'parent_id', 'source', 'target', 'kind', 'status', 'severity'].includes(key))
+        .sort((a, b) => safeData[b].length - safeData[a].length)[0];
+      if (!largest || safeData[largest].length < 64) throw new PublicError('event_size', '事件超出安全输出上限。');
+      safeData[largest] = clip(safeData[largest], Math.floor(safeData[largest].length / 2));
+      line = JSON.stringify({ type, agent_id, data: safeData }) + '\n';
+    }
+    write(line);
     if (type === 'complete') completed = true;
   };
 }
 
 export function clip(value, max = MAX_TEXT) {
-  return value.length <= max ? value : value.slice(0, max) + '\n[输出已截断]';
+  const suffix = '\n[输出已截断]';
+  return value.length <= max ? value : value.slice(0, Math.max(0, max - suffix.length)) + suffix.slice(0, max);
 }
 
 export async function readInput(stream, signal) {

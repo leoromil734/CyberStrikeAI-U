@@ -101,13 +101,23 @@ export async function productionTransport(url, { method, signal }) {
       dispatcher, method, signal, maxRedirections: 0,
       headers: { 'user-agent': 'CyberStrikeAI-PI-Lab/0.1', accept: '*/*', 'accept-encoding': 'identity' },
     });
+    // HEAD and redirects intentionally leave the body unread. Undici's
+    // BodyReadable.destroy() then emits UND_ERR_ABORTED asynchronously; a
+    // Promise catch cannot handle a stream 'error' event. Handle that expected
+    // cleanup error before destroying, without draining or following responses.
+    // Read errors still reach the async iterator and fail inspect_http normally.
+    let closePromise;
     return {
       status: response.statusCode,
       headers: response.headers,
       body: response.body,
-      close: async () => {
-        response.body.destroy();
-        await dispatcher.destroy();
+      close: () => {
+        closePromise ??= (async () => {
+          response.body.on('error', () => {});
+          response.body.destroy();
+          await dispatcher.destroy();
+        })();
+        return closePromise;
       },
     };
   } catch (error) {
