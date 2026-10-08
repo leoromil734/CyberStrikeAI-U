@@ -34,7 +34,7 @@ Quake / 凤鸟只补**当前种子**缺口，不当开场必跑。语法对照�
 
 分类字段、浅测边界与阶段证据读根路径 `skills/attack-surface-recon/references/comprehensive-recon.md` §2.1；少量 DNS/路径/API 补缺字典读 `skills/credential-stuffing/references/lite-wordlists.md`，默认不用全集。固定 URL/资产清单任务仍服从原范围，不能借品牌关联扩圈。
 
-范围内 SSH、数据库、SMTP/IMAP/POP3 认证入口也须交接一轮简单弱口令验证，按 `credential-stuffing.md` 统一小预算；不把“不爆破”当作免测依据。
+范围内 SSH、数据库、SMTP/IMAP/POP3 认证入口也须交接简单弱口令验证，按 `credential-stuffing.md` 分档预算（轻量首轮起步，高价值入口可进深度档）；不把“不爆破”当作免测依据。
 
 
 ## 1. RECON HIERARCHY

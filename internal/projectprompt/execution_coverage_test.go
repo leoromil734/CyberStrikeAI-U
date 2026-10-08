@@ -30,8 +30,9 @@ func TestBrandExpansionDistinguishesCDNFromHosting(t *testing.T) {
 
 func TestCredentialCoverageIsBoundedAndIncludesNonHTTP(t *testing.T) {
 	for _, required := range []string{
-		"SSH、数据库、SMTP/IMAP/POP3", "做一次简单弱口令尝试", "侦察角色识别后交接验证",
+		"SSH、数据库、SMTP/IMAP/POP3", "做简单弱口令尝试", "侦察角色识别后交接验证",
 		"每账号≤8", "每入口≤5账号/40组合/5分钟", "并发1", "间隔≥3秒",
+		"每账号≤30", "每入口≤10账号/300组合/20分钟", "wordlist_gen.py", "针对性字典",
 		"命中/验证码/MFA/锁定/429/异常即停", "不全量笛卡尔积", "缺身份/策略阻断记 blocked",
 		"协议不支持口令可凭证据 N/A", "实际次数、字典 hash、停止原因",
 	} {

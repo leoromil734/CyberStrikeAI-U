@@ -20,10 +20,10 @@ func TestBundledExecutionCoverageReferencesStayAligned(t *testing.T) {
 			"SSH、数据库、SMTP/IMAP/POP3", "每账号≤8", "grep -rnoHE", "grep -rnHE", "sourcesContent",
 			"两路原件", "工具零结果也必须执行", "不得对**输入源码**使用 `head`", "缺口被处理或逐项 blocked",
 		}},
-		{"src-hunting/references/credential-stuffing.md", []string{"SSH", "SMTP/IMAP/POP3", "40 个候选组合", "5 分钟", "完整 `-L` × `-P`", "blocked"}},
+		{"src-hunting/references/credential-stuffing.md", []string{"SSH", "SMTP/IMAP/POP3", "40 个候选组合", "5 分钟", "完整 `-L` × `-P`", "blocked", "wordlist_gen.py"}},
 		{"src-hunting/references/recon-methodology.md", []string{"Hetzner 等云/托管商不是 CDN", "Cloudflare/Akamai", "非 CDN IP 必须", "不扩供应商网段"}},
 		{"src-hunting/references/js-reverse-guide.md", []string{"工具 + 命令双通道", "grep/rg", "不能只抽", "相对 URL", "raw/unique/incremental", "缺任一路证据"}},
-		{"credential-stuffing/references/lite-wordlists.md", []string{"cyberstrike-lite", "2270", "manifest.json", "100 条", "候选", "8", "300秒", "不会自动启动扫描"}},
+		{"credential-stuffing/references/lite-wordlists.md", []string{"cyberstrike-lite", "2270", "manifest.json", "100 条", "候选", "8", "300秒", "不会自动启动扫描", "wordlist_gen.py", "深度档"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -44,7 +44,7 @@ func TestBundledExecutionCoverageReferencesStayAligned(t *testing.T) {
 			t.Errorf("credential description missing routing keyword %q", keyword)
 		}
 	}
-	for _, required := range []string{"8 次", "40 个候选组合", "5 分钟", "并发 **1**", "3 秒", "跨 Web、SSH、数据库、邮件累计", "默认对和失败对照都计入", "不读取信箱、不发信"} {
+	for _, required := range []string{"8 次", "40 个候选组合", "5 分钟", "并发 **1**", "3 秒", "跨 Web、SSH、数据库、邮件累计", "默认对和失败对照都计入", "不读取信箱、不发信", "30 次", "300 个候选组合", "20 分钟", "wordlist_gen.py", "深度档"} {
 		if !strings.Contains(body, required) {
 			t.Errorf("credential skill missing %q", required)
 		}
@@ -54,7 +54,7 @@ func TestBundledExecutionCoverageReferencesStayAligned(t *testing.T) {
 	}
 }
 
-func TestHydraDefaultsMatchSimpleCredentialBudget(t *testing.T) {
+func TestHydraDefaultsMatchTieredCredentialBudget(t *testing.T) {
 	path := filepath.Join(bundledSkillsRoot(t), "..", "tools", "hydra.yaml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -74,10 +74,10 @@ func TestHydraDefaultsMatchSimpleCredentialBudget(t *testing.T) {
 	for _, parameter := range tool.Parameters {
 		defaults[parameter.Name] = parameter.Default
 	}
-	if defaults["tasks"] != 1 || defaults["attempt_interval"] != 3 || defaults["wait_between"] != 3 || defaults["stop_on_first"] != true {
+	if defaults["tasks"] != 4 || defaults["attempt_interval"] != nil || defaults["wait_between"] != 1 || defaults["stop_on_first"] != true {
 		t.Fatalf("unexpected Hydra defaults: %#v", defaults)
 	}
-	if !strings.Contains(tool.Description, "禁止全量") || !strings.Contains(tool.Description, "外部计时/取消") {
-		t.Fatal("Hydra guidance must limit candidate pairs and require an overall deadline")
+	if !strings.Contains(tool.Description, "禁止全量") || !strings.Contains(tool.Description, "外部计时/取消") || !strings.Contains(tool.Description, "wordlist_gen.py") {
+		t.Fatal("Hydra guidance must limit candidate pairs, require an overall deadline and point at the targeted wordlist generator")
 	}
 }

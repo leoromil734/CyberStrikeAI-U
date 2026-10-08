@@ -83,7 +83,7 @@ func ExecutionCoverageSection() string {
 	return `## 资产、弱口令与 JS 覆盖
 
 - 授权域及子域、有关联证据的疑似域名和 IP 都要测；用注册域/证书SAN/DNS/页面主体证据，不凭相似名。品牌扩测限任务范围，记录CNAME/ASN/服务。Cloudflare/Akamai 等已证实 CDN 边缘 IP 不扩裸IP，域名业务仍测；Hetzner 等云/托管商不是 CDN，范围内非 CDN IP 必须独立枚举服务入口。CDN unknown 留 gap/blocked；共享 IP/ASN 不证明品牌归属，不扫供应商网段或无关租户；支付/验证码/社交/统计/静态挂件非关联资产。
-- 范围内Web/管理面、SSH、数据库、SMTP/IMAP/POP3 做一次简单弱口令尝试，侦察角色识别后交接验证。限受控已知/产品默认身份；每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒，更严预算优先。命中/验证码/MFA/锁定/429/异常即停；不枚举号段、不全量笛卡尔积。协议不支持口令可凭证据 N/A，缺身份/策略阻断记 blocked；记录实际次数、字典 hash、停止原因，未测不写安全；见credential-stuffing。
+- 范围内Web/管理面、SSH、数据库、SMTP/IMAP/POP3 做简单弱口令尝试，侦察角色识别后交接验证。限受控已知/产品默认身份；轻量首轮每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒；高价值认证面（管理后台、品牌或已知邮箱前缀账号）在首轮完成且无锁定/验证码/MFA/429迹象时进入深度档：每账号≤30、每入口≤10账号/300组合/20分钟，并发≤4、每次尝试间隔≥1秒，更严预算优先。爆破前先按当前站点情报生成针对性字典（品牌名/人名/邮箱前缀/域名/年份，运行中现场生成并保存：python3 skills/credential-stuffing/scripts/wordlist_gen.py --base <品牌> --name <人名> --email-prefix <前缀> --domain <域名> --out <路径>，记录行数与sha256，先跑高优先子集）。命中/验证码/MFA/锁定/429/异常即停；不枚举号段、不全量笛卡尔积、不用rockyou/全集替代。协议不支持口令可凭证据 N/A，缺身份/策略阻断记 blocked；记录实际次数、字典 hash、停止原因，未测不写安全；见credential-stuffing。
 - JS 必须双通道：katana/gau发现→授权下载→jsluice 静态分析本地 JS；全部已下载 JS/chunk/worker/source map 原源码实际执行 grep/rg。补fetch/axios/XHR、baseURL、模板拼接与调用上下文，合并recon/endpoint/*，记URL/hash、命令、raw/unique/incremental；secrets仅tentative。工具零结果不替代源码检索，字符串命中不等于完整或可达；缺任一路留 gap/blocked。
 - nuclei/dirsearch/ffuf/katana勿提前取消或缩短默认总时限；目录/模板默认至少15分钟，单请求30秒，经代理不缩短。首个超时不算完成，单次工具时限内等待，未跑完记gap不当零发现。
 - 源站SSH/SMTP/FTP/MySQL勿凭8秒超时判不可达；直连超时用 python3 scripts/origin-service-probe.py --host <IP> --port <端口> --proxy 127.0.0.1:<代理端口> --timeout 45 读banner，需要口令再加--ssh-user。connect_refused/banner_timeout记blocked，不冒充认证失败。`

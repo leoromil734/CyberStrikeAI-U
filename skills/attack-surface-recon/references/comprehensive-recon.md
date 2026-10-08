@@ -43,7 +43,7 @@ value = business_criticality + auth_or_admin + data_sensitivity
 - 对每个 Web 资产记录真实状态、标题、hash、长度、重定向、技术栈和边缘层；随机不存在路径建立 catch-all/SPA shell 基线。
 - 状态码相同但 body hash、标题或最终路由一致的 SPA fallback 不计为多个有效入口。
 - 非 HTTP 服务记录协议证据、认证要求和暴露风险；未验证弱口令时不得把“端口开放”升级成认证缺陷。
-- 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 密码入口交接 `credential-stuffing` 做一轮简单弱口令，不能仅以“不爆破”跳过。每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒；命中/验证码/MFA/锁定/429/异常即停。产品默认对和简单口令共用预算；协议无密码能力须证据 N/A，缺身份或策略阻断记 blocked。逐项保存实际次数、字典/hash、停止原因；未测不能记 covered。字典与详细方法见根路径 `skills/credential-stuffing/references/lite-wordlists.md`。
+- 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 密码入口交接 `credential-stuffing` 做分档弱口令（轻量首轮每账号≤8、每入口≤5账号/40组合/5分钟，并发1、间隔≥3秒；高价值入口第二轮深度档每账号≤30、每入口≤10账号/300组合/20分钟，并发≤4、间隔≥1秒），不能仅以“不爆破”跳过；优先用品牌名/人名/邮箱前缀生成针对性字典。命中/验证码/MFA/锁定/429/异常即停。产品默认对和简单口令共用预算；协议无密码能力须证据 N/A，缺身份或策略阻断记 blocked。逐项保存实际次数、字典/hash、停止原因；未测不能记 covered。字典与详细方法见根路径 `skills/credential-stuffing/references/lite-wordlists.md`。
 
 
 ### 3.1 目录、文件与扩展名覆盖

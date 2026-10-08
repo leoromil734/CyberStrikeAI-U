@@ -144,16 +144,17 @@ func TestReportSubmissionContractIsScopedToLifecycle(t *testing.T) {
 
 func TestSharedContractStaticBudget(t *testing.T) {
 	prompt := ComposeSystemPrompt("", PromptModeSingle)
-	// 保留既有契约 5600 字符预算；目录覆盖单独限为 600，避免新增规则无界增长。
+	// 共享契约预算 6000 字符（弱口令分档与针对性字典生成需额外空间）；
+	// 目录覆盖单独限为 600，避免新增规则无界增长。
 	const directoryBudget = 600
 	if got := utf8.RuneCountInString(DirectoryDiscoverySection()); got > directoryBudget {
 		t.Fatalf("directory discovery contract too large: %d runes", got)
 	}
 	basePrompt := strings.Replace(prompt, "\n\n"+DirectoryDiscoverySection(), "", 1)
-	if got := utf8.RuneCountInString(basePrompt); got > 5600 {
+	if got := utf8.RuneCountInString(basePrompt); got > 6000 {
 		t.Fatalf("existing shared contract too large: %d runes", got)
 	}
-	if got := utf8.RuneCountInString(prompt); got > 5600+directoryBudget {
+	if got := utf8.RuneCountInString(prompt); got > 6000+directoryBudget {
 		t.Fatalf("shared single-agent contract too large: %d runes", got)
 	}
 	scope := ScopeAuthorizationSection()

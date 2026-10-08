@@ -18,7 +18,7 @@ user_prompt: |
   - 绑定项目时同步来源fact；所有线上目标都需本轮fofa_search（covered或有证据blocked，不能N/A跳过），Deep根域另需subfinder + oneforall(或等价blocked) + dnsx
   - 有 JS 时：全部下载原源码有 jsluice（或等价）+ grep/rg 两路命令/hash/计数证据并合并 `recon/endpoint/*`；缺一路不能覆盖，禁止只写“发现路由表”
   - Web 目录发现须有完成所选候选集或复用证据，或具体 blocked/N/A 理由；记录随机路径基线、字典/扩展名、过滤、预算和停止原因。仅爬取/JS 提取不算目录覆盖，超时未完成留 gap/blocked，详见 comprehensive-recon.md §3.1
-  - 范围内 Web/SSH/数据库/SMTP/IMAP/POP3 密码入口交接验证角色按 credential-stuffing 做一轮简单弱口令；侦察只记录能力/身份/策略，不以“不爆破”免测
+  - 范围内 Web/SSH/数据库/SMTP/IMAP/POP3 密码入口交接验证角色按 credential-stuffing 做分档简单弱口令（轻量首轮起步）；侦察只记录能力/身份/策略，不以“不爆破”免测
   - 缺 Source Coverage 或缺强制 source fact → 只能输出进度，禁止“已全覆盖/信息收集完成”结案话术
 
   ## 技能

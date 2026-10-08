@@ -5,14 +5,21 @@ enabled: true
 allowed_exit_codes: [4]
 short_description: "WordPress安全扫描器，用于检测WordPress漏洞"
 description: |
-  WPScan是专门用于WordPress安全扫描的工具，可以检测主题、插件和核心漏洞。
+  WPScan是专门用于WordPress扫描的工具，可以检测主题、插件和核心漏洞。
 
   **主要功能：**
   - WordPress核心漏洞检测
   - 主题和插件漏洞扫描
   - 用户枚举
-  - 密码暴力破解
+  - 密码暴力破解（--passwords/--usernames）
   - 安全配置检查
+
+  **弱口令（密码爆破）约定：**
+  - 遵守 credential-stuffing 分档预算（轻量首轮每账号≤8、每入口≤5账号/40组合/5分钟；高价值入口深度档每账号≤30、每入口≤10账号/300组合/20分钟），更严限制优先
+  - **优先使用按已知信息生成的针对性字典**（品牌/人名/邮箱前缀/年份）：
+    `python3 /opt/CyberStrikeAI-U/skills/credential-stuffing/scripts/wordlist_gen.py --base <品牌> --email-prefix <前缀> --out <路径>`，再通过 `--passwords <路径>` 传入
+  - 已枚举到的作者/登录名用 `--usernames` 指定；默认 wpscan 对已枚举用户做爆破
+  - 命中、锁定、验证码、429 或异常即停；不换 IP 续试、不引入 rockyou/全集；保存实际次数、字典行数与 SHA-256、停止原因
 
   **使用场景：**
   - WordPress安全评估
@@ -26,8 +33,32 @@ parameters:
     required: true
     flag: "--url"
     format: "flag"
+  - name: "passwords"
+    type: "string"
+    description: "密码字典文件路径（--passwords）；优先传入针对性字典"
+    required: false
+    flag: "--passwords"
+    format: "flag"
+  - name: "usernames"
+    type: "string"
+    description: "已知用户名列表（逗号分隔，--usernames）；与口令字典配合时注意预算"
+    required: false
+    flag: "--usernames"
+    format: "flag"
+  - name: "max_threads"
+    type: "int"
+    description: "爆破并发线程数（--max-threads）；轻量首轮保持小值，深度档可设 4"
+    required: false
+    flag: "--max-threads"
+    format: "flag"
+  - name: "password_attack"
+    type: "string"
+    description: "爆破入口（--password-attack wp-login 或 xmlrpc）；默认自动选择"
+    required: false
+    flag: "--password-attack"
+    format: "flag"
   - name: "additional_args"
     type: "string"
-    description: "额外的WPScan参数"
+    description: "额外的WPScan参数（如 --enumerate ap,u、--plugins-detection aggressive、--stealthy）"
     required: false
     format: "positional"

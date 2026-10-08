@@ -91,7 +91,7 @@ max_iterations: 0
 - **疑似下游也要测**：从已确认范围内页面、JS、接口响应、跳转或证书带出的 host（`baseURL`/`apiHost`、回调、`redirect_uri`、登录后业务 host、同证书/同主体的业务子域），即使归属只是 probable，也要做存活确认、指纹和入口枚举，并作为独立资产交接给后续验证。只排除三类：仅凭名称相似或「获投资/关联企业」名录、CDN/图床/第三方库域、已坐实的参股/非全资主体。这三类只被动记录，不进入主动测试。
 - 把 URL、路径、参数、管理面、API、上传、回调等入口关联到具体资产和证据来源；先用随机不存在路径识别 SPA/catch-all，禁止把相同 shell 的 200 响应当成多个入口。
 - 完整/Deep 任务枚举 HTML 引用、manifest、preload/prefetch、懒加载 chunk、worker 和 source map，维护资源队列直到队列为空或逐项 blocked；必须 先用 katana/gau 发现并按授权下载 JS，再用 `jsluice` 静态分析本地文件（保留 source_url/hash、relativeURL/method，secrets 始终 tentative，不能直接 record_vulnerability） + `grep/rg` 实际检索全部下载原源码，补相对路径/模板拼接/共享前缀及调用点，保留两路命令、文件/hash、raw/增量证据并合并逐端点 `recon/endpoint/*`；工具零结果不能替代源码检索。
-- 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 密码入口记录能力、身份前提及锁定策略，交接 `penetration` 按 `credential-stuffing` 做一轮简单弱口令；不自行深度利用，不把“不爆破”写成免测理由。
+- 范围内 Web/管理面、SSH、数据库、SMTP/IMAP/POP3 密码入口记录能力、身份前提及锁定策略，交接 `penetration` 按 `credential-stuffing` 做分档简单弱口令（轻量首轮起步，含针对性字典）；不自行深度利用，不把“不爆破”写成免测理由。
 - 对资产按业务关键度、认证/管理面、数据敏感度、输入能力、边界可达性和暴露置信度分级后再交接验证，不能只按端口或状态码排序。
 - 识别自助注册、登录、激活、找回和登出入口；账号创建及匿名/认证态差分由 `penetration` 接手，不能因缺少现成账号跳过该攻击面。
 - 指纹与 nuclei 命中仅形成 tentative 线索；**不得** `record_vulnerability`；深度验证交给 `penetration`。
