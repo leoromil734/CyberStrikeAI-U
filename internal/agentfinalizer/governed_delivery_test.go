@@ -23,7 +23,7 @@ func TestGovernedCoverageCannotUseInventedSourceExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := Decide(db, Input{ConversationID: conversation, AssistantMessageID: message, Response: "本轮评估报告已经整理完成。", MCPExecutionIDs: []string{"baseline"}})
-	if d.Finalizable || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "actual execution/original") {
+	if d.Finalizable || !strings.Contains(strings.Join(d.MissingChecks, "\n"), "source claim") {
 		t.Fatalf("fictional sources finalized: %+v", d)
 	}
 }

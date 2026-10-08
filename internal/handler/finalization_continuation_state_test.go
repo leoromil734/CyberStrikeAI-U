@@ -172,8 +172,8 @@ func TestClassifyAndVerifyPromptOmitsLedgerDispositionQueue(t *testing.T) {
 			t.Fatalf("classify prompt still queues ledger repair via %q: %s", banned, message)
 		}
 	}
-	if !strings.Contains(message, "优先对已发现的高价值面继续做实际验证，不补台账") || !strings.Contains(message, "source claim has no matching") || !strings.Contains(message, "未处置 36 组") {
-		t.Fatalf("classify prompt lost the real check or the uncovered total: %s", message)
+	if !strings.Contains(message, "优先对已发现的高价值面继续做实际验证，不补台账") || !strings.Contains(message, "source claim") || !strings.Contains(message, "未处置 36 组") || !strings.Contains(message, "不要重复执行已经跑过的侦察工具") {
+		t.Fatalf("classify prompt lost the real check, the uncovered total or the source-repair guardrail: %s", message)
 	}
 }
 

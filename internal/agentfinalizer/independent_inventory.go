@@ -100,6 +100,7 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 		proof := fieldText(fields, "evidence")
 		executionID := fieldText(fields, "execution_id")
 		sourceID := fieldText(fields, "source_id")
+		explicitBinding := sourceID != "" || executionID != ""
 		matched := false
 		if status == "covered" && (tool == "exec" || tool == "execute" || tool == "curl" || tool == "http-framework-test") {
 			bound := make(map[string]any, len(fields)+1)
@@ -110,19 +111,26 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 			bound["http_tool"] = tool
 			matched = index.corroborates(bound)
 		}
+		proofReferences := referencesAnyExecution(proof, sources, tool)
 		for _, source := range sources {
 			if source.Tool != tool {
 				continue
 			}
-			if sourceID != "" && sourceID != source.ID {
+			if explicitBinding {
+				if sourceID != "" && sourceID != source.ID {
+					continue
+				}
+				if executionID != "" && executionID != source.ExecutionID {
+					continue
+				}
+			} else if proofReferences && !strings.Contains(proof, source.ExecutionID) {
+				// 证据文本明确引用了其它执行：本执行不参与匹配。
 				continue
 			}
-			if executionID != "" && executionID != source.ExecutionID {
-				continue
-			}
-			if sourceID == "" && executionID == "" && !strings.Contains(proof, source.ExecutionID) {
-				continue
-			}
+			// 没有执行绑定的“手写”来源声明按同工具的真实执行兜底：
+			// covered 需要存在 parsed+complete 的执行，blocked 需要存在任意执行。
+			// 系统自动登记（auto-*）仍保留为权威来源凭据；此放宽只避免模型因
+			// 不知道绑定格式而陷入无法修复的永久缺口（并反复重跑工具）。
 			if status == "covered" && source.State == evidence.Parsed && source.Completion == evidence.Complete && (source.ExpiresAtMS == 0 || source.ExpiresAtMS > time.Now().UnixMilli()) {
 				matched = true
 				break
@@ -133,7 +141,7 @@ func checkIndependentInventory(db *database.DB, projectID, conversationID, asses
 			}
 		}
 		if !matched {
-			report.Missing = append(report.Missing, fact.Key+": source claim has no matching actual execution/original with the required completeness")
+			report.Missing = append(report.Missing, sourceClaimMissingFeedback(fact.Key, tool, sources))
 		}
 	}
 	// Partial originals require an actual, evidenced source blocker; a manifest
@@ -194,6 +202,59 @@ func coverageRepairBlockedFeedback(progress CoverageProgress) string {
 		detail = "independent inventory/source progress is unknown or incomplete; zero remaining work must not be inferred"
 	}
 	return "independent coverage inventory disclosure: " + detail + "; mechanical per-URL bookkeeping is not required and unresolved raw candidates are disclosed as explicit limitations, never as safety evidence. Continue auditable classification by authorized scope, freshness and business templates and prioritize real high-value verification; retain verified results and untested/pending-classification limitations in the final delivery. Do not generate per-URL N/A, negated or safe facts, truncate the inventory, lower totals, or skip validation to claim completion. 原始库存按未覆盖披露、不阻断交付；停止机械补写不等于停止实际测试，先分类去重、核实范围，再执行可行验证。"
+}
+
+// referencesAnyExecution 判断证据文本是否引用了同工具任一真实执行的执行 ID。
+// 证据明确指向某次执行时保留严格判定；完全没有引用时，无绑定声明走
+// “同工具合格执行”兜底（见 checkIndependentInventory）。
+func referencesAnyExecution(proof string, sources []database.AssessmentSourceMetadata, tool string) bool {
+	proof = strings.TrimSpace(proof)
+	if proof == "" {
+		return false
+	}
+	for _, source := range sources {
+		if tool != "" && source.Tool != tool {
+			continue
+		}
+		if source.ExecutionID != "" && strings.Contains(proof, source.ExecutionID) {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceClaimMissingFeedback 为仍未闭合的来源声明生成可操作说明：告知该工具
+// 的真实执行与解析状态，并给出可行修复方式——引用 auto-* 事实中的
+// source_id/execution_id，或对解析不支持的工具改为 blocked（附 error/alt_tried），
+// 而不是反复重跑工具（解析支持不会因重跑改变）。
+func sourceClaimMissingFeedback(key, tool string, sources []database.AssessmentSourceMetadata) string {
+	parsed, unparseable, total := 0, 0, 0
+	reason := ""
+	for _, source := range sources {
+		if tool != "" && source.Tool != tool {
+			continue
+		}
+		total++
+		if source.State == evidence.Parsed && source.Completion == evidence.Complete {
+			parsed++
+			continue
+		}
+		unparseable++
+		if source.Reason != "" {
+			reason = source.Reason
+		}
+	}
+	switch {
+	case total == 0:
+		return key + ": source claim has no recorded execution of " + tool + "; run the tool once, or record an evidenced blocked entry instead of a covered claim"
+	case parsed > 0:
+		return key + ": source claim lacks an execution binding while parsed executions of " + tool + " exist; reference the auto-* source_id/execution_id in this fact or its evidence (rerunning the tool adds nothing)"
+	default:
+		if reason == "" {
+			reason = "unparseable_output"
+		}
+		return key + ": source claim cannot be satisfied because outputs of " + tool + " are not parseable (" + reason + "); record this source as blocked with error and alt_tried instead of covered — rerunning the tool will not change parser support, and system auto-* entries remain the authoritative evidence"
+	}
 }
 
 func fieldText(fields map[string]any, key string) string {

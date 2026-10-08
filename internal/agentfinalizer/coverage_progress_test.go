@@ -437,11 +437,75 @@ func TestCoverageProgressPayloadPreservesKnownZeroAndUnknown(t *testing.T) {
 			if fields["coverageProgressKnown"] != known || fields["coverageRepairBlocked"] != !known {
 				t.Fatalf("known state lost: %v", fields)
 			}
-			for _, name := range []string{"coverageInventoryGroups", "coverageUnresolvedGroups", "coverageMappedGroups", "coverageEvidenceExecutions"} {
+			for _, name := range []string{"coverageInventoryGroups", "coverageUnresolvedGroups", "coverageMappedGroups", "coverageEvidenceExecutions", "coverageHttpExecutions"} {
 				if _, ok := fields[name]; !ok {
 					t.Fatalf("zero/unknown field omitted: %s in %v", name, fields)
 				}
 			}
 		}
+	}
+}
+
+// 无执行绑定的“手写”来源声明不再制造永久缺口：同工具存在 parsed+complete
+// 的执行即视为可核实的覆盖来源。
+func TestUnboundSourceClaimMatchesParsedExecutions(t *testing.T) {
+	db, project, conversation, _ := coverageTestDB(t)
+	seedProgressSource(t, db, project, conversation, "run-a", progressSource("sub-src", "sub-exec", "subfinder"))
+	fact := coverage.Fact{Key: "recon/source/run-a/subfinder/example.test", Body: "assessment_id: run-a\ntool: subfinder\ntarget: example.test\nstatus: covered\nraw: 1\nunique: 1\nincremental: 1\nevidence: 子域枚举已完成，结果与原件一致"}
+	_, report := checkProgressFixture(t, db, project, conversation, []coverage.Fact{fact})
+	for _, check := range report.Missing {
+		if strings.Contains(check, "source claim") {
+			t.Fatalf("unbound claim with a parsed execution must not stay missing: %v", check)
+		}
+	}
+}
+
+// 工具输出不可解析时，covered 声明保持缺口并给出可操作修复指引；
+// 同一来源改记 blocked 后按“存在真实执行”闭合，且提醒不要重跑。
+func TestUnboundSourceClaimRequiresParseableOutputForCovered(t *testing.T) {
+	db, project, conversation, _ := coverageTestDB(t)
+	unsupported := progressSource("am-src", "am-exec", "amass")
+	unsupported.State = evidence.Unsupported
+	unsupported.Reason = "unsupported_format"
+	seedProgressSource(t, db, project, conversation, "run-a", unsupported)
+
+	covered := coverage.Fact{Key: "recon/source/run-a/amass/example.test", Body: "assessment_id: run-a\ntool: amass\ntarget: example.test\nstatus: covered\nraw: 6\nunique: 5\nincremental: 0\nevidence: amass mode=enum 已完成"}
+	_, report := checkProgressFixture(t, db, project, conversation, []coverage.Fact{covered})
+	found := false
+	for _, check := range report.Missing {
+		if strings.Contains(check, "source claim") {
+			found = true
+			if !strings.Contains(check, "not parseable") || !strings.Contains(check, "blocked") || !strings.Contains(check, "rerunning the tool will not change parser support") {
+				t.Fatalf("缺口文案应给出可操作修复指引: %v", check)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("covered claim without a parseable execution must stay missing")
+	}
+
+	blocked := coverage.Fact{Key: "recon/source/run-a/amass/example.test", Body: "assessment_id: run-a\ntool: amass\ntarget: example.test\nstatus: blocked\nraw: 6\nunique: 5\nincremental: 0\nerror: unsupported_format\nalt_tried: [subfinder, dnsx]\nevidence: amass 输出解析不支持；已用 subfinder/dnsx 覆盖同一目标"}
+	_, report = checkProgressFixture(t, db, project, conversation, []coverage.Fact{blocked})
+	for _, check := range report.Missing {
+		if strings.Contains(check, "source claim") {
+			t.Fatalf("blocked claim with a recorded execution must close without rerunning: %v", check)
+		}
+	}
+}
+
+// 显式绑定（execution_id/source_id）仍然严格：指向不存在的执行保持缺口。
+func TestExplicitSourceBindingStillStrict(t *testing.T) {
+	db, project, conversation, _ := coverageTestDB(t)
+	seedProgressSource(t, db, project, conversation, "run-a", progressSource("sub-src", "sub-exec", "subfinder"))
+	fact := coverage.Fact{Key: "recon/source/run-a/subfinder/example.test", Body: "assessment_id: run-a\ntool: subfinder\ntarget: example.test\nstatus: covered\nraw: 1\nunique: 1\nincremental: 1\nexecution_id: wrong-exec\nevidence: 手工声明"}
+	_, report := checkProgressFixture(t, db, project, conversation, []coverage.Fact{fact})
+	found := false
+	for _, check := range report.Missing {
+		if strings.Contains(check, "source claim") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("explicit binding to an unknown execution must stay missing")
 	}
 }

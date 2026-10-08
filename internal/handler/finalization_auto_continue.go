@@ -615,6 +615,16 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 			b.WriteString("- " + check + "\n")
 		}
 	}
+	needsSourceRepair := false
+	for _, check := range d.MissingChecks {
+		if strings.Contains(check, "source claim") || strings.Contains(check, "recon/source/") {
+			needsSourceRepair = true
+			break
+		}
+	}
+	if needsSourceRepair {
+		b.WriteString("来源声明修复：不要重复执行已经跑过的侦察工具（解析支持不会因重跑改变，系统 auto-* 事实已是权威凭据）；引用 auto-* 事实里的 source_id/execution_id，或把解析不支持的工具来源改为 blocked（附 error 与 alt_tried）。\n")
+	}
 	return b.String()
 }
 
