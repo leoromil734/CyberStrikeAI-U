@@ -190,15 +190,16 @@ type CallToolResponse struct {
 
 // ToolExecution 工具执行记录
 type ToolExecution struct {
-	ID        string                 `json:"id"`
-	ToolName  string                 `json:"toolName"`
-	Arguments map[string]interface{} `json:"arguments"`
-	Status    string                 `json:"status"` // pending, running, completed, failed, cancelled
-	Result    *ToolResult            `json:"result,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	StartTime time.Time              `json:"startTime"`
-	EndTime   *time.Time             `json:"endTime,omitempty"`
-	Duration  time.Duration          `json:"duration,omitempty"`
+	ID         string                 `json:"id"`
+	ToolName   string                 `json:"toolName"`
+	Arguments  map[string]interface{} `json:"arguments"`
+	Invocation *ToolInvocation        `json:"invocation,omitempty"`
+	Status     string                 `json:"status"` // pending, running, completed, failed, cancelled
+	Result     *ToolResult            `json:"result,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	StartTime  time.Time              `json:"startTime"`
+	EndTime    *time.Time             `json:"endTime,omitempty"`
+	Duration   time.Duration          `json:"duration,omitempty"`
 	// PartialOutput is a bounded tail preview of output produced by a running tool.
 	// It is intentionally separate from Result, which remains the final canonical tool result.
 	PartialOutput          string     `json:"partialOutput,omitempty"`

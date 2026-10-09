@@ -206,7 +206,7 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 		if info.Size() > int64(len(mcp.ToolResultPlainText(original.Result))) {
 			e.Capped = true
 		}
-		candidates = append(candidates, evidence.Candidate{Path: output, Kind: "output", Format: resultFormat(e.OutputTool(), original.Arguments), Completion: e.Completion})
+		candidates = append(candidates, evidence.Candidate{Path: output, Kind: "output", Format: executionResultFormat(e.OutputTool(), original), Completion: e.Completion})
 	} else {
 		if !os.IsNotExist(statErr) {
 			return "failed", "saved output path unavailable", statErr
@@ -224,7 +224,7 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 				reason = "output original could not be safely created"
 				return
 			}
-			candidates = append(candidates, evidence.Candidate{Path: filepath.Join(dir, "output.txt"), Kind: "output", Format: resultFormat(e.OutputTool(), original.Arguments), Completion: e.Completion})
+			candidates = append(candidates, evidence.Candidate{Path: filepath.Join(dir, "output.txt"), Kind: "output", Format: executionResultFormat(e.OutputTool(), original), Completion: e.Completion})
 		}
 	}
 	// Independent machine originals win over combined stdout/stderr. The fixed
@@ -235,6 +235,17 @@ func (p *resultPipeline) process(ctx context.Context, e evidence.Execution, orig
 		machineName, machineFormat = "nmap.xml", "xml"
 	case "nuclei":
 		machineName, machineFormat = "nuclei.jsonl", "jsonl"
+	}
+	if original.Invocation != nil {
+		invocation := trustedInvocation(original)
+		if invocation == nil || invocation.MachineFile != machineName || invocation.StdoutFormat != machineFormat {
+			// A new execution with explicit text/file output must not adopt an
+			// unrelated file merely because it has a reserved machine filename.
+			machineName, machineFormat = "", ""
+		}
+		if invocation != nil && invocation.CaptureError != "" {
+			e.Completion = evidence.Partial
+		}
 	}
 	if machineName != "" {
 		machinePath := filepath.Join(dir, machineName)

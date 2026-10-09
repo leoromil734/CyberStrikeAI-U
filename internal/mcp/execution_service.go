@@ -182,6 +182,11 @@ func (s *ExecutionService) Submit(ctx context.Context, req ExecutionRequest) (*E
 func (s *ExecutionService) runWorker(ctx context.Context, entry *executionEntry, onDone ExecutionDoneFunc) {
 	id := entry.exec.ID
 	ctx = WithMCPExecutionID(ctx, id)
+	ctx = context.WithValue(ctx, invocationRecorderKey{}, invocationRecorder(func(tool string, args map[string]interface{}, invocation *ToolInvocation) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return setToolInvocation(entry.exec, tool, args, invocation)
+	}))
 	if conv := strings.TrimSpace(entry.exec.ConversationID); conv != "" {
 		ctx = WithMCPConversationID(ctx, conv)
 	}
@@ -598,9 +603,26 @@ func cloneArgsMap(in map[string]interface{}) map[string]interface{} {
 	}
 	out := make(map[string]interface{}, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = cloneArgumentValue(v)
 	}
 	return out
+}
+
+func cloneArgumentValue(in interface{}) interface{} {
+	switch value := in.(type) {
+	case map[string]interface{}:
+		return cloneArgsMap(value)
+	case []interface{}:
+		out := make([]interface{}, len(value))
+		for i := range value {
+			out[i] = cloneArgumentValue(value[i])
+		}
+		return out
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return in
+	}
 }
 
 func cloneToolExecution(in *ToolExecution) *ToolExecution {
@@ -609,6 +631,7 @@ func cloneToolExecution(in *ToolExecution) *ToolExecution {
 	}
 	out := *in
 	out.Arguments = cloneArgsMap(in.Arguments)
+	out.Invocation = cloneToolInvocation(in.Invocation)
 	if in.Result != nil {
 		res := *in.Result
 		if in.Result.Content != nil {

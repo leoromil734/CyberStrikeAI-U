@@ -70,6 +70,8 @@ func (c *collector) add(records []Record, loc Location) error {
 func CanonicalTool(tool string) string {
 	tool = strings.ToLower(strings.TrimSpace(tool))
 	switch tool {
+	case "httpx-pd":
+		return "httpx"
 	case "fofa_search", "fofa_query":
 		return "fofa"
 	case "crtsh_search":
@@ -101,6 +103,8 @@ func Parse(ctx context.Context, tool, format string, reader io.Reader, limits Li
 		err = parseFOFA(limited, c)
 	case tool == "crtsh" && format == "json":
 		err = parseCRTSh(limited, c)
+	case tool == "oneforall" && format == "json":
+		err = parseOneForAllJSON(limited, c)
 	case (tool == "fofa" || tool == "oneforall" || tool == "jsapiscan") && format == "csv":
 		err = parseCSV(tool, limited, c)
 	case supportsLines(tool, format):

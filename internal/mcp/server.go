@@ -1030,7 +1030,7 @@ func (s *Server) BeginToolExecution(ctx context.Context, toolName string, args m
 	execution := &ToolExecution{
 		ID:        executionID,
 		ToolName:  toolName,
-		Arguments: args,
+		Arguments: cloneArgsMap(args),
 		Status:    "running",
 		StartTime: time.Now(),
 	}
@@ -1080,15 +1080,17 @@ func (s *Server) FinishToolExecution(ctx context.Context, executionID, toolName 
 		exec = &ToolExecution{
 			ID:        id,
 			ToolName:  toolName,
-			Arguments: args,
+			Arguments: cloneArgsMap(args),
 			StartTime: now,
 		}
 		s.executions[id] = exec
 	} else if toolName != "" {
 		exec.ToolName = toolName
 	}
-	if len(args) > 0 {
-		exec.Arguments = args
+	// The trusted executor may already have resolved defaults and captured its
+	// CLI contract. Final caller arguments must not undo that execution snapshot.
+	if len(args) > 0 && exec.Invocation == nil {
+		exec.Arguments = cloneArgsMap(args)
 	}
 	if principal, ok := authctx.PrincipalFromContext(ctx); ok {
 		exec.OwnerUserID = principal.UserID

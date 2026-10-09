@@ -259,6 +259,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 	// 构建命令 - 根据工具类型使用不同的参数格式
 	cmdArgs := e.buildCommandArgs(toolName, toolConfig, args)
+	args = e.resolvedInvocationArgs(toolConfig, args)
 
 	e.logger.Debug("构建命令参数完成",
 		zap.String("toolName", toolName),
@@ -313,6 +314,17 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	}
 	defer releaseRepeat()
 
+	invocation := nativeInvocation(toolName, cmdArgs)
+	e.recordInvocation(ctx, toolName, args, invocation)
+	machine, captureErr := e.openMachineOriginal(ctx, invocation)
+	if captureErr != nil {
+		return nil, fmt.Errorf("allocate machine original: %w", captureErr)
+	}
+	defer func() {
+		invocation.CaptureError = machine.close()
+		e.recordInvocation(ctx, toolName, args, invocation)
+	}()
+
 	e.logger.Debug("执行安全工具",
 		zap.String("tool", toolName),
 		zap.Strings("args", cmdArgs),
@@ -324,10 +336,10 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	// 如果上层提供了 stdout/stderr 增量回调，或当前处于 MCP execution 中，则边执行边读取并回调。
 	if cb, ok := ctx.Value(ToolOutputCallbackCtxKey).(ToolOutputCallback); (ok && cb != nil) || mcp.MCPExecutionIDFromContext(ctx) != "" {
 		cb = e.wrapToolOutputCallback(ctx, cb)
-		output, err = streamCommandOutput(ctx, cmd, cb, ResolveShellNoOutputTimeoutSeconds(e.shellNoOutputTimeoutSec), e.toolOutputMaxBytes, spill)
+		output, err = streamCommandOutput(ctx, cmd, cb, ResolveShellNoOutputTimeoutSeconds(e.shellNoOutputTimeoutSec), e.toolOutputMaxBytes, spill, machine)
 		// HTTP commands are non-interactive; a response mentioning TTY must not
 		// trigger an extra, uncounted network execution.
-		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
+		if err != nil && machine == nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
 			e.logger.Info("检测到工具需要 TTY，使用 PTY 重试",
 				zap.String("tool", toolName),
 			)
@@ -349,7 +361,7 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 		output, err = combinedOutputCancellableWithLimit(ctx, cmd, e.toolOutputMaxBytes, spill)
 		// HTTP commands are non-interactive; a response mentioning TTY must not
 		// trigger an extra, uncounted network execution.
-		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
+		if err != nil && machine == nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
 			e.logger.Info("检测到工具需要 TTY，使用 PTY 重试",
 				zap.String("tool", toolName),
 			)
@@ -1546,7 +1558,7 @@ func truncateStringBytes(s string, maxBytes int) string {
 
 // streamCommandOutput 以“边读边回调”的方式读取命令 stdout/stderr。
 // 使用定长块读取，避免按行读取在无换行输出时永久阻塞；ctx 取消时终止进程树。
-func streamCommandOutput(ctx context.Context, cmd *exec.Cmd, cb ToolOutputCallback, noOutputSec int, maxBytes int, spill tooloutput.SpillOpts) (string, error) {
+func streamCommandOutput(ctx context.Context, cmd *exec.Cmd, cb ToolOutputCallback, noOutputSec int, maxBytes int, spill tooloutput.SpillOpts, originals ...*machineOriginal) (string, error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -1589,8 +1601,14 @@ func streamCommandOutput(ctx context.Context, cmd *exec.Cmd, cb ToolOutputCallba
 		}
 	}
 
+	var stdoutReader io.Reader = stdoutPipe
+	if len(originals) > 0 && originals[0] != nil {
+		// Capture before display truncation/fan-in: stderr, error wrappers and
+		// file fallback warnings can never become machine output bytes.
+		stdoutReader = io.TeeReader(stdoutPipe, originals[0])
+	}
 	wg.Add(2)
-	go readFn(stdoutPipe)
+	go readFn(stdoutReader)
 	go readFn(stderrPipe)
 
 	go func() {
