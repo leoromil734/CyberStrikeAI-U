@@ -12,13 +12,15 @@ func repeatGuardContext(conversationID string) context.Context {
 	return mcp.WithMCPConversationID(context.Background(), conversationID)
 }
 
-func resetCommandRepeatRegistryForTest() {
+func resetCommandRepeatRegistryForTest(t *testing.T) {
+	previous := globalCommandRepeatRegistry
 	globalCommandRepeatRegistry = &commandRepeatRegistry{sessions: make(map[string]*commandRepeatRecord)}
+	t.Cleanup(func() { globalCommandRepeatRegistry = previous })
 }
 
 // 达到阈值且结果稳定时必须拦截，避免同一条探测命令无限空转。
 func TestCommandRepeatGuardBlocksStableRepeats(t *testing.T) {
-	resetCommandRepeatRegistryForTest()
+	resetCommandRepeatRegistryForTest(t)
 	ctx := repeatGuardContext("conv-stable")
 	cmd := "curl -q -sSi --max-time 25 'https://example.test/wp-json/litespeed/v1/check_ip'"
 
@@ -41,7 +43,7 @@ func TestCommandRepeatGuardBlocksStableRepeats(t *testing.T) {
 
 // 结果多变的命令不得被拦截：爬取/枚举类输出每次不同，重复执行是真实工作。
 func TestCommandRepeatGuardAllowsUnstableOutput(t *testing.T) {
-	resetCommandRepeatRegistryForTest()
+	resetCommandRepeatRegistryForTest(t)
 	ctx := repeatGuardContext("conv-unstable")
 	cmd := "curl -q -sSi 'https://example.test/api/items?page=1'"
 
@@ -55,7 +57,7 @@ func TestCommandRepeatGuardAllowsUnstableOutput(t *testing.T) {
 
 // 不同会话之间必须互相独立：一条命令在 A 会话被拦不影响 B 会话。
 func TestCommandRepeatGuardIsolatesConversations(t *testing.T) {
-	resetCommandRepeatRegistryForTest()
+	resetCommandRepeatRegistryForTest(t)
 	cmd := "curl -q -sSi 'https://example.test/admin'"
 
 	blockedCtx := repeatGuardContext("conv-a")
@@ -85,7 +87,7 @@ func TestCommandFingerprintNormalizesWhitespace(t *testing.T) {
 
 // 无会话上下文时不得拦截：单次调用与无归属执行路径保持原行为。
 func TestCommandRepeatGuardSkipsWithoutConversation(t *testing.T) {
-	resetCommandRepeatRegistryForTest()
+	resetCommandRepeatRegistryForTest(t)
 	ctx := context.Background()
 	cmd := "curl -q -sSi 'https://example.test/'"
 	for i := 0; i < commandRepeatLimit+2; i++ {

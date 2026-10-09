@@ -182,6 +182,11 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 			return nil, budgetErr
 		}
 		defer release()
+		releaseRepeat, repeatErr := AcquireHTTPRepeatGuard(ctx, toolName, args)
+		if repeatErr != nil {
+			return repeatGuardToolResult(repeatErr), nil
+		}
+		defer releaseRepeat()
 		e.logger.Debug("执行exec工具")
 		result, execErr := e.executeSystemCommand(ctx, args)
 		// 记录本次结果指纹，供后续重复判定；后台命令的启动回执同样计入。
@@ -300,6 +305,14 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	e.attachToolStdin(cmd, toolConfig, args)
 	_ = prepareShellCmdSession(cmd)
 
+	// The native HTTP tool is dispatched here, after validation and process-budget
+	// admission. Async MCP waits never re-enter this guard for the same execution.
+	releaseRepeat, repeatErr := AcquireHTTPRepeatGuard(ctx, toolName, args)
+	if repeatErr != nil {
+		return repeatGuardToolResult(repeatErr), nil
+	}
+	defer releaseRepeat()
+
 	e.logger.Debug("执行安全工具",
 		zap.String("tool", toolName),
 		zap.Strings("args", cmdArgs),
@@ -312,7 +325,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	if cb, ok := ctx.Value(ToolOutputCallbackCtxKey).(ToolOutputCallback); (ok && cb != nil) || mcp.MCPExecutionIDFromContext(ctx) != "" {
 		cb = e.wrapToolOutputCallback(ctx, cb)
 		output, err = streamCommandOutput(ctx, cmd, cb, ResolveShellNoOutputTimeoutSeconds(e.shellNoOutputTimeoutSec), e.toolOutputMaxBytes, spill)
-		if err != nil && shouldRetryWithPTY(output) {
+		// HTTP commands are non-interactive; a response mentioning TTY must not
+		// trigger an extra, uncounted network execution.
+		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
 			e.logger.Info("检测到工具需要 TTY，使用 PTY 重试",
 				zap.String("tool", toolName),
 			)
@@ -332,7 +347,9 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	} else {
 		// 非流式：内存缓冲 + ctx 取消杀进程组；行为对齐原 CombinedOutput，避免双流管道 fan-in 死锁。
 		output, err = combinedOutputCancellableWithLimit(ctx, cmd, e.toolOutputMaxBytes, spill)
-		if err != nil && shouldRetryWithPTY(output) {
+		// HTTP commands are non-interactive; a response mentioning TTY must not
+		// trigger an extra, uncounted network execution.
+		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP(toolName, args) {
 			e.logger.Info("检测到工具需要 TTY，使用 PTY 重试",
 				zap.String("tool", toolName),
 			)
@@ -918,74 +935,7 @@ func (e *Executor) formatScanTypeArgs(toolConfig *config.ToolConfig, value strin
 
 // parseAdditionalArgs 解析 additional_args 字符串，按空格分割但保留引号内的内容
 func (e *Executor) parseAdditionalArgs(argsStr string) []string {
-	if argsStr == "" {
-		return []string{}
-	}
-
-	result := make([]string, 0)
-	var current strings.Builder
-	inQuotes := false
-	var quoteChar rune
-	escapeNext := false
-
-	runes := []rune(argsStr)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-
-		if escapeNext {
-			current.WriteRune(r)
-			escapeNext = false
-			continue
-		}
-
-		if r == '\\' {
-			// 检查下一个字符是否是引号
-			if i+1 < len(runes) && (runes[i+1] == '"' || runes[i+1] == '\'') {
-				// 转义的引号：跳过反斜杠，将引号作为普通字符写入
-				i++
-				current.WriteRune(runes[i])
-			} else {
-				// 其他转义字符：写入反斜杠，下一个字符会在下次迭代处理
-				escapeNext = true
-				current.WriteRune(r)
-			}
-			continue
-		}
-
-		if !inQuotes && (r == '"' || r == '\'') {
-			inQuotes = true
-			quoteChar = r
-			continue
-		}
-
-		if inQuotes && r == quoteChar {
-			inQuotes = false
-			quoteChar = 0
-			continue
-		}
-
-		if !inQuotes && (r == ' ' || r == '\t' || r == '\n') {
-			if current.Len() > 0 {
-				result = append(result, current.String())
-				current.Reset()
-			}
-			continue
-		}
-
-		current.WriteRune(r)
-	}
-
-	// 处理最后一个参数（如果存在）
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-
-	// 如果解析结果为空，使用简单的空格分割作为降级方案
-	if len(result) == 0 {
-		result = strings.Fields(argsStr)
-	}
-
-	return result
+	return parseLiteralToolArgs(argsStr, false)
 }
 
 // missingRequiredToolParams 返回缺失的规范参数契约；兼容别名只用于解析，不进入 schema required。
@@ -1314,7 +1264,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	if cb, ok := ctx.Value(ToolOutputCallbackCtxKey).(ToolOutputCallback); (ok && cb != nil) || mcp.MCPExecutionIDFromContext(ctx) != "" {
 		cb = e.wrapToolOutputCallback(ctx, cb)
 		output, err = streamCommandOutput(ctx, cmd, cb, ResolveShellNoOutputTimeoutSeconds(e.shellNoOutputTimeoutSec), e.toolOutputMaxBytes, spill)
-		if err != nil && shouldRetryWithPTY(output) {
+		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP("exec", args) {
 			e.logger.Info("检测到系统命令需要 TTY，使用 PTY 重试")
 			cmd2 := exec.CommandContext(ctx, shell, "-c", command)
 			if workDir != "" {
@@ -1331,7 +1281,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		}
 	} else {
 		output, err = combinedOutputCancellableWithLimit(ctx, cmd, e.toolOutputMaxBytes, spill)
-		if err != nil && shouldRetryWithPTY(output) {
+		if err != nil && shouldRetryWithPTY(output) && !repeatGuardedHTTP("exec", args) {
 			e.logger.Info("检测到系统命令需要 TTY，使用 PTY 重试")
 			cmd2 := exec.CommandContext(ctx, shell, "-c", command)
 			if workDir != "" {

@@ -74,6 +74,7 @@ type ExternalMCPManager struct {
 	reconnectLastTry   map[string]time.Time
 	reconnectAttempts  map[string]int
 	toolAuthorizer     func(context.Context, string, map[string]interface{}) error
+	executionGuard     func(context.Context, string, map[string]interface{}) (func(), error)
 	executionService   *ExecutionService
 	toolWaitTimeout    time.Duration
 	toolResultMaxBytes int
@@ -93,6 +94,15 @@ func NewExternalMCPManager(logger *zap.Logger) *ExternalMCPManager {
 func (m *ExternalMCPManager) SetToolAuthorizer(authorizer func(context.Context, string, map[string]interface{}) error) {
 	m.mu.Lock()
 	m.toolAuthorizer = authorizer
+	m.mu.Unlock()
+}
+
+// SetExecutionGuard installs pre-dispatch admission for external tools. Unlike
+// authorization it runs in the worker after acquiring the external call slot,
+// immediately before client.CallTool, never on submit/poll/soft timeout.
+func (m *ExternalMCPManager) SetExecutionGuard(guard func(context.Context, string, map[string]interface{}) (func(), error)) {
+	m.mu.Lock()
+	m.executionGuard = guard
 	m.mu.Unlock()
 }
 
@@ -742,6 +752,9 @@ func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args
 	if principal, ok := authctx.PrincipalFromContext(ctx); ok {
 		ownerUserID = principal.UserID
 	}
+	// Both closures run sequentially in the execution worker. Local admission
+	// denials must not be reported as remote server failures to its circuit breaker.
+	dispatched := false
 	handle, err := m.executionService.Submit(ctx, ExecutionRequest{
 		ToolName:       toolName,
 		Arguments:      args,
@@ -755,6 +768,19 @@ func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args
 			return release, nil
 		},
 		Run: func(runCtx context.Context) (*ToolResult, error) {
+			m.mu.RLock()
+			guard := m.executionGuard
+			m.mu.RUnlock()
+			if guard != nil {
+				release, guardErr := guard(runCtx, actualToolName, args)
+				if guardErr != nil {
+					return &ToolResult{IsError: true, Content: []Content{{Type: "text", Text: guardErr.Error()}}}, nil
+				}
+				if release != nil {
+					defer release()
+				}
+			}
+			dispatched = true
 			result, callErr := client.CallTool(runCtx, actualToolName, args)
 			if callErr != nil {
 				m.handleConnectionDead(mcpName, client, callErr)
@@ -763,7 +789,9 @@ func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args
 		},
 		OnDone: func(exec *ToolExecution) {
 			failed := exec != nil && exec.Status != ToolExecutionStatusCompleted && exec.Status != ToolExecutionStatusCancelled
-			m.recordExternalMCPResult(mcpName, failed)
+			if dispatched {
+				m.recordExternalMCPResult(mcpName, failed)
+			}
 			m.updateStats(toolName, failed)
 		},
 	})

@@ -200,6 +200,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
 	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
 	externalMCPMgr.SetToolAuthorizer(externalMCPToolAuthorizer())
+	externalMCPMgr.SetExecutionGuard(security.AcquireHTTPRepeatGuard)
 	externalMCPMgr.ConfigureToolWaitTimeoutSeconds(cfg.Agent.ToolWaitTimeoutSeconds)
 	externalMCPMgr.ConfigureToolResultMaxBytes(cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
 	externalMCPMgr.ConfigureToolResultSpillRoot(cfg.MultiAgent.EinoMiddleware.ReductionRootDir)

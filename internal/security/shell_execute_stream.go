@@ -67,6 +67,7 @@ func (s *EinoStreamingShell) ExecuteStreaming(ctx context.Context, input *filesy
 func runShellInBackground(ctx context.Context, command string, w *schema.StreamWriter[*filesystem.ExecuteResponse]) {
 	defer w.Close()
 
+	rawCommand := command
 	command = PrepareShellCommandForExecute(command)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	applyDefaultTerminalEnv(cmd)
@@ -80,6 +81,12 @@ func runShellInBackground(ctx context.Context, command string, w *schema.StreamW
 	if tee != nil {
 		defer tee.Close()
 	}
+	releaseRepeat, repeatErr := acquireNativeCommandRepeatGuard(ctx, rawCommand)
+	if repeatErr != nil {
+		_ = w.Send(nil, repeatErr)
+		return
+	}
+	defer releaseRepeat()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = w.Send(nil, fmt.Errorf("failed to create stdout pipe: %w", err))
@@ -156,6 +163,7 @@ func drainShellPipes(stdout, stderr io.Reader) {
 func streamShellForeground(ctx context.Context, command string, w *schema.StreamWriter[*filesystem.ExecuteResponse]) {
 	defer w.Close()
 
+	rawCommand := command
 	command = PrepareShellCommandForExecute(command)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	applyDefaultTerminalEnv(cmd)
@@ -169,6 +177,12 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 	if tee != nil {
 		defer tee.Close()
 	}
+	releaseRepeat, repeatErr := acquireNativeCommandRepeatGuard(ctx, rawCommand)
+	if repeatErr != nil {
+		_ = w.Send(nil, repeatErr)
+		return
+	}
+	defer releaseRepeat()
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -223,12 +237,14 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 		close(chunks)
 	}()
 
+	var repeatOutput commandRepeatOutput
 	hadOutput := false
 	for chunk := range chunks {
 		if chunk == "" {
 			continue
 		}
 		hadOutput = true
+		_, _ = repeatOutput.Write([]byte(chunk))
 		mcp.NotifyLocalExecutionActivity(ctx)
 		if collector != nil {
 			chunk = collector.WriteStringLimited(chunk)
@@ -243,6 +259,14 @@ func streamShellForeground(ctx context.Context, command string, w *schema.Stream
 	}
 
 	waitErr := session.Wait()
+	if ctx.Err() == nil {
+		repeatOutput.record(func(fingerprint, preview string) {
+			if waitErr != nil && fingerprint != "" {
+				fingerprint = repeatHash(fingerprint + "\x00" + waitErr.Error())
+			}
+			recordCommandFingerprint(ctx, rawCommand, fingerprint, preview)
+		})
+	}
 	if notice := finishNativeOriginal(collector, tee, outputBudget); notice != "" {
 		_ = w.Send(&filesystem.ExecuteResponse{Output: notice}, nil)
 	}
