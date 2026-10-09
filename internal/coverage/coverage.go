@@ -18,13 +18,23 @@ type Fact struct {
 	Body string
 }
 
+// LedgerCounts is a host-derived snapshot of unique stored ledger keys in the
+// selected assessment, not the independent candidate inventory or proof of coverage.
+// Malformed namespaced facts still count and remain explicit completion gaps.
+type LedgerCounts struct {
+	EndpointCount int `json:"endpoint_count"`
+	JSCount       int `json:"js_count"`
+	RiskUnitCount int `json:"risk_unit_count"`
+}
+
 type Report struct {
 	Active       bool
 	AssessmentID string
 	Missing      []string
 	Blocked      []string // evidenced limitations are distinct from unclosed gaps
 	EvidenceRefs []string
-	ValidFacts   int // validated ledger records for diagnostics, not evidence of execution/repair progress
+	ValidFacts   int           // validated ledger records for diagnostics, not evidence of execution/repair progress
+	LedgerCounts *LedgerCounts // derived from the same snapshot as the checks; never written back over newer facts
 }
 
 var assessmentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
@@ -99,8 +109,8 @@ func Check(facts []Fact, required bool) Report {
 		}
 		inNamespace := ledgerNamespaceID(fact.Key) == r.AssessmentID
 		if inNamespace {
-			// Count stored inventory independently of parse validity. Otherwise a
-			// broken JS body falsely tells the model to reduce js_count by one.
+			// Count stored inventory independently of parse validity. A malformed
+			// record remains in the host-derived count and must still be repaired.
 			trackInventory(fact.Key)
 		}
 		fields, err := parseBody(fact.Body)
@@ -207,13 +217,13 @@ func Check(facts []Fact, required bool) Report {
 	if len(sources) == 0 {
 		r.Missing = append(r.Missing, "missing evidenced inventory/baseline source")
 	}
-	for _, field := range []struct{ field, kind string }{
-		{"endpoint_count", "endpoint"}, {"js_count", "js"}, {"risk_unit_count", "risk"},
-	} {
-		actual := len(inventory[field.kind])
-		if declared := number(manifest, field.field); declared < 0 || declared != actual {
-			r.Missing = append(r.Missing, fmt.Sprintf("%s: %s must equal inventory count %d", manifestKey, field.field, actual))
-		}
+	// Counts belong to the host, not the model. Derive them on every check from
+	// this exact fact snapshot instead of persisting counters that can race with
+	// concurrent writes. Legacy declared counts are neither a gate nor evidence.
+	r.LedgerCounts = &LedgerCounts{
+		EndpointCount: len(inventory["endpoint"]),
+		JSCount:       len(inventory["js"]),
+		RiskUnitCount: len(inventory["risk"]),
 	}
 	for key, e := range entries {
 		if strings.HasPrefix(key, "recon/endpoint/") {

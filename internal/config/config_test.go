@@ -187,7 +187,7 @@ func TestModelOutputLimitDefaultsAndValidation(t *testing.T) {
 }
 
 func TestCoverageContinuationPolicyDefaultsAndValidation(t *testing.T) {
-	if DefaultCoverageContinuationStagnationWindow != 90*time.Minute {
+	if DefaultCoverageContinuationStagnationWindow != 60*time.Minute {
 		t.Fatalf("Loop stagnation window default changed: %v", DefaultCoverageContinuationStagnationWindow)
 	}
 	var zero MultiAgentEinoMiddlewareConfig

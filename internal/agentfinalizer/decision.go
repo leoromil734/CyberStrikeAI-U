@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 
+	"cyberstrike-ai/internal/coverage"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
@@ -77,12 +78,13 @@ type Decision struct {
 	CandidateResponseLen int      `json:"candidateResponseLen,omitempty"`
 	// CoverageValidFacts is retained for compatibility/diagnostics only. Fact
 	// writes must never be used as evidence of assessment progress.
-	CoverageValidFacts         int  `json:"coverageValidFacts,omitempty"`
-	CoverageProgressKnown      bool `json:"coverageProgressKnown"`
-	CoverageInventoryGroups    int  `json:"coverageInventoryGroups"`
-	CoverageUnresolvedGroups   int  `json:"coverageUnresolvedGroups"`
-	CoverageMappedGroups       int  `json:"coverageMappedGroups"`
-	CoverageEvidenceExecutions int  `json:"coverageEvidenceExecutions"`
+	CoverageLedgerCounts       *coverage.LedgerCounts `json:"coverageLedgerCounts,omitempty"` // host-derived ledger sizes, not progress
+	CoverageValidFacts         int                    `json:"coverageValidFacts,omitempty"`
+	CoverageProgressKnown      bool                   `json:"coverageProgressKnown"`
+	CoverageInventoryGroups    int                    `json:"coverageInventoryGroups"`
+	CoverageUnresolvedGroups   int                    `json:"coverageUnresolvedGroups"`
+	CoverageMappedGroups       int                    `json:"coverageMappedGroups"`
+	CoverageEvidenceExecutions int                    `json:"coverageEvidenceExecutions"`
 	// CoverageHTTPExecutions counts verified target-facing HTTP exchanges in
 	// this conversation; a new one renews the continuation clock even when no
 	// new ledger row or recon source appears.
@@ -264,6 +266,7 @@ func Decide(db *database.DB, in Input) Decision {
 	}
 
 	coverage := coverageForDelivery(db, in)
+	d.CoverageLedgerCounts = coverage.LedgerCounts
 	d.CoverageValidFacts = coverage.ValidFacts
 	d.setCoverageProgress(coverage.Progress)
 	d.VerificationExecutions = countVerificationExecutions(db, in.ConversationID)

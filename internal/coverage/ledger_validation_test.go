@@ -17,7 +17,7 @@ func TestMalformedJSStillCountsInStoredInventory(t *testing.T) {
 	if !strings.Contains(missing, "recon/js/run-a/components: invalid ledger body") || !strings.Contains(missing, "js_resource") {
 		t.Fatalf("exact bad field not reported: %+v", r)
 	}
-	if strings.Contains(missing, "js_count must equal") {
+	if r.LedgerCounts == nil || r.LedgerCounts.JSCount != 4 || strings.Contains(missing, "js_count must equal") {
 		t.Fatalf("a parse error must not reduce stored inventory: %s", missing)
 	}
 	facts[len(facts)-1].Body = strings.Replace(facts[len(facts)-1].Body, "@finanztip/ft-ui-* 组件族", "'@finanztip/ft-ui-* 组件族'", 1)

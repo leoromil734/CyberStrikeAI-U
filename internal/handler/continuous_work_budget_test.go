@@ -43,15 +43,15 @@ func TestCoverageStagnationWindowRequiresElapsedTimeWithoutProgress(t *testing.T
 		t.Fatalf("first observation stopped early: %+v", s)
 	}
 	s.recordContinuation(d)
-	// 事实补写不重置时钟：89 分钟无新进展仍在窗口内，可以继续。
+	// 事实补写不重置时钟：59 分钟无新进展仍在窗口内，可以继续。
 	ledgerOnly := d
 	ledgerOnly.CoverageValidFacts = 500
-	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(89*time.Minute)) {
+	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(59*time.Minute)) {
 		t.Fatalf("stopped inside the stagnation window: %+v", s)
 	}
 	s.recordContinuation(d)
-	// 达到 90 分钟停滞窗口：停止续跑，且停止原因说明时间窗语义。
-	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(90*time.Minute)) {
+	// 达到 60 分钟停滞窗口：停止续跑，且停止原因说明时间窗语义。
+	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(60*time.Minute)) {
 		t.Fatalf("stagnation window did not stop the loop: %+v", s)
 	}
 	if !strings.Contains(s.StopReason, "停滞窗口") || !strings.Contains(s.StopReason, "未新增可核查进展") {
@@ -72,11 +72,11 @@ func TestLedgerMappingDoesNotRenewStagnationClockButProgressDoes(t *testing.T) {
 	ledgerOnly := d
 	ledgerOnly.CoverageMappedGroups = 5
 	ledgerOnly.CoverageValidFacts = 500
-	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(89*time.Minute)) {
+	if !observeFinalizationContinuationAt(ledgerOnly, s, base.Add(59*time.Minute)) {
 		t.Fatal("ledger mapping stopped the loop before the window elapsed")
 	}
 	s.recordContinuation(d)
-	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(90*time.Minute)) || s.CoverageNoProgress == 0 {
+	if observeFinalizationContinuationAt(ledgerOnly, s, base.Add(60*time.Minute)) || s.CoverageNoProgress == 0 {
 		t.Fatalf("ledger mapping renewed a stalled run: %+v", s)
 	}
 
@@ -91,20 +91,20 @@ func TestLedgerMappingDoesNotRenewStagnationClockButProgressDoes(t *testing.T) {
 	s.recordContinuation(d)
 	advanced := d
 	advanced.CoverageEvidenceExecutions = 2
-	if !observeFinalizationContinuationAt(advanced, s, base.Add(80*time.Minute)) || s.CoverageNoProgress != 0 {
+	if !observeFinalizationContinuationAt(advanced, s, base.Add(50*time.Minute)) || s.CoverageNoProgress != 0 {
 		t.Fatalf("new execution evidence did not renew the clock: %+v", s)
 	}
-	if !s.LastProgressAt.Equal(base.Add(80 * time.Minute)) {
+	if !s.LastProgressAt.Equal(base.Add(50 * time.Minute)) {
 		t.Fatalf("last progress time not renewed: %v", s.LastProgressAt)
 	}
 	s.recordContinuation(d)
-	// 原 90 分钟窗口不再适用于旧起点：仍可继续到新进展 + 90 分钟之前。
+	// 原 60 分钟窗口不再适用于旧起点：仍可继续到新进展 + 60 分钟之前。
 	if !observeFinalizationContinuationAt(advanced, s, base.Add(100*time.Minute)) {
 		t.Fatalf("renewed clock stopped too early: %+v", s)
 	}
 	s.recordContinuation(d)
-	// 新进展后 90 分钟到点停止（80 + 90 = 170 分钟）。
-	if observeFinalizationContinuationAt(advanced, s, base.Add(170*time.Minute)) {
+	// 新进展后 60 分钟到点停止（50 + 60 = 110 分钟）。
+	if observeFinalizationContinuationAt(advanced, s, base.Add(110*time.Minute)) {
 		t.Fatalf("renewed window did not stop at the window boundary: %+v", s)
 	}
 

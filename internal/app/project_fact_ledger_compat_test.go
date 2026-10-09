@@ -92,7 +92,10 @@ func TestProjectFactToolAcceptsAssignmentManifestAsDraft(t *testing.T) {
 		t.Fatalf("draft silently disabled/passed completion gate: %+v", report)
 	}
 	missing := strings.Join(report.Missing, "\n")
-	for _, fragment := range []string{"scope_kind", "endpoint_count", "js_count", "risk_unit_count", "fofa_search", "recon/phase/run-20261001-live-db/recon_sources"} {
+	if strings.Contains(missing, "_count") || report.LedgerCounts == nil || *report.LedgerCounts != (coverage.LedgerCounts{}) {
+		t.Fatalf("host-owned empty counts created a completion gap: %+v", report)
+	}
+	for _, fragment := range []string{"scope_kind", "fofa_search", "recon/phase/run-20261001-live-db/recon_sources"} {
 		if !strings.Contains(missing, fragment) {
 			t.Fatalf("draft bypassed %s: %s", fragment, missing)
 		}

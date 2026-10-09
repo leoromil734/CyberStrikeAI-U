@@ -169,15 +169,15 @@ func ValidateLedgerFact(key, body string) error {
 		if !oneOf(status, "active", "completed") {
 			problems = append(problems, "status must be active or completed")
 		}
-		// Startup manifests may omit scope/inventory until those facts are known.
-		// Explicit invalid values still fail here; Check independently requires
-		// all fields and actual inventory equality before any final delivery.
+		// Scope is still required for completion and cannot be inferred. Inventory
+		// counts are optional legacy metadata: Check derives them from its fact
+		// snapshot, so concurrent ledger writes cannot stale a model-owned count.
 		_, hasScope := fields["scope_kind"]
 		if (hasScope || status == "completed") && !oneOf(text(fields, "scope_kind"), "root-domain", "single-url", "ip", "asset-list") {
 			problems = append(problems, "scope_kind must describe the authorized scope")
 		}
 		for _, name := range []string{"endpoint_count", "js_count", "risk_unit_count"} {
-			requireCount(name, status == "completed")
+			requireCount(name, false)
 		}
 	case "source":
 		requireText("tool", "target")

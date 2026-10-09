@@ -47,7 +47,8 @@ func prepareWorkspaceCommand(ctx context.Context, cmd *exec.Cmd, credentialKeys 
 		return err
 	}
 	args := []string{"--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try", "--cap-drop", "ALL", "--clearenv"}
-	// Host root, /root, /var, /run and host /proc are never exposed.
+	// Host root, /root, /var, /run and host /proc are never exposed wholesale.
+	// Narrow runtime mounts below are opt-in and read-only.
 	for _, path := range []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/passwd", "/etc/group", "/etc/ld.so.cache", "/etc/alternatives"} {
 		if _, err := os.Stat(path); err == nil {
 			args = append(args, "--ro-bind", path, path)
@@ -98,6 +99,8 @@ func prepareWorkspaceCommand(ctx context.Context, cmd *exec.Cmd, credentialKeys 
 		if err != nil {
 			return err
 		}
+		// Writable runtime state always comes from this workspace, never from a
+		// host runtime directory (including a shared /var/lib/gems installation).
 		args = append(args, "--bind", state, path)
 	}
 	for _, path := range p.DeniedRoots {
@@ -174,6 +177,12 @@ func validateRuntimeMount(path string) error {
 		}
 	}
 	for _, forbidden := range []string{"/root", "/home", "/etc", "/proc", "/sys", "/run", "/var"} {
+		// Debian/Ubuntu install system Ruby gems here. Allow only an explicit
+		// read-only mount of this tree, not /var/lib or adjacent private state.
+		// Keep the source/configuration and symlink checks below for this exception.
+		if forbidden == "/var" && workspaceguard.Within("/var/lib/gems", path) {
+			continue
+		}
 		if workspaceguard.Within(forbidden, path) {
 			return fmt.Errorf("private host state cannot be a runtime mount: %s", path)
 		}

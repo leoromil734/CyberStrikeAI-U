@@ -197,7 +197,7 @@ func (s *ExecutionService) runWorker(ctx context.Context, entry *executionEntry,
 
 	if entry.preRun != nil {
 		var preErr error
-		release, preErr = entry.preRun(ctx, cloneToolExecution(entry.exec))
+		release, preErr = entry.preRun(ctx, s.snapshotEntry(entry).Execution)
 		if preErr != nil {
 			s.finishEntry(ctx, entry, nil, preErr, onDone)
 			return
@@ -331,7 +331,7 @@ func (s *ExecutionService) Wait(ctx context.Context, executionID string, timeout
 	// Wait for done so callers cannot finalize before those steps complete.
 	select {
 	case <-entry.done:
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+		return s.snapshotEntry(entry), nil
 	default:
 	}
 
@@ -345,18 +345,27 @@ func (s *ExecutionService) Wait(ctx context.Context, executionID string, timeout
 
 	select {
 	case <-entry.done:
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+		return s.snapshotEntry(entry), nil
 	case <-timeoutCh:
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, ErrExecutionWaitTimeout
+		return s.snapshotEntry(entry), ErrExecutionWaitTimeout
 	case <-ctxDone(ctx):
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, ctx.Err()
+		return s.snapshotEntry(entry), ctx.Err()
 	}
+}
+
+// snapshotEntry copies mutable execution state under the same lock used by
+// markEntryRunning, finishEntry and AppendPartialOutput. getEntry only protects
+// the lookup; it does not make reads of the returned entry race-free.
+func (s *ExecutionService) snapshotEntry(entry *executionEntry) *ExecutionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}
 }
 
 func (s *ExecutionService) Get(executionID string) (*ExecutionSnapshot, error) {
 	entry := s.getEntry(executionID)
 	if entry != nil {
-		return &ExecutionSnapshot{Execution: cloneToolExecution(entry.exec)}, nil
+		return s.snapshotEntry(entry), nil
 	}
 	return s.getPersistedSnapshot(executionID)
 }

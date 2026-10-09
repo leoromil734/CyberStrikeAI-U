@@ -8,6 +8,7 @@ func LedgerBodySchema() map[string]interface{} {
 		return map[string]interface{}{"type": "string", "description": desc}
 	}
 	countField := map[string]interface{}{"type": "integer", "minimum": 0}
+	manifestCountField := map[string]interface{}{"type": "integer", "minimum": 0, "description": "可省略的兼容字段；宿主按本轮账本事实自动推导实际数量，不信任手写计数作为收尾门槛，无需随事实增减更新。不是候选库存总量或已覆盖数。"}
 	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{
 		"assessment_id":  stringField("当前评估标识，须与 key 一致"),
 		"schema_version": map[string]interface{}{"type": "integer", "enum": []int{2}},
@@ -17,7 +18,7 @@ func LedgerBodySchema() map[string]interface{} {
 		"phase":          map[string]interface{}{"type": "string", "enum": phases},
 		"runtime_status": map[string]interface{}{"type": "string", "enum": []string{"discovered", "extracted", "baselined", "risk-mapped", "verified", "negated", "blocked"}},
 		"raw":            countField, "unique": countField, "incremental": countField,
-		"endpoint_count": countField, "js_count": countField, "risk_unit_count": countField,
+		"endpoint_count": manifestCountField, "js_count": manifestCountField, "risk_unit_count": manifestCountField,
 		"tool": stringField("真实工具名称；jsluice/历史 jsapiscan 为静态发现来源，不能单独验证 HTTP 风险"), "target": stringField("原始授权目标，不规范化扩大范围；HTTP 原件来源须同时填写精确 URL 与 method"),
 		"host": stringField("端点主机"), "method": stringField("实际 HTTP 方法"), "path": stringField("实际路径或有依据的模板"),
 		"endpoint_url":        stringField("不含 userinfo 的 HTTP(S) 原始URL；路径、端口及路由参数值保持不变"),

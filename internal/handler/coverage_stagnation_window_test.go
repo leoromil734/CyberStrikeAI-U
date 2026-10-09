@@ -8,12 +8,12 @@ import (
 	"cyberstrike-ai/internal/config"
 )
 
-// Loop Engineering 回归护栏：默认停滞窗口为 90 分钟，段数上限仅作安全兜底。
-func TestCoverageStagnationWindowDefaultsToNinetyMinutes(t *testing.T) {
+// 默认停滞窗口为 60 分钟，段数上限仅作安全兜底。
+func TestCoverageStagnationWindowDefaultsToSixtyMinutes(t *testing.T) {
 	s := &finalizationContinuationState{}
 	s.applyContinuationPolicy(nil)
-	if s.stagnationWindow() != 90*time.Minute {
-		t.Fatalf("default stagnation window = %v, want 90m", s.stagnationWindow())
+	if s.stagnationWindow() != 60*time.Minute {
+		t.Fatalf("default stagnation window = %v, want 60m", s.stagnationWindow())
 	}
 	if s.coverageMaxSegments() != config.DefaultCoverageContinuationMaxSegments {
 		t.Fatalf("default segment guard = %d, want %d", s.coverageMaxSegments(), config.DefaultCoverageContinuationMaxSegments)
@@ -68,12 +68,12 @@ func TestCoverageInventoryGrowthRenewsStagnationClock(t *testing.T) {
 	grown := d
 	grown.CoverageInventoryGroups = 140
 	grown.CoverageUnresolvedGroups = 140
-	if !observeFinalizationContinuationAt(grown, s, base.Add(89*time.Minute)) || s.CoverageNoProgress != 0 {
+	if !observeFinalizationContinuationAt(grown, s, base.Add(59*time.Minute)) || s.CoverageNoProgress != 0 {
 		t.Fatalf("new test surface did not renew the clock: %+v", s)
 	}
 	s.recordContinuation(d)
-	// 若无库存增长，120 分钟已超原 90 分钟窗口；因为时钟被新面重置，仍可继续。
-	if !observeFinalizationContinuationAt(grown, s, base.Add(120*time.Minute)) {
+	// 无库存增长时 90 分钟已超过原 60 分钟窗口；新进展重置时钟后仍可继续。
+	if !observeFinalizationContinuationAt(grown, s, base.Add(90*time.Minute)) {
 		t.Fatalf("renewed clock stopped too early: %+v", s)
 	}
 }
@@ -91,11 +91,11 @@ func TestUnknownInventoryCannotRenewStagnationClock(t *testing.T) {
 	s.recordContinuation(d)
 	grown := d
 	grown.CoverageInventoryGroups = 200
-	if !observeFinalizationContinuationAt(grown, s, base.Add(89*time.Minute)) {
+	if !observeFinalizationContinuationAt(grown, s, base.Add(59*time.Minute)) {
 		t.Fatal("unknown inventory stopped early")
 	}
 	s.recordContinuation(d)
-	if observeFinalizationContinuationAt(grown, s, base.Add(90*time.Minute)) {
+	if observeFinalizationContinuationAt(grown, s, base.Add(60*time.Minute)) {
 		t.Fatal("unknown inventory must not renew the stagnation clock")
 	}
 }
@@ -118,7 +118,7 @@ func TestWorkingFastSegmentsAreNeverBrakeStopped(t *testing.T) {
 	}
 }
 
-// Loop 修复回归：秒级 exit 循环（快速空转段）连续达到阈值立即刹车，不等 90 分钟时间窗。
+// Loop 修复回归：秒级 exit 循环（快速空转段）连续达到阈值立即刹车，不等 60 分钟时间窗。
 func TestRapidIdleExitStormStopsAfterConsecutiveIdleSegments(t *testing.T) {
 	s := &finalizationContinuationState{}
 	base := time.Now()
@@ -143,7 +143,7 @@ func TestRapidIdleExitStormStopsAfterConsecutiveIdleSegments(t *testing.T) {
 	}
 }
 
-// 段时长达到阈值（模型仍在实质执行）时不计为空转，由 90 分钟时间窗兜底。
+// 段时长达到阈值（模型仍在实质执行）时不计为空转，由 60 分钟时间窗兜底。
 func TestSlowSegmentsResetIdleBrake(t *testing.T) {
 	s := &finalizationContinuationState{}
 	base := time.Now()

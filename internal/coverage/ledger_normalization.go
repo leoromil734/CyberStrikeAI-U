@@ -7,9 +7,10 @@ import (
 )
 
 // NormalizeLedgerWrite handles unambiguous transport compatibility only at the
-// write boundary. It never guesses counts, authorized scope or evidence, and
-// never upgrades a tool's success status to a completed coverage result.
-// Reads/Check remain strict, so old malformed records do not silently pass.
+// write boundary. It never guesses source counts, authorized scope or evidence,
+// and never upgrades a tool's success status to a completed coverage result.
+// Manifest inventory counts are derived by Check from the current fact snapshot;
+// all other completion and evidence requirements remain strict.
 func NormalizeLedgerWrite(key, body string) (string, []string, error) {
 	kind, namespace := ledgerKind(key), ledgerNamespaceID(key)
 	if kind == "" || strings.TrimSpace(body) == "" {
@@ -47,15 +48,10 @@ func NormalizeLedgerWrite(key, body string) (string, []string, error) {
 		changed = true
 		notes = append(notes, "来源已保存为 active（未完成），原工具 success 保存在 source_status，文本 raw 保存在 raw_output；补齐真实整数 raw/unique/incremental 和 evidence 后显式更新 status=covered。不会从 total/fetched 或文本猜计数、补造证据。")
 	}
-	if kind == "assessment" && text(fields, "status") == "active" {
-		var missing []string
-		for _, name := range []string{"scope_kind", "endpoint_count", "js_count", "risk_unit_count"} {
-			if _, supplied := fields[name]; !supplied {
-				missing = append(missing, name)
-			}
-		}
-		if len(missing) > 0 {
-			notes = append(notes, "评估已保存为 active（未完成）启动记录；仍需补齐 "+strings.Join(missing, "/")+"。范围和库存计数未自动推断，覆盖门禁仍会阻断收尾；phases 列表不替代独立 recon/phase/{assessment_id}/{phase} 记录。")
+	if kind == "assessment" {
+		notes = append(notes, "endpoint_count/js_count/risk_unit_count 由宿主在覆盖检查时按本轮账本事实自动推导，无需手写或同步；旧计数不作为收尾门槛，不代表独立候选库存总量或已覆盖数量。")
+		if _, supplied := fields["scope_kind"]; !supplied && text(fields, "status") == "active" {
+			notes = append(notes, "评估已保存为 active（未完成）启动记录；仍需补齐 scope_kind。授权范围不会自动推断，覆盖门禁仍会阻断收尾；phases 列表不替代独立 recon/phase/{assessment_id}/{phase} 记录。")
 		}
 	}
 	if !changed {

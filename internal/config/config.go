@@ -70,7 +70,7 @@ const (
 	DefaultSummarizationOutputReserveTokens           = 8192
 	// DefaultCoverageContinuationStagnationWindow 覆盖续跑停滞窗口默认值：
 	// 连续该时长没有新增可核查进展（新漏洞验证 / 新侦察来源执行 / 新测试面发现）才停止自动续跑。
-	DefaultCoverageContinuationStagnationWindow = 90 * time.Minute
+	DefaultCoverageContinuationStagnationWindow = 60 * time.Minute
 	// DefaultCoverageContinuationMaxSegments 覆盖续跑段数安全上限默认值：
 	// 仅防病态快段空转，正常停止由停滞时间窗决定；运行总时长仍受请求级预算约束。
 	DefaultCoverageContinuationMaxSegments = 512
@@ -331,7 +331,7 @@ type MultiAgentEinoMiddlewareConfig struct {
 	// EmptyResponseContinueMaxAttempts Run 成功但未捕获助手正文时 Handler 层退避续跑次数；0=默认 5。
 	EmptyResponseContinueMaxAttempts int `yaml:"empty_response_continue_max_attempts,omitempty" json:"empty_response_continue_max_attempts,omitempty"`
 	// CoverageContinuationStagnationMinutes 覆盖续跑停滞窗口（分钟）：连续无新增可核查进展
-	// （新漏洞验证 / 新侦察来源执行 / 新测试面发现，任一）达到该时长才停止自动续跑；<=0 默认 90。
+	// （新漏洞验证 / 新侦察来源执行 / 新测试面发现，任一）达到该时长才停止自动续跑；<=0 默认 60。
 	CoverageContinuationStagnationMinutes int `yaml:"coverage_continuation_stagnation_minutes,omitempty" json:"coverage_continuation_stagnation_minutes,omitempty"`
 	// CoverageContinuationMaxSegments 覆盖续跑段数安全上限（防病态快段空转）；<=0 默认 512。
 	// 正常停止由停滞时间窗决定；达到该上限时保留轨迹供人工恢复。
@@ -361,7 +361,7 @@ func (c MultiAgentEinoMiddlewareConfig) ModelOutputRepairMaxAttemptsEffective() 
 	return DefaultModelOutputRepairMaxAttempts
 }
 
-// CoverageContinuationStagnationEffective 返回覆盖续跑停滞窗口；未配置或非正数时使用 90 分钟默认值。
+// CoverageContinuationStagnationEffective 返回覆盖续跑停滞窗口；未配置或非正数时使用 60 分钟默认值。
 func (c MultiAgentEinoMiddlewareConfig) CoverageContinuationStagnationEffective() time.Duration {
 	if c.CoverageContinuationStagnationMinutes > 0 {
 		return time.Duration(c.CoverageContinuationStagnationMinutes) * time.Minute
