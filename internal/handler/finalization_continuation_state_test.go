@@ -180,6 +180,9 @@ func TestClassifyAndVerifyPromptOmitsLedgerDispositionQueue(t *testing.T) {
 	if !strings.Contains(message, "由你判断哪些历史 URL 值得测试") || !strings.Contains(message, "静态资源跳过") || !strings.Contains(message, "query_recon_inventory") {
 		t.Fatalf("classify prompt lost the high-value URL selection guidance: %s", message)
 	}
+	if !strings.Contains(message, "禁止重复空转") || !strings.Contains(message, "一律不得再跑第二次") {
+		t.Fatalf("classify prompt lost the repeat-spin guardrail: %s", message)
+	}
 }
 
 func TestFinalizationContinuationRestoresTraceAndFullChecks(t *testing.T) {

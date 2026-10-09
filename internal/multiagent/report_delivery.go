@@ -19,6 +19,7 @@ const coverageRepairInstructionPrefix = "【系统自动续跑 / Auto resume】\
 const CoverageWorkContinuationHeader = coverageRepairInstructionPrefix + "exit 是请求收尾，不是覆盖证明。本段优先对已发现的高价值面继续做实际验证，不补台账。保留用户排除项，不重复、不扩范围。\n" +
 	"不要为库存机械补写 fact、不要把未测地址写成 N/A/negated/已覆盖、不要无选择地遍历 URL；对未测的高价值入口做有选择的基线/深入测试是允许且鼓励的。\n" +
 	"历史 URL 由你筛选：从库存/历史结果中挑值得测试的目标（带参数的接口、API、后台/上传/认证路径与动态端点优先，图片/字体/样式等静态资源跳过），先实测最有价值的几个，不要逐条穷举。\n" +
+	"禁止重复空转：本会话已执行过且返回 404/401/403/超时/连接失败的命令与 URL 不得再跑第二次，系统会直接拦截；已 blocked/unreachable 的侦察来源不要重跑，改用替代来源或换下一个未测目标。\n" +
 	"对目标做 HTTP 测试时优先用 `curl -q -sSi <URL>`（单次直连、-i 保留响应头）：这类可核对的原件会计为真实进展并自动续期工作预算，python 脚本请求与管道组合不会被记录。\n" +
 	projectprompt.HighImpactFindingPolicy + "\n" +
 	"http-framework-test 只用于一个已选入口的对照，不用于遍历接口。符合筛选且确认危害后 record_vulnerability（同一会话下标题与目标一致会被自动合并，不新建条目）。没有可推进的高价值面或预算耗尽时交完整最终报告：成果、执行/原件引用、负结果、未测缺口与限制；覆盖不完整只能交阶段报告。Deep/Supervisor 根角色用 exit.final_result 提交报告全文。\n"

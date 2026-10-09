@@ -620,6 +620,7 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组：不要为库存写端点/N-A 型事实，不要打开覆盖检查文件；原始库存数量不等于需逐一测试的业务单元，未处置部分按未覆盖披露。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
 	b.WriteString("优先对已发现但未验证的高价值入口继续做实际测试（认证/授权边界、注入、上传、管理入口与开放服务）；对目标做 HTTP 测试时用 `curl -q -sSi <URL>`，可核对的原件会计为真实进展。\n")
 	b.WriteString("原始库存不是逐条工作队列：由你判断哪些历史 URL 值得测试——带参数的接口、API、后台/上传/认证路径与动态端点优先，图片/字体/样式等静态资源跳过；可用 query_recon_inventory 按执行抽看库存，先挑 3-5 个最有价值的实测，再视时间继续。\n")
+	b.WriteString("禁止重复空转：凡是本会话已执行过且返回 404/401/403/超时/连接失败的命令与 URL，一律不得再跑第二次；系统会直接拦截并要求换目标。同理，已判定为 blocked/unreachable 的侦察来源不要重跑，改用替代来源或换下一个未测目标。\n")
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
 		for _, check := range actionable {

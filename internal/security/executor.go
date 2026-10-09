@@ -133,6 +133,22 @@ func (e *Executor) buildToolIndex() {
 	)
 }
 
+// toolResultTextForFingerprint 从工具结果中提取用于稳定性判定的文本摘要。
+// 只取文本内容，忽略结构化字段，保证同一输出得到同一指纹。
+func toolResultTextForFingerprint(result *mcp.ToolResult) string {
+	if result == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range result.Content {
+		if c.Type == "text" && c.Text != "" {
+			b.WriteString(c.Text)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
 // ExecuteTool 执行安全工具
 func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (*mcp.ToolResult, error) {
 	var workspaceErr error
@@ -147,13 +163,32 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 
 	// 特殊处理：exec工具直接执行系统命令
 	if toolName == "exec" {
+		// 空转治理：同一会话内完全相同且结果稳定的命令重复达到上限时直接拦截，
+		// 要求模型切换到库存中未测试的高价值目标，避免同一条探测反复空转。
+		if rawCommand, ok := args["command"].(string); ok && rawCommand != "" {
+			if reject, blocked := enforceCommandRepeatGuard(ctx, rawCommand); blocked {
+				e.logger.Warn("阻止重复执行的空转命令",
+					zap.String("commandHash", commandFingerprint(rawCommand)),
+					zap.String("conversationId", mcp.MCPConversationIDFromContext(ctx)),
+				)
+				return &mcp.ToolResult{
+					Content: []mcp.Content{{Type: "text", Text: reject}},
+					IsError: true,
+				}, nil
+			}
+		}
 		release, budgetErr := e.budget.Acquire(ctx, toolName, budgetTargets(args))
 		if budgetErr != nil {
 			return nil, budgetErr
 		}
 		defer release()
 		e.logger.Debug("执行exec工具")
-		return e.executeSystemCommand(ctx, args)
+		result, execErr := e.executeSystemCommand(ctx, args)
+		// 记录本次结果指纹，供后续重复判定；后台命令的启动回执同样计入。
+		if rawCommand, ok := args["command"].(string); ok && rawCommand != "" && result != nil {
+			recordCommandRun(ctx, rawCommand, toolResultTextForFingerprint(result))
+		}
+		return result, execErr
 	}
 
 	// 使用索引查找工具配置（O(1) 查找）
