@@ -64,7 +64,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			"禁止仅写结论：summary 须含什么+在哪+如何验证；body 须含复现或账本字段。" +
 			"发现类 fact_key 为 finding|chain|exploit|poc/<slug>；环境类 target|auth|infra|business/<slug>；" +
 			"侦察账本 recon/source|endpoint|phase|asset|js/<slug>（category=recon）；v2 用 recon/{kind}/{assessment_id}/...，正文 assessment_id 与 key 一致，优先 body_fields。" +
-			"source 的 raw/unique/incremental 是真实整数，原始输出用 raw_output，covered 必须有 evidence；工具执行 success 不是覆盖终态。" +
+			"source 的 raw/unique/incremental 是真实整数，原始输出用 raw_output，covered 必须有 evidence；blocked 必须同时提供 error、alt_tried 与 evidence，其中 alt_tried 为已试替代及结果或无可用替代的具体说明（文本或字符串数组）。工具执行 success 不是覆盖终态。" +
 			"评估清单 schema_version=2、mode=comprehensive、status=active/completed，填写真实 scope_kind。endpoint_count/js_count/risk_unit_count 由宿主在覆盖检查时按本轮账本事实自动推导，无需手写或同步；兼容旧计数但不作为收尾门槛。缺 scope_kind 的 active 仅保存启动记录，不能通过收尾门禁；基线、risk_units 与证据要求不变。" +
 			"原始 URL/库存明细留在 query_recon_inventory 与结果工件，不要逐行复制成 fact；仅记录新的可复用结论与必要证据。" +
 			"禁止为了结项而为历史 URL 批量套用 N/A/negated 或虚构逐项实测证据；事实额度用完仅暂停事实补写，继续可执行的实际验证、原件保存与漏洞记录，最终报告如实保留未完成范围。" +

@@ -66,7 +66,11 @@ func ledgerWriteValidationError(ctx context.Context, key string, err error, args
 	fields := []string{"body_fields"}
 	expected := map[string]interface{}{"input": "structured body_fields", "counts": "incremental <= unique <= raw"}
 	msg := err.Error()
-	if strings.Contains(msg, "runtime_status") {
+	if strings.Contains(msg, "alt_tried") {
+		fields = []string{"body_fields.alt_tried"}
+		expected["alt_tried"] = "必填：填写真实尝试过的替代来源及结果，或具体解释无可用替代的原因；使用非空文本或非空字符串数组，不能用 none/待补充。"
+		expected["source_blocked_requires"] = []string{"error", "alt_tried", "evidence", "raw", "unique", "incremental"}
+	} else if strings.Contains(msg, "runtime_status") {
 		fields = []string{"body_fields.runtime_status"}
 		expected["values"] = []string{"discovered", "extracted", "baselined", "risk-mapped", "verified", "negated", "blocked"}
 	} else if strings.Contains(msg, "phase") {

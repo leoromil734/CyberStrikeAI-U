@@ -37,6 +37,7 @@ func newWorkspaceFilesystem(ctx context.Context) *workspaceFilesystem {
 	b := &workspaceFilesystem{source: workspaceguard.FromContext(ctx)}
 	if b.source != nil {
 		b.policy.Workspace = b.source.Workspace
+		b.policy.EvidenceRoot = b.source.EvidenceRoot
 		b.policy.ReadOnlyRoots = append([]string(nil), b.source.ReadOnlyRoots...)
 		b.policy.DeniedRoots = append([]string(nil), b.source.DeniedRoots...)
 		// RuntimeReadOnlyRoots are for sandbox executables, not model file tools.
@@ -228,7 +229,7 @@ func (b *workspaceFilesystem) Read(ctx context.Context, req *filesystem.ReadRequ
 	if req == nil {
 		return nil, fmt.Errorf("read request is required")
 	}
-	root, relative, _, err := b.resolve(ctx, req.FilePath, false)
+	root, relative, absolute, err := b.resolve(ctx, req.FilePath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +239,9 @@ func (b *workspaceFilesystem) Read(ctx context.Context, req *filesystem.ReadRequ
 		return nil, err
 	}
 	defer file.Close()
+	if err := rejectSelfReferentialReductionRead(file, absolute, b.policy.EvidenceRoot); err != nil {
+		return nil, err
+	}
 	offset, limit := req.Offset, req.Limit
 	if offset <= 0 {
 		offset = 1

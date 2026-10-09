@@ -2549,6 +2549,7 @@ func (h *AgentHandler) loadHistoryFromAgentTrace(conversationID string) ([]agent
 	for _, msgMap := range messagesArray {
 		msg := agent.ChatMessage{}
 		msg.ModelFacingTrace = modelFacingTrace
+		msg.ReductionCleared = agent.ReductionClearedFromTrace(msgMap)
 
 		// 解析role
 		if role, ok := msgMap["role"].(string); ok {

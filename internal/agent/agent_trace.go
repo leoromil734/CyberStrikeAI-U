@@ -7,6 +7,16 @@ import (
 
 const ModelFacingTraceVersionKey = "cyberstrike_model_facing_trace_version"
 
+// ReductionClearedTraceKey is the Eino v0.8.13 reduction replay marker.
+// Keep this small allowlist instead of forwarding arbitrary message Extra to a provider.
+const ReductionClearedTraceKey = "_reduction_mw_processed"
+
+func ReductionClearedFromTrace(message map[string]interface{}) bool {
+	extra, _ := message["extra"].(map[string]interface{})
+	cleared, _ := extra[ReductionClearedTraceKey].(bool)
+	return message["role"] == "assistant" && cleared
+}
+
 // IsModelFacingTraceJSON reports whether a persisted trace was produced from the final
 // model-boundary state. Legacy traces have no version marker and require one-time migration.
 func IsModelFacingTraceJSON(traceInputJSON string) bool {
@@ -50,6 +60,7 @@ func ParseTraceMessages(traceInputJSON string) ([]ChatMessage, error) {
 		}
 		msg.Role = role
 		msg.ModelFacingTrace = modelFacing
+		msg.ReductionCleared = ReductionClearedFromTrace(msgMap)
 		if content, ok := msgMap["content"].(string); ok {
 			msg.Content = content
 		}
@@ -179,12 +190,34 @@ func MergeAssistantTraceOutput(msgs []ChatMessage, assistantOut string) []ChatMe
 
 // MessagesToTraceJSON 将消息带序列化为 JSON（跳过 system）。
 func MessagesToTraceJSON(msgs []ChatMessage) (string, error) {
-	filtered := make([]ChatMessage, 0, len(msgs))
+	filtered := make([]json.RawMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if strings.EqualFold(m.Role, "system") {
 			continue
 		}
-		filtered = append(filtered, m)
+		encoded, err := json.Marshal(m) // Provider serialization intentionally excludes replay metadata.
+		if err != nil {
+			return "", err
+		}
+		if m.ReductionCleared || m.ModelFacingTrace {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				return "", err
+			}
+			extra := map[string]interface{}{}
+			if m.ReductionCleared && strings.EqualFold(m.Role, "assistant") {
+				extra[ReductionClearedTraceKey] = true
+			}
+			if m.ModelFacingTrace {
+				extra[ModelFacingTraceVersionKey] = 1
+			}
+			fields["extra"], _ = json.Marshal(extra)
+			encoded, err = json.Marshal(fields)
+			if err != nil {
+				return "", err
+			}
+		}
+		filtered = append(filtered, encoded)
 	}
 	b, err := json.Marshal(filtered)
 	if err != nil {

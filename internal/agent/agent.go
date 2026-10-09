@@ -124,6 +124,9 @@ type ChatMessage struct {
 	// ModelFacingTrace is runtime-only metadata: true means Content was already the exact
 	// payload seen at the model boundary and must be restored byte-for-byte.
 	ModelFacingTrace bool `json:"-"`
+	// ReductionCleared is trusted replay metadata, never an OpenAI wire field.
+	// It preserves Eino's clear-once marker across the ChatMessage bridge.
+	ReductionCleared bool `json:"-"`
 }
 
 // MarshalJSON 自定义JSON序列化，将tool_calls中的arguments转换为JSON字符串

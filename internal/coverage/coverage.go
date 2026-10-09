@@ -317,7 +317,20 @@ func meaningful(s string) bool {
 	return s != "" && !oneOf(strings.ToLower(s), "none", "null", "n/a", "[]", "无", "待补充", "todo") && !(strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">"))
 }
 func hasAlternatives(f map[string]any) bool {
-	return len(list(f, "alt_tried")) > 0 || meaningful(text(f, "alt_tried"))
+	if value, ok := f["alt_tried"].(string); ok {
+		return meaningful(strings.TrimSpace(value))
+	}
+	values, ok := f["alt_tried"].([]any)
+	if !ok || len(values) == 0 {
+		return false
+	}
+	for _, value := range values {
+		s, ok := value.(string)
+		if !ok || !meaningful(strings.TrimSpace(s)) {
+			return false
+		}
+	}
+	return true
 }
 func oneOf(value string, choices ...string) bool {
 	for _, choice := range choices {

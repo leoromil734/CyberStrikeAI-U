@@ -135,11 +135,14 @@ func buildReductionMiddleware(ctx context.Context, mw config.MultiAgentEinoMiddl
 		"TaskCreate", "TaskGet", "TaskUpdate", "TaskList",
 	}
 	excl = append(excl, defaultExcl...)
+	cache := &reductionCacheBackend{root: root, conversationID: convID}
 	redMW, err := reduction.New(ctx, &reduction.Config{
-		Backend:           loc,
-		RootDir:           root,
-		ReadFileToolName:  "read_file",
-		ClearExcludeTools: excl,
+		Backend:                 cache,
+		RootDir:                 root,
+		GenTruncOffloadFilePath: cache.offloadPath("trunc"),
+		GenClearOffloadFilePath: cache.offloadPath("clear"),
+		ReadFileToolName:        "read_file",
+		ClearExcludeTools:       excl,
 		// exit is the actual user report, not reducible diagnostic/tool output.
 		TruncExcludeTools: []string{adk.ToolInfoExit.Name},
 		MaxLengthForTrunc: mw.ReductionMaxLengthForTruncEffective(),

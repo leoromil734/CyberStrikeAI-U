@@ -781,6 +781,9 @@ func historyToMessages(history []agent.ChatMessage, appCfg *config.Config, mwCfg
 			hasRC := strings.TrimSpace(h.ReasoningContent) != ""
 			if len(toolSchema) > 0 || strings.TrimSpace(h.Content) != "" || hasRC {
 				am := schema.AssistantMessage(h.Content, toolSchema)
+				if h.ReductionCleared {
+					am.Extra = map[string]interface{}{agent.ReductionClearedTraceKey: true}
+				}
 				if hasRC {
 					am.ReasoningContent = strings.TrimSpace(h.ReasoningContent)
 				}

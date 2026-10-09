@@ -32,6 +32,13 @@ func LedgerBodySchema() map[string]interface{} {
 		"evidence":   stringField("execution_id/原件与可复核的实际结果定位；不得编造"),
 		"blockers":   stringField("原始阻断错误/条件及替代结果"),
 		"error":      stringField("原始失败原因"), "reason": stringField("具体 blocked/N/A 依据"),
+		"alt_tried": map[string]interface{}{
+			"description": "仅来源 status=blocked 时必填：已实际尝试的替代来源及结果，或说明为什么无可用替代。可以用非空文本或非空字符串数组；不要填写 none/待补充，不从 blockers 自动猜测。",
+			"anyOf": []interface{}{
+				map[string]interface{}{"type": "string", "minLength": 1},
+				map[string]interface{}{"type": "array", "minItems": 1, "items": map[string]interface{}{"type": "string", "minLength": 1}},
+			},
+		},
 		"raw_output": stringField("原始文本或原件引用，不能写入计数字段"),
 	}}
 }
