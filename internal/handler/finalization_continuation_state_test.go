@@ -167,13 +167,18 @@ func TestClassifyAndVerifyPromptOmitsLedgerDispositionQueue(t *testing.T) {
 	d.CoverageUnresolvedGroups = 36
 	d.CoverageEvidenceExecutions = 8
 	message := classifyAndVerifyContinuationMessage(d)
-	for _, banned := range []string{"discovery-04a0f71", "coverage-checks-", "query_recon_inventory", "has no matching ledger disposition"} {
+	// 台账补写引导必须消失；库存查询（query_recon_inventory）允许出现在“挑选高价值
+	// URL 实测”的语境里——它服务于实际测试目标选择，不是逐条处置台账修复。
+	for _, banned := range []string{"discovery-04a0f71", "coverage-checks-", "has no matching ledger disposition"} {
 		if strings.Contains(message, banned) {
 			t.Fatalf("classify prompt still queues ledger repair via %q: %s", banned, message)
 		}
 	}
 	if !strings.Contains(message, "优先对已发现的高价值面继续做实际验证，不补台账") || !strings.Contains(message, "source claim") || !strings.Contains(message, "未处置 36 组") || !strings.Contains(message, "不要重复执行已经跑过的侦察工具") {
 		t.Fatalf("classify prompt lost the real check, the uncovered total or the source-repair guardrail: %s", message)
+	}
+	if !strings.Contains(message, "由你判断哪些历史 URL 值得测试") || !strings.Contains(message, "静态资源跳过") || !strings.Contains(message, "query_recon_inventory") {
+		t.Fatalf("classify prompt lost the high-value URL selection guidance: %s", message)
 	}
 }
 

@@ -90,10 +90,14 @@ type Decision struct {
 	// VerificationExecutions counts completed target-facing tool runs in this
 	// conversation. Ledger reads and fact writes are excluded. A new completed
 	// verification renews continuation; bookkeeping does not.
-	VerificationExecutions int      `json:"verificationExecutions"`
-	CoverageRepairBlocked  bool     `json:"coverageRepairBlocked"`
-	Outcome                string   `json:"outcome,omitempty"`
-	CoverageBlockers       []string `json:"coverageBlockers,omitempty"`
+	VerificationExecutions int `json:"verificationExecutions"`
+	// RecordedVulnerabilities counts persisted formal vulnerability records in
+	// this conversation. Only a NEW record renews continuation; re-recording an
+	// existing title+target is de-duplicated and never counts as progress.
+	RecordedVulnerabilities int      `json:"recordedVulnerabilities,omitempty"`
+	CoverageRepairBlocked   bool     `json:"coverageRepairBlocked"`
+	Outcome                 string   `json:"outcome,omitempty"`
+	CoverageBlockers        []string `json:"coverageBlockers,omitempty"`
 }
 
 // Input 判定输入。Response 为候选文本，其余为运行时状态与策略。
@@ -263,6 +267,7 @@ func Decide(db *database.DB, in Input) Decision {
 	d.CoverageValidFacts = coverage.ValidFacts
 	d.setCoverageProgress(coverage.Progress)
 	d.VerificationExecutions = countVerificationExecutions(db, in.ConversationID)
+	d.RecordedVulnerabilities = countRecordedVulnerabilities(db, in.ConversationID)
 	// 限制披露必须随每一个判定分支返回，包括仍有真实缺口而阻断的分支；
 	// 未处置的原始候选库存是披露项，不是阻断项。
 	d.CoverageBlockers = append([]string(nil), coverage.Blocked...)

@@ -29,8 +29,9 @@ const (
 	// defaultIdleSegmentMaxDuration 段时长低于该值且无进展时视作「快速空转段」。
 	// 快速空转段（模型数十秒内 exit 又无任何可核查产出）连续累积会触发 exit 循环刹车。
 	defaultIdleSegmentMaxDuration = 3 * time.Minute
-	// defaultIdleSegmentLimit 连续快速空转段达到该数量时停止自动续跑，不等 90 分钟时间窗。
-	defaultIdleSegmentLimit         = 5
+	// defaultIdleSegmentLimit 连续快速空转段达到该数量时停止自动续跑，不等停滞时间窗。
+	// 8 段给「挑高价值 URL 实测」类续跑留出节奏空间，只对秒级 exit 循环生效。
+	defaultIdleSegmentLimit         = 8
 	finalizationPendingWaitTimeout  = 20 * time.Minute
 	finalizationPendingPollInterval = 5 * time.Second
 )
@@ -54,6 +55,7 @@ type finalizationContinuationState struct {
 	CoverageHTTPHighWater       int
 	CoverageMappedHighWater     int
 	VerificationHighWater       int
+	RecordedVulnHighWater       int
 	CoverageInventoryHighWater  int
 	CoverageNoProgress          int
 	// 时间窗停滞治理字段：StartedAt/LastProgressAt 记录停滞时钟；窗口与段数上限由配置注入。
@@ -180,9 +182,10 @@ func observeFinalizationContinuation(d agentfinalizer.Decision, state *finalizat
 // observeFinalizationContinuationAt 是 Loop Engineering 的核心判定（时间窗停滞治理）：
 //   - 停止条件 = 距上次可核查进展达到停滞窗口（默认 90 分钟），而不是连续固定段数；
 //   - 可核查进展（任一信号即重置停滞时钟）：
-//     1）新的漏洞验证执行（VerificationExecutions：record_vulnerability 及各验证器）；
-//     2）新的侦察来源执行（CoverageEvidenceExecutions：新测试面被核实）；
-//     3）新的测试脆弱面（CoverageInventoryGroups：独立候选库存增长）；
+//     1）新的漏洞验证执行（VerificationExecutions：sqlmap/nuclei 等验证器，不含 record_vulnerability）；
+//     2）新的正式漏洞登记（RecordedVulnerabilities：确实新建才计；重复登记会被登记工具去重，不计进展）；
+//     3）新的侦察来源执行（CoverageEvidenceExecutions：新测试面被核实）；
+//     4）新的测试脆弱面（CoverageInventoryGroups）或新的可核对 HTTP 交换（CoverageHTTPExecutions）；
 //   - 台账映射、事实补写、文件读写与普通 shell 探测不算进展；
 //   - 连续无进展段数（CoverageNoProgress）只用于切换工作策略，不再直接停止；
 //   - 段数安全上限（CoverageMaxSegments）只兜底病态快段空转。
@@ -214,11 +217,13 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		}
 		// Ledger rows do not renew the clock. A new recon source, a new verified
 		// target-facing HTTP exchange, a new completed vulnerability-verification
-		// tool, or newly discovered test surface does. Fact writes and file
-		// reads do not.
+		// tool, or a NEW persisted vulnerability record does. Fact writes and
+		// file reads do not. Re-recording an existing title+target is de-duplicated
+		// by the recording tool and therefore cannot renew the clock.
 		progress := (d.CoverageProgressKnown && d.CoverageEvidenceExecutions > state.CoverageEvidenceHighWater) ||
 			(d.CoverageProgressKnown && d.CoverageHTTPExecutions > state.CoverageHTTPHighWater) ||
 			d.VerificationExecutions > state.VerificationHighWater ||
+			d.RecordedVulnerabilities > state.RecordedVulnHighWater ||
 			(d.CoverageProgressKnown && d.CoverageInventoryGroups > state.CoverageInventoryHighWater)
 		if state.CoverageObserved {
 			if progress {
@@ -260,6 +265,9 @@ func observeFinalizationContinuationAt(d agentfinalizer.Decision, state *finaliz
 		}
 		if d.VerificationExecutions > state.VerificationHighWater {
 			state.VerificationHighWater = d.VerificationExecutions
+		}
+		if d.RecordedVulnerabilities > state.RecordedVulnHighWater {
+			state.RecordedVulnHighWater = d.RecordedVulnerabilities
 		}
 		if d.CoverageProgressKnown && d.CoverageInventoryGroups > state.CoverageInventoryHighWater {
 			state.CoverageInventoryHighWater = d.CoverageInventoryGroups
@@ -545,6 +553,8 @@ func (h *AgentHandler) tryAutoContinueAfterFinalization(
 			"lastProgressAt":          state.LastProgressAt,
 			"nextStopEligibleAt":      nextStopAt,
 			"coverageInventoryGroups": decision.CoverageInventoryGroups,
+			// 进展信号诊断：重复登记被去重后不再续期停滞时钟。
+			"recordedVulnerabilities": decision.RecordedVulnerabilities,
 			// 快速空转（exit 风暴）刹车诊断。
 			"idleSegments":        state.IdleSegments,
 			"idleBrakeAt":         defaultIdleSegmentLimit,
@@ -609,6 +619,7 @@ func classifyAndVerifyContinuationMessage(d agentfinalizer.Decision) string {
 	b.WriteString(coverageContinuationHeader)
 	fmt.Fprintf(&b, "独立候选 %d 组，未处置 %d 组：不要为库存写端点/N-A 型事实，不要打开覆盖检查文件；原始库存数量不等于需逐一测试的业务单元，未处置部分按未覆盖披露。\n", d.CoverageInventoryGroups, d.CoverageUnresolvedGroups)
 	b.WriteString("优先对已发现但未验证的高价值入口继续做实际测试（认证/授权边界、注入、上传、管理入口与开放服务）；对目标做 HTTP 测试时用 `curl -q -sSi <URL>`，可核对的原件会计为真实进展。\n")
+	b.WriteString("原始库存不是逐条工作队列：由你判断哪些历史 URL 值得测试——带参数的接口、API、后台/上传/认证路径与动态端点优先，图片/字体/样式等静态资源跳过；可用 query_recon_inventory 按执行抽看库存，先挑 3-5 个最有价值的实测，再视时间继续。\n")
 	if len(actionable) > 0 {
 		b.WriteString("与账本抄写无关、仍可执行的检查（最多 5 条）：\n")
 		for _, check := range actionable {
