@@ -126,7 +126,7 @@ func TestRapidIdleExitStormStopsAfterConsecutiveIdleSegments(t *testing.T) {
 	d.CoverageRepairBlocked = true
 	d.CoverageEvidenceExecutions = 3 // 首段有真实证据；后续段无任何进展、段长 30 秒
 	stoppedAt := -1
-	for i := 0; i < 8; i++ {
+	for i := 0; i <= defaultIdleSegmentLimit+1; i++ {
 		at := base.Add(time.Duration(i*30) * time.Second)
 		if observeFinalizationContinuationAt(d, s, at) {
 			s.recordContinuation(d)
