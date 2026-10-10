@@ -55,7 +55,10 @@ func crtshHeader(header map[string]json.RawMessage) (domain, status string, err 
 		return "", "", errFormat
 	}
 	domain, status = str(header, "query_domain"), str(header, "status")
-	if !crtshDomain(domain) || (status != "success" && status != "partial" && status != "error") {
+	// blocked is emitted when the adapter short-circuits a recorded upstream
+	// failure instead of contacting crt.sh again. It is a gap fact, not a data
+	// status, so it may never carry records and never claims coverage.
+	if !crtshDomain(domain) || (status != "success" && status != "partial" && status != "error" && status != "blocked") {
 		return "", "", errFormat
 	}
 	values := map[string]bool{}
@@ -127,6 +130,13 @@ func parseCRTShEnvelope(reader io.Reader, c *collector) error {
 		}
 		if string(header["truncated"]) == "true" {
 			c.result.Reason = "crtsh_upstream_truncated"
+		}
+		if status == "blocked" {
+			// Short-circuited by the adapter's upstream health check: the local
+			// record of a 429/5xx replaced a real request. Keep the gap explicit
+			// and never let a blocked envelope publish candidate rows.
+			c.result.State = evidence.Invalid
+			c.result.Reason = "crtsh_upstream_blocked"
 		}
 		if status == "error" {
 			c.result.State = evidence.Invalid

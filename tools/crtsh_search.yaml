@@ -15,7 +15,14 @@ description: |
   输出包含 query_domain、queries（固定上游 URL/状态/尝试次数/响应 hash）、counts、records、reasons。
   records 按 host 唯一，certificates 保存追溯元数据；库存位置可回读原件，不把证书信息伪装成已验证服务。
   status=success 仅表示本次有界查询/提取成功，不表示完整覆盖。coverage_complete 永远 false，coverage=unknown。
-  超时、429/5xx、网络故障只作有界重试；重定向和代理环境禁用，HTML/非 JSON/错误对象不得当作成功零结果。
+  超时、429/5xx、网络故障只作有界重试；重定向默认禁用；环境代理始终忽略。
+  上游健康短路：本机记录最近一次 crt.sh 429/5xx/TLS 故障；窗口内连续失败达到阈值后，后续调用直接返回
+  status=blocked（short_circuit=true，退出码 1），附上次原始错误与 retry_after_ms，不再实际发请求。
+  该 short_circuit 事实必须按 blocked/gap 记录，禁止当作零结果或 covered。
+  proxy 参数可选：crt.sh 是固定公共上游，可经住宅代理出口查询；格式 socks5://user:pass@host:port 或
+  http://user:pass@host:port；本机动态住宅端点也接受 host:port:user:pass 裸格式。留空为直连，不接受该形式
+  以外的语法。环境变量 CYBERSTRIKE_CRTSH_PROXY 可在部署侧配置默认出口（同上格式），参数优先于环境变量；
+  环境代理 HTTP_PROXY/HTTPS_PROXY 始终被忽略，避免无意走上真正的出口。
   partial/truncated/reasons 显式说明响应、证书、名称、记录、证书引用或输出预算限制；上游无法证明穷尽。
   默认两次查询共用60秒预算，在读取块和重试之间检查；socket等待最多20秒，非操作系统级硬超时。
   重试退避最多5秒，最多额外重试3次。响应hash明确区分完整响应与captured_prefix截断前缀。
@@ -63,4 +70,28 @@ parameters:
     minimum: 1
     maximum: 50000
     flag: "--max-records"
+    format: "flag"
+  - name: "proxy"
+    type: "string"
+    description: "可选显式出口代理：socks5://user:pass@host:port、http://user:pass@host:port，或提供商裸格式 host:port:user:pass。留空则用 CYBERSTRIKE_CRTSH_PROXY，再留空才直连。crt.sh 是固定公共上游，限流严重时用住宅出口降低失败率；环境代理始终被忽略。"
+    required: false
+    flag: "--proxy"
+    format: "flag"
+  - name: "health_window_seconds"
+    type: "int"
+    description: "上游健康短路窗口秒数，0–86400，默认900；窗口内连续429/5xx/TLS故障达到health_trip_failures后，后续调用直接返回blocked而不发请求。0 关闭短路。"
+    required: false
+    default: 900
+    minimum: 0
+    maximum: 86400
+    flag: "--health-window-seconds"
+    format: "flag"
+  - name: "health_trip_failures"
+    type: "int"
+    description: "触发上游短路的连续失败次数，0–20，默认2。"
+    required: false
+    default: 2
+    minimum: 0
+    maximum: 20
+    flag: "--health-trip-failures"
     format: "flag"
