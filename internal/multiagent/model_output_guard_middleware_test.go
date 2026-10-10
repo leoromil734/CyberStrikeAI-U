@@ -2,6 +2,7 @@ package multiagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -86,6 +87,74 @@ func TestGeneratedToolCallSizeBoundaries(t *testing.T) {
 	call.Function.Arguments = `{"value":"` + strings.Repeat("x", 200) + `"}`
 	if reason, _ := validateGeneratedToolCall(call, cfg); reason != "tool_arguments_too_large" {
 		t.Fatalf("generic overflow reason=%q", reason)
+	}
+}
+
+func TestGeneratedToolCallRejectsOversizedInlineHeredoc(t *testing.T) {
+	cfg := modelOutputGuardConfig{maxToolArgumentsBytes: 1 << 20, maxShellCommandBytes: 1 << 20, maxInlineScriptBytes: 256, maxRepairAttempts: 1}
+	call := func(command string) schema.ToolCall {
+		encoded, err := json.Marshal(map[string]any{"command": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return schema.ToolCall{Function: schema.FunctionCall{Name: "exec", Arguments: string(encoded)}}
+	}
+
+	// A short heredoc stays legal: writing a two-line script to disk first gains
+	// nothing, and rejecting it would add a round trip to ordinary work.
+	short := "python3 - <<'PY'\nprint('hi')\nPY"
+	if reason, _ := validateGeneratedToolCall(call(short), cfg); reason != "" {
+		t.Fatalf("short heredoc must stay allowed, got %q", reason)
+	}
+
+	// An oversized inline program is what the rule exists for.
+	big := "python3 - <<'PY'\n" + strings.Repeat("x = 1\n", 120) + "PY"
+	if reason, _ := validateGeneratedToolCall(call(big), cfg); reason != "inline_script_too_large" {
+		t.Fatalf("oversized inline script must be rejected, got %q", reason)
+	}
+
+	// The same body via write_file + short command is exactly what is wanted.
+	shortCommand := "python3 /tmp/workspace/scripts/scan.py"
+	if reason, _ := validateGeneratedToolCall(call(shortCommand), cfg); reason != "" {
+		t.Fatalf("referencing a written file must pass, got %q", reason)
+	}
+
+	// Non-exec tools are unaffected.
+	other := schema.ToolCall{Function: schema.FunctionCall{Name: "read_file", Arguments: string(mustJSON(t, map[string]any{"command": big}))}}
+	if reason, _ := validateGeneratedToolCall(other, cfg); reason != "" {
+		t.Fatalf("non-exec tools must not be judged by the heredoc rule, got %q", reason)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func TestInlineScriptBodyBytesMeasuresOnlyHeredocBodies(t *testing.T) {
+	// 期望值等于"把 heredoc 正文原样写进文件后文件的大小"：每个正文行都含行尾换行，
+	// 终止符本身不算。用这个口径是因为阈值判断要稳定——正文与终止符之间多一个
+	// 空行是排版习惯，不该让同一段脚本在阈值上下翻转。
+	cases := map[string]int{
+		"echo hello":                            0,
+		"python3 -c 'print(1)'":                 0,
+		"ls | wc -l":                            0,
+		"cat <<EOF\none\ntwo\nEOF":              8, // "one\n" + "two\n"
+		"cat <<-'EOF'\n\tone\n\tEOF":            5, // "\tone\n"
+		"cat <<EOF\nbody\nEOF\necho after":      5, // "body\n"
+		"ssh host <<'REMOTE'\nline one\nREMOTE": 9, // "line one\n"
+		"cmd <<< 'here-string'":                 0,
+		"cat <<EOF\nunterminated":               13, // "unterminated" 无行尾换行，未闭合仍全部计入
+		"cat <<EOF\nouter\nEOF":                 6,  // "outer\n"
+	}
+	for command, want := range cases {
+		if got := inlineScriptBodyBytes(command); got != want {
+			t.Errorf("inlineScriptBodyBytes(%q) = %d, want %d", command, got, want)
+		}
 	}
 }
 

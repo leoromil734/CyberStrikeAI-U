@@ -285,6 +285,8 @@ func RunDeepAgent(
 			if einoSkillMW != nil {
 				subHandlers = append(subHandlers, einoSkillMW)
 			}
+			// 子代理各自独立：skill 正文去重状态按子代理会话隔离。
+			subHandlers = append(subHandlers, newSessionContextMiddleware())
 			subHandlers = appendEinoChatModelTailMiddlewares(subHandlers, einoChatModelTailConfig{
 				logger:              logger,
 				phase:               "sub_agent:" + id,
@@ -480,6 +482,8 @@ func RunDeepAgent(
 	if einoSkillMW != nil {
 		deepHandlers = append(deepHandlers, einoSkillMW)
 	}
+	// 会话级去重排在 skill 正文注入之后，才能看到真实正文并决定是否重发。
+	deepHandlers = append(deepHandlers, newSessionContextMiddleware())
 	deepHandlers = appendEinoChatModelTailMiddlewares(deepHandlers, einoChatModelTailConfig{
 		logger:              logger,
 		phase:               "deep_orchestrator",
@@ -503,6 +507,8 @@ func RunDeepAgent(
 	if einoSkillMW != nil {
 		supHandlers = append(supHandlers, einoSkillMW)
 	}
+	// 会话级去重排在 skill 正文注入之后，才能看到真实正文并决定是否重发。
+	supHandlers = append(supHandlers, newSessionContextMiddleware())
 	supHandlers = appendEinoChatModelTailMiddlewares(supHandlers, einoChatModelTailConfig{
 		logger:              logger,
 		phase:               "supervisor_orchestrator",

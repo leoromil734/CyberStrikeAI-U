@@ -35,14 +35,19 @@ func TestBuildPlanExecuteExecutorHandlers_IncludesExecPreMiddlewares(t *testing.
 	if err != nil {
 		t.Fatalf("buildPlanExecuteExecutorHandlers: %v", err)
 	}
-	if len(got) != 4 {
-		t.Fatalf("expected 4 pre-tail handlers (2 pre + fs + skill), got %d", len(got))
+	// 2 pre + fs + skill + 会话级去重。去重必须排在最后，也就是排在 skill 注入之后，
+	// 否则它看到的是请求参数而不是真实正文，无法判断正文是否重复。
+	if len(got) != 5 {
+		t.Fatalf("expected 5 pre-tail handlers (2 pre + fs + skill + session context), got %d", len(got))
 	}
 	for i, want := range []string{"patch", "reduction", "filesystem", "skill"} {
 		st, ok := got[i].(*stubChatModelAgentMiddleware)
 		if !ok || st.tag != want {
 			t.Fatalf("handler[%d]: got %#v want tag %q", i, got[i], want)
 		}
+	}
+	if _, ok := got[4].(*sessionContextMiddleware); !ok {
+		t.Fatalf("handler[4] must be the session context dedup middleware, got %#v", got[4])
 	}
 }
 

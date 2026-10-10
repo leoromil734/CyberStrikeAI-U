@@ -121,6 +121,8 @@ func buildPlanExecuteExecutorHandlers(ctx context.Context, a *PlanExecuteRootArg
 	if a.SkillMiddleware != nil {
 		execHandlers = append(execHandlers, a.SkillMiddleware)
 	}
+	// 会话级去重排在 skill 正文注入之后，才能看到真实正文并决定是否重发。
+	execHandlers = append(execHandlers, newSessionContextMiddleware())
 	if a.AppCfg != nil {
 		sumMw, sumErr := newEinoSummarizationMiddleware(ctx, a.ExecModel, a.AppCfg, a.MwCfg, a.ConversationID, a.DB, a.ProjectID, a.Logger)
 		if sumErr != nil {

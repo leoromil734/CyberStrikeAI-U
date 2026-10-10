@@ -165,6 +165,8 @@ func RunEinoSingleChatModelAgent(
 	if einoSkillMW != nil {
 		handlers = append(handlers, einoSkillMW)
 	}
+	// 会话级去重必须排在 skill 正文注入之后，才能看到真实正文并决定是否重发。
+	handlers = append(handlers, newSessionContextMiddleware())
 	handlers = appendEinoChatModelTailMiddlewares(handlers, einoChatModelTailConfig{
 		logger:              logger,
 		phase:               "eino_single",
