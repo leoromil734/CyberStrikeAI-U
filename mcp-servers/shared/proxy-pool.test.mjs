@@ -206,7 +206,8 @@ test('configuration validates every boundary without echoing input', (t) => {
   for (const patch of [
     { enabled: 'yes' }, { protocol: 'ftp' }, { host: 'http://DUMMY_USER:DUMMY_PASS@example.com' },
     { port: 0 }, { port: 65536 }, { pool_size: 0 }, { pool_size: 9 }, { pool_size: 1.5 },
-    { max_leases: 0 }, { max_leases: 65 }, { lease_ttl_seconds: 29 }, { lease_ttl_seconds: 3601 },
+    { max_leases: 0 }, { max_leases: 65 }, { lease_ttl_seconds: 29 }, { lease_ttl_seconds: 86401 },
+    { revived_lease_ttl_seconds: 29 }, { revived_lease_ttl_seconds: 3601 },
     { countries: ['USA'] }, { countries: 'US' }, { default_country: '1A' },
     { username_template: 123 }, { password_template: 'DUMMY\nSECRET' },
   ]) {
@@ -218,7 +219,8 @@ test('configuration validates every boundary without echoing input', (t) => {
   }
   for (const patch of [
     { pool_size: 1, max_leases: 1, lease_ttl_seconds: 30, port: 1 },
-    { pool_size: 8, max_leases: 64, lease_ttl_seconds: 3600, port: 65535 },
+    { pool_size: 8, max_leases: 64, lease_ttl_seconds: 86400, port: 65535 },
+    { pool_size: 1, max_leases: 1, lease_ttl_seconds: 1800, revived_lease_ttl_seconds: 120 },
   ]) {
     const pool = new ProxyPool(config(patch));
     t.after(() => pool.close());
@@ -353,9 +355,57 @@ test('TTL timer automatically closes idle gateways and requests renew idle TTL',
   assert.equal(pool.status().lease_count, 1);
   assert.equal(pool.status().leases[0].lease_id, live.lease_id);
   await assert.rejects(request(idle.proxy_url, `${originUrl}/closed`));
-  await assert.rejects(pool.acquire({ leaseId: idle.lease_id }), /expired/);
+  // The idle lease is reaped and remembered, so a late caller can be renewed.
+  assert.equal(pool.status().renewable_lease_count, 1);
+  // The surviving lease is the one that served traffic. Its observed tunnel
+  // bytes keep renewing it, so it is deliberately NOT asserted to expire on a
+  // fixed schedule; an idle lease that never drove traffic is the reaping case
+  // covered above and by the explicit expiry tests.
+  assert.equal(pool.status().leases[0].lease_id, live.lease_id);
+});
+
+test('an expired lease is renewed onto the same exit instead of failing', async (t) => {
+  const advance = fakeClock(t);
+  const { pool, originUrl } = await fixture(t);
+  const idle = await pool.acquire();
   await advance(31000);
   assert.equal(pool.status().lease_count, 0);
+
+  const renewed = await pool.acquire({ leaseId: idle.lease_id });
+  assert.equal(renewed.lease_id, idle.lease_id);
+  assert.equal(renewed.country, idle.country);
+  // Same exit identity, new local socket: the caller must adopt the new address.
+  assert.equal(renewed.session_id, idle.session_id);
+  assert.equal(renewed.proxy_url_changed, true);
+  assert.equal(renewed.renewal_reason, 'expired_lease_renewed');
+  assert.notEqual(renewed.proxy_url, idle.proxy_url);
+  assert.equal(pool.status().lease_count, 1);
+  assert.equal((await request(renewed.proxy_url, `${originUrl}/alive`)).status, 200);
+  // Renewal is not a free renewal loop: the tombstone is consumed.
+  assert.equal(pool.status().renewable_lease_count, 0);
+});
+
+test('rotation during renewal changes the session and reports it', async (t) => {
+  const advance = fakeClock(t);
+  const { pool, originUrl } = await fixture(t);
+  const idle = await pool.acquire();
+  await advance(31000);
+  const rotated = await pool.acquire({ leaseId: idle.lease_id, rotate: true });
+  assert.equal(rotated.lease_id, idle.lease_id);
+  assert.equal(rotated.session_id !== idle.session_id, true);
+  assert.equal(rotated.renewal_reason, 'expired_lease_rotated');
+  assert.equal((await request(rotated.proxy_url, `${originUrl}/alive`)).status, 200);
+});
+
+test('a lease expired beyond the revival window is reported as gone', async (t) => {
+  const advance = fakeClock(t);
+  const { pool } = await fixture(t);
+  const idle = await pool.acquire();
+  await advance(31000);
+  // The default revival window is 120s; past the lease TTL plus that window the
+  // tombstone is reaped and the honest error returns.
+  await advance(150000);
+  await assert.rejects(pool.acquire({ leaseId: idle.lease_id }), /expired/);
 });
 
 test('long HTTP requests and CONNECT byte traffic protect valid use from TTL reclamation', async (t) => {

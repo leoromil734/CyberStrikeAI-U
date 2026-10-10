@@ -60,7 +60,17 @@ function normalizeConfig(input = {}) {
     countries: Object.freeze(countries),
     // This is the caller's worker count, not a limit on independent leases.
     pool_size: integer(input.pool_size, 2, 1, 8, 'pool_size'),
-    lease_ttl_seconds: integer(input.lease_ttl_seconds, 300, 30, 3600, 'lease_ttl_seconds'),
+    // Idle TTL, not a hard session lifetime: in-flight requests and tunnel byte
+    // traffic both renew it. The default is 30 minutes because a 5-minute idle
+    // window expired leases between two steps of the same task, and every
+    // expiration turned into a failed request plus a model retry.
+    // The upper bound is 24h so an operator can pin one residential exit for a
+    // long run without the pool reaping it mid-task.
+    lease_ttl_seconds: integer(input.lease_ttl_seconds, 1800, 30, 86400, 'lease_ttl_seconds'),
+    // Recovery TTL for an expired lease that comes back by its lease_id. Short
+    // by design: the caller paid a round trip to discover the lease was gone, so
+    // the client has already been re-pointed or will not come back at all.
+    revived_lease_ttl_seconds: integer(input.revived_lease_ttl_seconds, 120, 30, 3600, 'revived_lease_ttl_seconds'),
     max_leases: integer(input.max_leases, 16, 1, 64, 'max_leases'),
   });
 }
@@ -189,9 +199,18 @@ class SafeGateway extends Server {
  * No OS proxy/env mutation, prewarming, request retry, or automatic session rotation.
  * TTL is idle time: requests renew it; HTTP requests in flight and observed tunnel
  * byte traffic keep a lease alive. An idle CONNECT eventually expires too.
+ *
+ * An expired lease that returns by its lease_id is re-signed onto the same exit
+ * (same country, same session id) instead of failing. The gateway held a random
+ * localhost port that is gone with the process socket, so renewal necessarily
+ * returns a new local proxy_url; callers that cached the old address must
+ * re-read the response. This trades a rare silent re-mint for removing a common
+ * failure mode where a whole task stalls waiting for a lease that only needed
+ * renewal.
  */
 export class ProxyPool {
   #leases = new Map();
+  #expired = new Map();
   #queue = Promise.resolve();
   #closed = false;
   #closePromise;
@@ -242,14 +261,37 @@ export class ProxyPool {
     try { await lease.gateway.close(true); } catch { /* Never expose a gateway error. */ }
   }
 
-  async #reap() {
-    for (const lease of this.#leases.values()) {
-      this.#traffic(lease);
-      if (lease.activeHttp === 0 && lease.expiresAt <= Date.now()) await this.#dispose(lease);
+  /** Remember a reaped lease so a late caller can be renewed onto the same exit. */
+  #remember(lease) {
+    this.#expired.delete(lease.id);
+    this.#expired.set(lease.id, {
+      country: lease.country,
+      session: lease.session,
+      // A caller that learns about the expiry has already lost time; keep the
+      // recovery window short and let unrelated tombstones fall out below.
+      reviveUntil: Date.now() + this.config.revived_lease_ttl_seconds * 1000,
+    });
+    while (this.#expired.size > this.config.max_leases * 2) {
+      const oldest = this.#expired.keys().next().value;
+      this.#expired.delete(oldest);
     }
   }
 
-  #public(lease) {
+  async #reap() {
+    const now = Date.now();
+    for (const lease of this.#leases.values()) {
+      this.#traffic(lease);
+      if (lease.activeHttp === 0 && lease.expiresAt <= now) {
+        this.#remember(lease);
+        await this.#dispose(lease);
+      }
+    }
+    for (const [id, tombstone] of this.#expired) {
+      if (tombstone.reviveUntil <= now) this.#expired.delete(id);
+    }
+  }
+
+  #public(lease, extra = {}) {
     const proxyUrl = `http://127.0.0.1:${lease.gateway.port}`;
     return {
       lease_id: lease.id,
@@ -257,6 +299,7 @@ export class ProxyPool {
       country: lease.country,
       session_id: lease.session,
       expires_at: new Date(lease.expiresAt).toISOString(),
+      ...extra,
       env: {
         HTTP_PROXY: proxyUrl,
         HTTPS_PROXY: proxyUrl,
@@ -264,6 +307,57 @@ export class ProxyPool {
         NO_PROXY: 'localhost,127.0.0.1,::1',
       },
     };
+  }
+
+  /** Build one localhost gateway bound to a fixed country and session id. */
+  async #mint({ id, country, session, ttlSeconds }) {
+    const lease = {
+      id, country, session, closed: false,
+      activeHttp: 0, lastBytes: new Map(), failures: 0,
+      httpAgent: new http.Agent({ keepAlive: false }),
+      httpsAgent: new https.Agent({ keepAlive: false }),
+    };
+    lease.gateway = new SafeGateway({
+      host: '127.0.0.1', port: 0, verbose: false,
+      prepareRequestFunction: () => {
+        if (lease.closed || this.#closed) throw new Error(SAFE_ERROR);
+        this.#touch(lease);
+        return {
+          requestAuthentication: false,
+          upstreamProxyUrl: renderProxyUrl(this.config, { country: lease.country, session: lease.session }),
+          httpAgent: lease.httpAgent, httpsAgent: lease.httpsAgent,
+        };
+      },
+    }, () => { lease.failures++; }, (request, response) => {
+      lease.activeHttp++;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        lease.activeHttp--;
+        request.socket.removeListener('close', done);
+        if (!lease.closed) {
+          this.#traffic(lease);
+          this.#touch(lease);
+        }
+      };
+      response.once('finish', done);
+      response.once('close', done);
+      request.socket.once('close', done);
+    });
+    lease.gateway.on('tunnelConnectFailed', () => { lease.failures++; });
+    lease.gateway.on('requestFailed', () => { lease.failures++; });
+    try { await lease.gateway.listen(); }
+    catch {
+      await this.#dispose(lease);
+      throw new Error('Unable to start local proxy gateway');
+    }
+    // The full TTL applies on mint; the shorter recovery TTL applies when a
+    // tombstoned lease is brought back, so an abandoned renewal cannot occupy a
+    // slot for the whole lease window.
+    lease.expiresAt = Date.now() + (ttlSeconds ?? this.config.lease_ttl_seconds) * 1000;
+    this.#leases.set(lease.id, lease);
+    return lease;
   }
 
   async acquire({ country, leaseId, rotate = false } = {}) {
@@ -278,7 +372,9 @@ export class ProxyPool {
       await this.#reap();
       if (leaseId !== undefined) {
         const lease = this.#leases.get(leaseId);
-        if (!lease) throw new Error('Proxy lease not found or expired');
+        if (!lease) {
+          return this.#revive(leaseId, selectedCountry, rotate);
+        }
         const nextCountry = selectedCountry ?? lease.country;
         if (rotate || nextCountry !== lease.country) {
           // Destroy only this lease's client tunnels AND upstream connection pools.
@@ -295,51 +391,49 @@ export class ProxyPool {
         return this.#public(lease);
       }
       if (this.#leases.size >= this.config.max_leases) throw new Error('Proxy lease capacity reached');
-      const lease = {
-        id: randomUUID(), country: selectedCountry ?? this.config.default_country,
-        session: randomBytes(8).toString('hex'), closed: false,
-        activeHttp: 0, lastBytes: new Map(), failures: 0,
-        httpAgent: new http.Agent({ keepAlive: false }),
-        httpsAgent: new https.Agent({ keepAlive: false }),
-      };
-      lease.gateway = new SafeGateway({
-        host: '127.0.0.1', port: 0, verbose: false,
-        prepareRequestFunction: () => {
-          if (lease.closed || this.#closed) throw new Error(SAFE_ERROR);
-          this.#touch(lease);
-          return {
-            requestAuthentication: false,
-            upstreamProxyUrl: renderProxyUrl(this.config, { country: lease.country, session: lease.session }),
-            httpAgent: lease.httpAgent, httpsAgent: lease.httpsAgent,
-          };
-        },
-      }, () => { lease.failures++; }, (request, response) => {
-        lease.activeHttp++;
-        let finished = false;
-        const done = () => {
-          if (finished) return;
-          finished = true;
-          lease.activeHttp--;
-          request.socket.removeListener('close', done);
-          if (!lease.closed) {
-            this.#traffic(lease);
-            this.#touch(lease);
-          }
-        };
-        response.once('finish', done);
-        response.once('close', done);
-        request.socket.once('close', done);
+      const lease = await this.#mint({
+        id: randomUUID(),
+        country: selectedCountry ?? this.config.default_country,
+        session: randomBytes(8).toString('hex'),
       });
-      lease.gateway.on('tunnelConnectFailed', () => { lease.failures++; });
-      lease.gateway.on('requestFailed', () => { lease.failures++; });
-      try { await lease.gateway.listen(); }
-      catch {
-        await this.#dispose(lease);
-        throw new Error('Unable to start local proxy gateway');
-      }
-      this.#touch(lease);
-      this.#leases.set(lease.id, lease);
       return this.#public(lease);
+    });
+  }
+
+  /**
+   * Renew an expired lease under its original lease_id.
+   *
+   * The exit identity is preserved: the same country and the same upstream
+   * session id are re-presented, so an upstream that keys a sticky exit on the
+   * session string hands back the same address. If that is not possible the
+   * response says so in renewed/renewal_reason rather than pretending the lease
+   * never expired.
+   */
+  async #revive(leaseId, selectedCountry, rotate) {
+    const tombstone = this.#expired.get(leaseId);
+    if (!tombstone || tombstone.reviveUntil <= Date.now()) {
+      this.#expired.delete(leaseId);
+      throw new Error('Proxy lease not found or expired');
+    }
+    if (this.#leases.size >= this.config.max_leases) {
+      throw new Error('Proxy lease capacity reached while renewing an expired lease');
+    }
+    const country = selectedCountry ?? tombstone.country;
+    const session = rotate ? randomBytes(8).toString('hex') : tombstone.session;
+    this.#expired.delete(leaseId);
+    const lease = await this.#mint({
+      id: leaseId, country, session,
+      ttlSeconds: Math.max(this.config.revived_lease_ttl_seconds, 0),
+    });
+    return this.#public(lease, {
+      renewed: true,
+      // The old localhost port is gone, so this is a different proxy_url for the
+      // same exit identity. A caller holding the previous address must update it.
+      renewal_reason: rotate ? 'expired_lease_rotated' : 'expired_lease_renewed',
+      proxy_url_changed: true,
+      // No silent rotation: this states that any previous address is dead, so
+      // the caller knows old tunnels and cached URLs cannot be reused.
+      renew_expires_at: new Date(lease.expiresAt).toISOString(),
     });
   }
 
@@ -351,6 +445,10 @@ export class ProxyPool {
   async release(leaseId) {
     return this.#run(async () => {
       const lease = this.#leases.get(leaseId);
+      // An explicit release is final: the tombstone is dropped as well, so a
+      // later acquire by this lease_id reports the honest "expired" error
+      // instead of silently minting a new exit under a released identity.
+      this.#expired.delete(leaseId);
       if (!lease) return false;
       await this.#dispose(lease);
       return true;
@@ -368,7 +466,10 @@ export class ProxyPool {
       pool_size: this.config.pool_size,
       max_leases: this.config.max_leases,
       lease_ttl_seconds: this.config.lease_ttl_seconds,
+      revived_lease_ttl_seconds: this.config.revived_lease_ttl_seconds,
       lease_count: this.#leases.size,
+      // Recently reaped leases that can still be renewed by lease_id.
+      renewable_lease_count: this.#expired.size,
       leases: [...this.#leases.values()].map((lease) => ({
         lease_id: lease.id, country: lease.country, session_id: lease.session,
         expires_at: new Date(lease.expiresAt).toISOString(),

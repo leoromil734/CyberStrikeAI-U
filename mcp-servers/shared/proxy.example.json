@@ -8,6 +8,7 @@
   "default_country": "US",
   "countries": ["US", "GB", "JP"],
   "pool_size": 2,
-  "lease_ttl_seconds": 300,
+  "lease_ttl_seconds": 1800,
+  "revived_lease_ttl_seconds": 120,
   "max_leases": 16
 }

@@ -93,7 +93,7 @@ export function createServer(options = {}) {
     return { ...summary, leases: (leases ?? []).map(({ lease_id, session_id, ...state }) => state) };
   }));
   server.registerTool('proxy_get', {
-    description: '为当前 Agent/任务创建独立粘性出口，返回本地 HTTP CONNECT 代理 URL 和单进程环境变量，供 curl、浏览器及其他 MCP 按需使用。凭据不进入模型。复用时传 lease_id；换出口只影响此租约。仅同机/同容器网络空间可访问。',
+    description: '为当前 Agent/任务创建独立粘性出口，返回本地 HTTP CONNECT 代理 URL 和单进程环境变量，供 curl、浏览器及其他 MCP 按需使用。凭据不进入模型。复用时传 lease_id：若该租约仍存活则直接续期；若已因空闲过期，会按原 lease_id 重新签发同一出口（同国家、同上游 session），返回 renewed=true 且 proxy_url 已变化，须重新读取。换出口只影响此租约。仅同机/同容器网络空间可访问。',
     inputSchema: { country, lease_id: leaseId.optional(), rotate: z.boolean().default(false) }, annotations: local,
   }, guarded(args => pool.acquire({ country: args.country, leaseId: args.lease_id, rotate: args.rotate })));
   server.registerTool('proxy_rotate', {
