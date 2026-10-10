@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS result_artifacts (
  created_at_ms BIGINT NOT NULL, artifact_key TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_result_artifacts_execution ON result_artifacts(execution_id);
+CREATE INDEX IF NOT EXISTS idx_result_artifacts_parse_state ON result_artifacts(parse_state);
 CREATE TABLE IF NOT EXISTS recon_sources (
  id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
  project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, owner TEXT NOT NULL,
@@ -71,6 +72,23 @@ func (db *DB) initResultArtifactsTables() error {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("initialize result artifact tables: %w", err)
 		}
+	}
+	return db.backfillNonParseableArtifactStates()
+}
+
+// backfillNonParseableArtifactStates settles the parse state of artifact kinds
+// that the offline pipeline never hands to a parser.
+//
+// Rows written before InitialParseState existed carry parse_state='pending', which
+// reads as "a worker still owes this file a parse". That is wrong for an input,
+// log, manifest or source original, and the misleading rows are indistinguishable
+// from a genuine backlog of output originals. This is idempotent: it only touches
+// rows that can never leave 'pending' on their own, so the statement does no work
+// once the history is settled.
+func (db *DB) backfillNonParseableArtifactStates() error {
+	_, err := db.Exec(`UPDATE result_artifacts SET parse_state=? WHERE parse_state=? AND kind IN ('input','log','manifest','source')`, evidence.Unsupported, evidence.Pending)
+	if err != nil {
+		return fmt.Errorf("settle non-parseable artifact parse states: %w", err)
 	}
 	return nil
 }

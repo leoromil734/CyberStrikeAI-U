@@ -289,8 +289,35 @@ func (r *Registry) Verify(ctx context.Context, e Execution, c Candidate) (Verifi
 	} else if stored.Completion == Error {
 		completion = Error
 	}
-	a := Artifact{ID: uuid.NewString(), ExecutionID: e.ID, Access: e.Access, Kind: c.Kind, Path: filepath.Clean(c.Path), Size: size, SHA256: digest, Format: strings.ToLower(c.Format), Completion: completion, ParseState: Pending, CreatedAt: time.Now().UTC()}
+	a := Artifact{ID: uuid.NewString(), ExecutionID: e.ID, Access: e.Access, Kind: c.Kind, Path: filepath.Clean(c.Path), Size: size, SHA256: digest, Format: strings.ToLower(c.Format), Completion: completion, ParseState: InitialParseState(c.Kind), CreatedAt: time.Now().UTC()}
 	return VerifiedArtifact{artifact: a, verified: true}, nil
+}
+
+// ParseableArtifactKind reports whether the offline parser will ever attempt this
+// artifact kind.
+//
+// The distinction matters because ParseState is read as a queue position. An
+// input, log, manifest or source file is registered for provenance and is never
+// handed to Parse, so recording it as Pending leaves a permanent "not parsed
+// yet" that no worker will ever clear. Those rows accumulate without bound and
+// cannot be told apart from a genuine parsing backlog, which is exactly the signal
+// an operator needs. Recording them as Unsupported states the truth once: nothing
+// is going to parse this, and the original is still retained.
+func ParseableArtifactKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "output", "machine":
+		return true
+	}
+	return false
+}
+
+// InitialParseState is the parse state an artifact has at registration, before
+// any parser has run.
+func InitialParseState(kind string) string {
+	if ParseableArtifactKind(kind) {
+		return Pending
+	}
+	return Unsupported
 }
 
 func (r *Registry) Register(ctx context.Context, e Execution, c Candidate) (Artifact, error) {
