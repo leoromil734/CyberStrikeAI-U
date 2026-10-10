@@ -26,6 +26,11 @@ const (
 
 var ErrExecutionWaitTimeout = errors.New("tool execution wait timeout")
 
+// maxRecentExecutionIDs bounds the "this ID does not exist" recovery hint.
+// Five is enough for a model to find the handle it meant; a longer list would
+// turn an error message into a listing and encourage guessing by position.
+const maxRecentExecutionIDs = 5
+
 // ExecutionRunFunc is the blocking operation owned by a worker.
 type ExecutionRunFunc func(context.Context) (*ToolResult, error)
 
@@ -452,6 +457,27 @@ func (s *ExecutionService) CancelAll(note string) {
 	for _, cancel := range cancels {
 		cancel()
 	}
+}
+
+// executionsForHint 复制内存中的 execution 句柄，供"ID 不存在"时列出真实 ID。
+// 返回的是指针视图，调用方只读取 ID/时间/会话等展示字段。
+func (s *ExecutionService) executionsForHint() map[string]*ToolExecution {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]*ToolExecution, len(s.entries))
+	for id, entry := range s.entries {
+		if entry == nil || entry.exec == nil {
+			continue
+		}
+		if _, exists := out[id]; exists {
+			continue
+		}
+		out[id] = entry.exec
+	}
+	return out
 }
 
 func (s *ExecutionService) getEntry(executionID string) *executionEntry {

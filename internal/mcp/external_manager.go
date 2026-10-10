@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1074,6 +1075,61 @@ func (m *ExternalMCPManager) GetExecution(id string) (*ToolExecution, bool) {
 	}
 
 	return nil, false
+}
+
+// RecentExecutionIDs 返回最近若干个真实 execution 句柄（按开始时间倒序）。
+// 语义与 Server.RecentExecutionIDs 相同：用于在 ID 不存在时列出真实句柄，
+// 而不是提供列表能力；limit 上限同样是 maxRecentExecutionIDs。
+func (m *ExternalMCPManager) RecentExecutionIDs(conversationID, ownerUserID string, limit int) []*ToolExecution {
+	if m == nil || limit <= 0 {
+		return nil
+	}
+	if limit > maxRecentExecutionIDs {
+		limit = maxRecentExecutionIDs
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	ownerUserID = strings.TrimSpace(ownerUserID)
+
+	byID := make(map[string]*ToolExecution)
+	m.mu.RLock()
+	for id, exec := range m.executions {
+		if exec != nil {
+			byID[id] = exec
+		}
+	}
+	m.mu.RUnlock()
+
+	if m.executionService != nil {
+		for id, exec := range m.executionService.executionsForHint() {
+			if exec == nil {
+				continue
+			}
+			if existing, ok := byID[id]; !ok || existing.StartTime.Before(exec.StartTime) {
+				byID[id] = exec
+			}
+		}
+	}
+
+	candidates := make([]*ToolExecution, 0, len(byID))
+	for _, exec := range byID {
+		if exec == nil || strings.TrimSpace(exec.ID) == "" {
+			continue
+		}
+		if conversationID != "" && strings.TrimSpace(exec.ConversationID) != conversationID {
+			continue
+		}
+		if ownerUserID != "" && exec.OwnerUserID != "" && exec.OwnerUserID != ownerUserID {
+			continue
+		}
+		candidates = append(candidates, exec)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].StartTime.After(candidates[j].StartTime)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates
 }
 
 func (m *ExternalMCPManager) registerRunningCancel(id string, cancel context.CancelFunc) {

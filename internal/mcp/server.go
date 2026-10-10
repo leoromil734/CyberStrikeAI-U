@@ -1363,6 +1363,69 @@ func (s *Server) ActiveRunningExecutionIDs() map[string]struct{} {
 	return out
 }
 
+// RecentExecutionIDs 返回最近若干个真实 execution 句柄（按开始时间倒序）。
+//
+// 用途是回答"你给的这个 ID 不存在，这是本会话真实的 ID"：模型虚构 execution_id 时
+// 唯一可靠的证伪方式是列出真正由本服务签发过的句柄。内存 map 与执行服务都没有
+// 顺序语义，因此候选集合并后按 StartTime 排序取最新。
+//
+// conversationID 非空时按会话过滤：其他会话的 ID 虽然真实，但对当前调用者无用，
+// 列出来只会诱导它复制一个属于别的任务的句柄。ownerUserID 同理，空值表示不过滤。
+//
+// limit 会被限制在很小的上限内。这是错误回包上的恢复提示，不是列表 API；
+// 需要列表的调用方走监控分页接口，那里有完整的分页与授权。
+func (s *Server) RecentExecutionIDs(conversationID, ownerUserID string, limit int) []*ToolExecution {
+	if s == nil || limit <= 0 {
+		return nil
+	}
+	if limit > maxRecentExecutionIDs {
+		limit = maxRecentExecutionIDs
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	ownerUserID = strings.TrimSpace(ownerUserID)
+
+	byID := make(map[string]*ToolExecution)
+	s.mu.RLock()
+	for id, exec := range s.executions {
+		if exec != nil {
+			byID[id] = exec
+		}
+	}
+	s.mu.RUnlock()
+
+	if s.executionService != nil {
+		for id, exec := range s.executionService.executionsForHint() {
+			if exec == nil {
+				continue
+			}
+			if existing, ok := byID[id]; !ok || existing.StartTime.Before(exec.StartTime) {
+				byID[id] = exec
+			}
+		}
+	}
+
+	candidates := make([]*ToolExecution, 0, len(byID))
+	for _, exec := range byID {
+		if exec == nil || strings.TrimSpace(exec.ID) == "" {
+			continue
+		}
+		if conversationID != "" && strings.TrimSpace(exec.ConversationID) != conversationID {
+			continue
+		}
+		if ownerUserID != "" && exec.OwnerUserID != "" && exec.OwnerUserID != ownerUserID {
+			continue
+		}
+		candidates = append(candidates, exec)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].StartTime.After(candidates[j].StartTime)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates
+}
+
 // initDefaultPrompts 初始化默认提示词模板
 func (s *Server) initDefaultPrompts() {
 	s.mu.Lock()

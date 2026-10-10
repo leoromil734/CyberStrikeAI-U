@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/mcp/builtin"
 )
 
@@ -47,7 +48,7 @@ func RegisterExecutionControlTools(server *Server, external *ExternalMCPManager)
 		}
 		exec := lookupToolExecution(server, external, id)
 		if exec == nil {
-			return textToolResult("未找到该 execution_id: "+id, true), nil
+			return textToolResult(unknownExecutionIDMessage(server, external, ctx, id, "get"), true), nil
 		}
 		return textToolResult(formatExecutionForModel(exec, executionFormatOptionsFromArgs(args)), false), nil
 	})
@@ -77,7 +78,7 @@ func RegisterExecutionControlTools(server *Server, external *ExternalMCPManager)
 			return textToolResult("等待 execution 失败: "+err.Error(), true), nil
 		}
 		if snap == nil || snap.Execution == nil {
-			return textToolResult("未找到该 execution_id: "+id, true), nil
+			return textToolResult(unknownExecutionIDMessage(server, external, ctx, id, "wait"), true), nil
 		}
 		body := formatExecutionForModel(snap.Execution, executionFormatOptionsFromArgs(args))
 		if errors.Is(err, ErrExecutionWaitTimeout) {
@@ -134,6 +135,64 @@ func waitToolExecutionSnapshot(ctx context.Context, server *Server, external *Ex
 		return nil, fmt.Errorf("execution not found: %s", id)
 	}
 	return &ExecutionSnapshot{Execution: exec}, nil
+}
+
+// unknownExecutionIDMessage explains a missing handle by showing real ones.
+//
+// A model that invented an execution_id cannot be corrected by "not found":
+// it has no way to tell a typo from a valid handle it forgot to copy, and it
+// tends to retry variations. Listing the newest genuine handles from this
+// conversation makes the invented ID obviously absent from the set, and the
+// instruction is explicit that guessing must stop rather than continue.
+func unknownExecutionIDMessage(server *Server, external *ExternalMCPManager, ctx context.Context, id, verb string) string {
+	var b strings.Builder
+	b.WriteString("未找到该 execution_id: ")
+	b.WriteString(id)
+	b.WriteString("\n\n")
+
+	conversationID := ""
+	if ctx != nil {
+		conversationID = MCPConversationIDFromContext(ctx)
+	}
+	ownerUserID := ""
+	if ctx != nil {
+		if principal, ok := authctx.PrincipalFromContext(ctx); ok {
+			ownerUserID = principal.UserID
+		}
+	}
+
+	recent := server.RecentExecutionIDs(conversationID, ownerUserID, maxRecentExecutionIDs)
+	if len(recent) == 0 && external != nil {
+		recent = external.RecentExecutionIDs(conversationID, ownerUserID, maxRecentExecutionIDs)
+	}
+
+	if len(recent) == 0 {
+		b.WriteString("本会话目前没有任何已登记的 execution。")
+	} else {
+		b.WriteString("本会话最近 ")
+		b.WriteString(strconv.Itoa(len(recent)))
+		b.WriteString(" 个真实 execution_id（新的在前）：\n")
+		for _, exec := range recent {
+			b.WriteString("- ")
+			b.WriteString(exec.ID)
+			b.WriteString("  status=")
+			b.WriteString(exec.Status)
+			if exec.ToolName != "" {
+				b.WriteString("  tool=")
+				b.WriteString(exec.ToolName)
+			}
+			b.WriteString("  started_at=")
+			b.WriteString(exec.StartTime.Format(time.RFC3339))
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n如果你没有从工具结果里复制过这个 ID，它是虚构的，不要再重试")
+	b.WriteString(id)
+	b.WriteString("，也不要尝试形近的变体。请改用上面列出的真实 ID，或重新发起一次工具调用并复制返回的 execution_id。")
+	if verb == "wait" {
+		b.WriteString("本次等待未执行，因此不消耗等待预算。")
+	}
+	return b.String()
 }
 
 func lookupToolExecution(server *Server, external *ExternalMCPManager, id string) *ToolExecution {
