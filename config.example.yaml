@@ -45,6 +45,16 @@ audit:
 # MCP 状态监控执行记录保留（tool_executions 表）
 monitor:
   retention_days: 90 # 省略时默认 90；0 表示不自动清理
+# 会话暂存目录保留：tmp/reduction（被截断的工具原件）与 tmp/workspace（下载/分析文件）。
+# 这两个目录原先只在删除会话/项目时才清理，长期不访问的会话会永久占用磁盘。
+# 判据是目录树内最新的修改时间；conversations/projects.updated_at 晚于截止时间的会话受保护。
+scratch_retention:
+  enabled: true
+  retention_days: 90 # 省略时默认 90；0 或负数表示不自动清理；每小时检查一次，启动时先清理一次
+  max_total_bytes: 21474836480 # 省略时默认 20 GiB；两个暂存根目录总占用超过此值时，按最久未使用回收
+  # 天数只对“足够老”的数据生效：每天写入十几 GB 的部署永远等不到 90 天，磁盘会先满，
+  # 所以容量上限是必要的兜底。冷却不足 24 小时、以及 conversations/projects 最近有更新的
+  # 会话始终跳过。0 或负数表示只按天数清理，不设容量上限。
 # ============================================
 # 对话相关配置
 # ============================================
@@ -225,6 +235,7 @@ multi_agent:
   eino_middleware:
     max_tool_arguments_bytes: 65536 # 单个工具 arguments 硬上限；超出时禁止执行并要求模型改写
     max_shell_command_bytes: 65536 # exec/execute.command 硬上限；与普通工具 arguments 上限一致
+    max_inline_script_bytes: 4096 # exec/execute 内联 heredoc 正文上限；超限拒绝执行并要求 write_file + 短命令；0=默认 4096
     model_output_repair_max_attempts: 1 # 非法/截断模型输出最多自动修复一次，避免循环
     patch_tool_calls: true # true：修补历史中无 tool_result 的悬空 tool_call（流式中断/重试后更稳）；false：关闭；字段省略时默认等同 true
     tool_search_enable: true # true：工具数 ≥ min 时启用 tool_search，仅前 N 个工具常驻，其余按正则按需解锁，省 token、减误选；false：全量工具进上下文

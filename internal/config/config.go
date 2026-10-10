@@ -18,36 +18,39 @@ import (
 )
 
 type Config struct {
-	Version     string                `yaml:"version,omitempty" json:"version,omitempty"` // 前端显示的版本号，如 v1.3.3
-	Server      ServerConfig          `yaml:"server"`
-	Log         LogConfig             `yaml:"log"`
-	MCP         MCPConfig             `yaml:"mcp"`
-	AI          AIConfig              `yaml:"ai,omitempty" json:"ai,omitempty"`
-	OpenAI      OpenAIConfig          `yaml:"openai,omitempty" json:"openai,omitempty"`
-	FOFA        FofaConfig            `yaml:"fofa,omitempty" json:"fofa,omitempty"`
-	ZoomEye     SpaceSearchConfig     `yaml:"zoomeye,omitempty" json:"zoomeye,omitempty"`
-	Quake       SpaceSearchConfig     `yaml:"quake,omitempty" json:"quake,omitempty"`
-	Shodan      SpaceSearchConfig     `yaml:"shodan,omitempty" json:"shodan,omitempty"`
-	Agent       AgentConfig           `yaml:"agent"`
-	Hitl        HitlConfig            `yaml:"hitl,omitempty" json:"hitl,omitempty"`
-	Security    SecurityConfig        `yaml:"security"`
-	Database    DatabaseConfig        `yaml:"database"`
-	Redis       RedisConfig           `yaml:"redis,omitempty" json:"redis,omitempty"`
-	Auth        AuthConfig            `yaml:"auth"`
-	Audit       AuditConfig           `yaml:"audit,omitempty" json:"audit,omitempty"`
-	Monitor     MonitorConfig         `yaml:"monitor,omitempty" json:"monitor,omitempty"`
-	ExternalMCP ExternalMCPConfig     `yaml:"external_mcp,omitempty"`
-	Knowledge   KnowledgeConfig       `yaml:"knowledge,omitempty"`
-	Experience  ExperienceConfig      `yaml:"experience,omitempty" json:"experience,omitempty"`
-	C2          C2Config              `yaml:"c2,omitempty" json:"c2,omitempty"`                 // 内置 C2 总开关；未配置时默认启用
-	Robots      RobotsConfig          `yaml:"robots,omitempty" json:"robots,omitempty"`         // 企业微信/钉钉/飞书等机器人配置
-	RolesDir    string                `yaml:"roles_dir,omitempty" json:"roles_dir,omitempty"`   // 角色配置文件目录（新方式）
-	Roles       map[string]RoleConfig `yaml:"roles,omitempty" json:"roles,omitempty"`           // 向后兼容：支持在主配置文件中定义角色
-	SkillsDir   string                `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"` // Skills配置文件目录
-	AgentsDir   string                `yaml:"agents_dir,omitempty" json:"agents_dir,omitempty"` // 多代理子 Agent Markdown 定义目录（*.md，YAML front matter）
-	MultiAgent  MultiAgentConfig      `yaml:"multi_agent,omitempty" json:"multi_agent,omitempty"`
-	Project     ProjectConfig         `yaml:"project,omitempty" json:"project,omitempty"`
-	Vision      VisionConfig          `yaml:"vision,omitempty" json:"vision,omitempty"`
+	Version  string            `yaml:"version,omitempty" json:"version,omitempty"` // 前端显示的版本号，如 v1.3.3
+	Server   ServerConfig      `yaml:"server"`
+	Log      LogConfig         `yaml:"log"`
+	MCP      MCPConfig         `yaml:"mcp"`
+	AI       AIConfig          `yaml:"ai,omitempty" json:"ai,omitempty"`
+	OpenAI   OpenAIConfig      `yaml:"openai,omitempty" json:"openai,omitempty"`
+	FOFA     FofaConfig        `yaml:"fofa,omitempty" json:"fofa,omitempty"`
+	ZoomEye  SpaceSearchConfig `yaml:"zoomeye,omitempty" json:"zoomeye,omitempty"`
+	Quake    SpaceSearchConfig `yaml:"quake,omitempty" json:"quake,omitempty"`
+	Shodan   SpaceSearchConfig `yaml:"shodan,omitempty" json:"shodan,omitempty"`
+	Agent    AgentConfig       `yaml:"agent"`
+	Hitl     HitlConfig        `yaml:"hitl,omitempty" json:"hitl,omitempty"`
+	Security SecurityConfig    `yaml:"security"`
+	Database DatabaseConfig    `yaml:"database"`
+	Redis    RedisConfig       `yaml:"redis,omitempty" json:"redis,omitempty"`
+	Auth     AuthConfig        `yaml:"auth"`
+	Audit    AuditConfig       `yaml:"audit,omitempty" json:"audit,omitempty"`
+	Monitor  MonitorConfig     `yaml:"monitor,omitempty" json:"monitor,omitempty"`
+	// ScratchRetention 会话暂存目录（tmp/reduction、tmp/workspace）保留策略；
+	// 省略时默认 90 天，与 monitor 一致。
+	ScratchRetention ScratchRetentionConfig `yaml:"scratch_retention,omitempty" json:"scratch_retention,omitempty"`
+	ExternalMCP      ExternalMCPConfig      `yaml:"external_mcp,omitempty"`
+	Knowledge        KnowledgeConfig        `yaml:"knowledge,omitempty"`
+	Experience       ExperienceConfig       `yaml:"experience,omitempty" json:"experience,omitempty"`
+	C2               C2Config               `yaml:"c2,omitempty" json:"c2,omitempty"`                 // 内置 C2 总开关；未配置时默认启用
+	Robots           RobotsConfig           `yaml:"robots,omitempty" json:"robots,omitempty"`         // 企业微信/钉钉/飞书等机器人配置
+	RolesDir         string                 `yaml:"roles_dir,omitempty" json:"roles_dir,omitempty"`   // 角色配置文件目录（新方式）
+	Roles            map[string]RoleConfig  `yaml:"roles,omitempty" json:"roles,omitempty"`           // 向后兼容：支持在主配置文件中定义角色
+	SkillsDir        string                 `yaml:"skills_dir,omitempty" json:"skills_dir,omitempty"` // Skills配置文件目录
+	AgentsDir        string                 `yaml:"agents_dir,omitempty" json:"agents_dir,omitempty"` // 多代理子 Agent Markdown 定义目录（*.md，YAML front matter）
+	MultiAgent       MultiAgentConfig       `yaml:"multi_agent,omitempty" json:"multi_agent,omitempty"`
+	Project          ProjectConfig          `yaml:"project,omitempty" json:"project,omitempty"`
+	Vision           VisionConfig           `yaml:"vision,omitempty" json:"vision,omitempty"`
 	// ConfigDir 由 Load 填充：config.yaml 所在目录（绝对路径），不读写 yaml。
 	ConfigDir string `yaml:"-" json:"-"`
 }
@@ -58,9 +61,12 @@ type EnsureLocalConfigResult struct {
 }
 
 const (
-	DefaultMaxCompletionTokens                        = 16384
-	DefaultMaxToolArgumentsBytes                      = 65536
-	DefaultMaxShellCommandBytes                       = 65536
+	DefaultMaxCompletionTokens   = 16384
+	DefaultMaxToolArgumentsBytes = 65536
+	DefaultMaxShellCommandBytes  = 65536
+	// DefaultMaxInlineScriptBytes 是 exec/execute 内联 heredoc 正文的默认上限。
+	// 系统提示要求长脚本先 write_file 再执行短命令，这里把该约束落到 dispatch 前。
+	DefaultMaxInlineScriptBytes                       = 4096
 	DefaultModelOutputRepairMaxAttempts               = 1
 	DefaultSummarizationUserIntentLedgerMaxRunes      = 96000
 	DefaultSummarizationUserIntentLedgerEntryMaxRunes = 16000
@@ -271,6 +277,10 @@ type MultiAgentEinoMiddlewareConfig struct {
 	MaxToolArgumentsBytes int `yaml:"max_tool_arguments_bytes,omitempty" json:"max_tool_arguments_bytes,omitempty"`
 	// MaxShellCommandBytes applies a stricter limit to exec/execute command strings.
 	MaxShellCommandBytes int `yaml:"max_shell_command_bytes,omitempty" json:"max_shell_command_bytes,omitempty"`
+	// MaxInlineScriptBytes rejects oversized inline heredoc script bodies in exec/execute
+	// before dispatch, enforcing the "write_file first, then run a short command" rule.
+	// Short heredocs stay allowed; 0 uses the default.
+	MaxInlineScriptBytes int `yaml:"max_inline_script_bytes,omitempty" json:"max_inline_script_bytes,omitempty"`
 	// ModelOutputRepairMaxAttempts limits consecutive model-output repair attempts.
 	ModelOutputRepairMaxAttempts int `yaml:"model_output_repair_max_attempts,omitempty" json:"model_output_repair_max_attempts,omitempty"`
 	// PatchToolCalls inserts placeholder tool results for dangling assistant tool_calls (nil = enabled).
@@ -352,6 +362,15 @@ func (c MultiAgentEinoMiddlewareConfig) MaxShellCommandBytesEffective() int {
 		return c.MaxShellCommandBytes
 	}
 	return DefaultMaxShellCommandBytes
+}
+
+// MaxInlineScriptBytesEffective 返回 exec/execute 内联脚本正文的字节上限。
+// 0 或负数使用默认值；无法通过配置关闭（设为极大值等价于关闭）。
+func (c MultiAgentEinoMiddlewareConfig) MaxInlineScriptBytesEffective() int {
+	if c.MaxInlineScriptBytes > 0 {
+		return c.MaxInlineScriptBytes
+	}
+	return DefaultMaxInlineScriptBytes
 }
 
 func (c MultiAgentEinoMiddlewareConfig) ModelOutputRepairMaxAttemptsEffective() int {
@@ -1333,6 +1352,58 @@ func (m MonitorConfig) RetentionDaysEffective() int {
 		return 0
 	}
 	return *m.RetentionDays
+}
+
+// ScratchRetentionConfig 会话暂存目录保留策略。
+//
+// tool_executions 与 audit 有保留天数，因为它们是可以用 DELETE 清扫的表。
+// tmp/reduction 与 tmp/workspace 相反：每个会话都留下目录，只有删除会话或
+// 项目时才会连带清理。长期不再访问的会话会永久占用磁盘，所以需要按时间清理。
+type ScratchRetentionConfig struct {
+	// Enabled nil 或 true 启用清理；显式 false 关闭。
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// RetentionDays 保留天数；省略时默认 90；负数表示不自动清理。
+	// 判据是目录树内最新的修改时间，仍在写入的会话不会被清理。
+	RetentionDays *int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+	// MaxTotalBytes 两个暂存根目录允许占用的总字节数；省略时默认 20 GiB。
+	// 天数只在数据足够老的时候才有意义：一套每天写入十几 GB 的部署永远等不到
+	// 90 天，磁盘会先满。容量上限按最久未使用的会话开始清理，直到总量回到
+	// 阈值以下；正在写入的会话与受保护会话仍然跳过。
+	// 0 或负数表示只按天数清理，不设容量上限。
+	MaxTotalBytes *int64 `yaml:"max_total_bytes,omitempty" json:"max_total_bytes,omitempty"`
+}
+
+// EnabledEffective returns true unless scratch_retention.enabled is explicitly false.
+func (s ScratchRetentionConfig) EnabledEffective() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+// RetentionDaysEffective returns retention; 0 means keep forever; omitted defaults to 90.
+// A negative value also disables cleanup, matching monitor.retention_days semantics.
+func (s ScratchRetentionConfig) RetentionDaysEffective() int {
+	if s.RetentionDays == nil {
+		return 90
+	}
+	if *s.RetentionDays < 0 {
+		return 0
+	}
+	return *s.RetentionDays
+}
+
+// MaxTotalBytesEffective returns the capacity budget; omitted defaults to 20 GiB.
+// A non-positive value disables the capacity rule and leaves only the day count.
+func (s ScratchRetentionConfig) MaxTotalBytesEffective() int64 {
+	const defaultScratchRetentionMaxBytes int64 = 20 * 1024 * 1024 * 1024
+	if s.MaxTotalBytes == nil {
+		return defaultScratchRetentionMaxBytes
+	}
+	if *s.MaxTotalBytes <= 0 {
+		return 0
+	}
+	return *s.MaxTotalBytes
 }
 
 // AuditConfig platform operation audit log settings (not chat/tool execution bodies).
