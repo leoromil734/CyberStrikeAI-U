@@ -34,6 +34,7 @@ import (
 	"cyberstrike-ai/internal/multiagent"
 	"cyberstrike-ai/internal/pilab"
 	"cyberstrike-ai/internal/robot"
+	"cyberstrike-ai/internal/scratchretention"
 	"cyberstrike-ai/internal/security"
 	"cyberstrike-ai/internal/skillpackage"
 
@@ -135,6 +136,63 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	monitorRetention := monitor.NewService(db, cfg, log.Logger)
 	monitorRetention.PurgeExpired()
 	monitor.StartRetentionLoop(monitorRetention, log.Logger)
+
+	// 会话暂存目录保留：与 audit/monitor 不同，这里没有数据库行可以判定归属，
+	// 因此用 conversations/projects.updated_at 作为"会话仍活跃"的依据。
+	// 启动时先跑一次，避免重启后仍要等满一个周期才回收磁盘。
+	if cfg.ScratchRetention.EnabledEffective() {
+		scratchRetention := scratchretention.NewService(scratchretention.Config{
+			// 空配置回落到运行时实际使用的 tmp/reduction 与 tmp/workspace；
+			// 直接传空字符串会让 RootsEffective 过滤掉全部根目录，清理静默失效。
+			Roots:         scratchretention.DefaultRoots(cfg.MultiAgent.EinoMiddleware.ReductionRootDir, cfg.Agent.WorkspaceRootDir),
+			RetentionDays: cfg.ScratchRetention.RetentionDaysEffective(),
+			// 天数只对“足够老”的数据生效。每天写入十几 GB 的部署永远等不到 90 天，
+			// 磁盘会先满，因此容量上限按最久未使用且已冷却一天的会话回收。
+			MaxTotalBytes: cfg.ScratchRetention.MaxTotalBytesEffective(),
+			SkipSessions: func() map[string]bool {
+				active, activeErr := db.ActiveScratchSessionIDs(time.Now().AddDate(0, 0, -cfg.ScratchRetention.RetentionDaysEffective()))
+				if activeErr != nil {
+					// nil 让本次清理整体放弃：保护集合未知时不能按"无保护"处理。
+					log.Logger.Warn("查询活跃会话失败，本次跳过暂存目录清理", zap.Error(activeErr))
+					return nil
+				}
+				return active
+			},
+		})
+		if stats, sweepErr := scratchRetention.Sweep(time.Now()); sweepErr != nil {
+			log.Logger.Warn("暂存目录清理跳过", zap.Error(sweepErr))
+		} else if stats.Deleted > 0 {
+			log.Logger.Info("已清理过期会话暂存目录",
+				zap.Int("deleted", stats.Deleted),
+				zap.Int64("bytes_freed", stats.BytesFreed),
+				zap.Int("retention_days", cfg.ScratchRetention.RetentionDaysEffective()),
+				// 容量回收的会话不到保留天数就被删除，必须单独可见，否则看起来像
+				// 时间策略失效、误删了活跃会话。
+				zap.Int("reclaimed_for_capacity", stats.ReclaimedForCapacity),
+				zap.Int64("max_total_bytes", cfg.ScratchRetention.MaxTotalBytesEffective()),
+			)
+		}
+		scratchretention.StartRetentionLoop(scratchRetention, time.Now, func(stats scratchretention.Stats) {
+			if len(stats.Errors) > 0 {
+				log.Logger.Warn("暂存目录清理存在错误",
+					zap.Strings("errors", stats.Errors),
+					zap.Int("deleted", stats.Deleted),
+				)
+			}
+			if stats.InspectedFailed > 0 {
+				log.Logger.Warn("部分会话暂存目录无法完整检查，本次跳过",
+					zap.Int("inspected_failed", stats.InspectedFailed),
+				)
+			}
+			if stats.Deleted > 0 {
+				log.Logger.Info("已清理过期会话暂存目录",
+					zap.Int("deleted", stats.Deleted),
+					zap.Int64("bytes_freed", stats.BytesFreed),
+					zap.Int("reclaimed_for_capacity", stats.ReclaimedForCapacity),
+				)
+			}
+		})
+	}
 
 	// 任务提交与实际运行分开登记。回填只读完整任务/原始用户输入，
 	// 不从截断标题、角色模板或助手输出猜测目标；两条路径均保持幂等。
