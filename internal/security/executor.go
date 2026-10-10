@@ -287,6 +287,21 @@ func (e *Executor) ExecuteTool(ctx context.Context, toolName string, args map[st
 	if err := e.validateVersionSensitiveFlags(ctx, toolConfig, cmdArgs); err != nil {
 		return parameterValidationResult(toolName, err), nil
 	}
+	// 目录发现先做随机路径基线：统一 403/拦截页时，900 秒扫描只会得到 0 结果，
+	// 因此在不消耗扫描预算的前提下直接给出 blocked 证据。
+	if toolName == "dirsearch" {
+		if verdict := e.probeDirsearchBaseline(ctx, args); verdict != nil && verdict.Decision == "abort" {
+			e.logger.Warn("目录发现基线判定为边缘统一拦截，未启动扫描",
+				zap.String("tool", toolName),
+				zap.Int("uniformStatus", verdict.UniformStatus),
+				zap.String("reason", verdict.Reason),
+			)
+			return &mcp.ToolResult{
+				Content: []mcp.Content{{Type: "text", Text: verdict.message()}},
+				IsError: true,
+			}, nil
+		}
+	}
 	// Admission is shared by all tasks using this executor, not per agent.
 	releaseBudget, budgetErr := e.budget.Acquire(ctx, toolName, budgetTargets(args))
 	if budgetErr != nil {
